@@ -8,7 +8,7 @@
   "scripts": {
     "start": "npm run build && electron .",
     "build": "tsc && npm run copy-assets",
-    "copy-assets": "xcopy /Y /I src\\renderer\\index.html dist\\renderer\\",
+    "copy-assets": "xcopy /Y /I src\\renderer\\index.html dist\\renderer\\ && xcopy /Y src\\renderer\\renderer.js dist\\renderer\\",
     "watch": "tsc --watch",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",

@@ -1,13 +1,11 @@
-import { app, BrowserWindow, ipcMain, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeImage } from 'electron';
 import * as path from 'path';
+import * as fs from 'fs';
 import { TrayManager } from './tray';
 import { ApiClient } from './api-client';
 import Store from 'electron-store';
 
-// Store for persistent data
 const store = new Store();
-
-// Backend API client
 const apiClient = new ApiClient('http://127.0.0.1:51235');
 
 let mainWindow: BrowserWindow | null = null;
@@ -16,8 +14,8 @@ let isQuitting = false;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 900,
-    height: 700,
+    width: 1000,
+    height: 750,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
@@ -30,17 +28,12 @@ function createWindow() {
     maximizable: true
   });
 
-  // Load the HTML file
   mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
 
-  // Show window when ready
   mainWindow.once('ready-to-show', () => {
-    // Don't show by default - only show when user clicks tray icon
+    // Intentionally hidden on start — user opens via tray
   });
 
-
-
-  // Hide window instead of closing
   mainWindow.on('close', (event) => {
     if (!isQuitting) {
       event.preventDefault();
@@ -53,34 +46,22 @@ function createWindow() {
   });
 }
 
-// App ready
 app.whenReady().then(async () => {
-  // Enable auto-launch on login
   app.setLoginItemSettings({
     openAtLogin: true,
     path: app.getPath('exe')
   });
 
-  // Create system tray
   trayManager = new TrayManager(
-    () => {
-      // On tray click - check auth and show appropriate window
-      showMainWindow();
-    },
+    () => showMainWindow(),
     apiClient
   );
 
-  // Create main window (hidden initially)
   createWindow();
-
-  // IPC handlers
   setupIpcHandlers();
-
-  // Start monitoring backend health
   startBackendHealthCheck();
 });
 
-// Quit when all windows are closed (except on macOS)
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
@@ -88,9 +69,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('activate', () => {
-  if (mainWindow === null) {
-    createWindow();
-  }
+  if (mainWindow === null) createWindow();
 });
 
 app.on('before-quit', () => {
@@ -98,9 +77,7 @@ app.on('before-quit', () => {
 });
 
 function showMainWindow() {
-  if (!mainWindow) {
-    createWindow();
-  }
+  if (!mainWindow) createWindow();
   mainWindow?.show();
   mainWindow?.focus();
 }
@@ -111,10 +88,9 @@ function setupIpcHandlers() {
     try {
       const token = store.get('authToken') as string | undefined;
       if (!token) return { authenticated: false };
-
       const response = await apiClient.get('/api/auth/check', token);
       return response.data;
-    } catch (error) {
+    } catch {
       return { authenticated: false };
     }
   });
@@ -125,9 +101,10 @@ function setupIpcHandlers() {
       const response = await apiClient.post('/api/auth/login', credentials);
       if (response.data.success && response.data.token) {
         store.set('authToken', response.data.token);
+        trayManager?.setAuthStatus(true);
         return { success: true, token: response.data.token };
       }
-      return { success: false, error: 'Invalid credentials' };
+      return { success: false, error: response.data.error || 'Invalid credentials' };
     } catch (error: any) {
       return { success: false, error: error.message };
     }
@@ -136,14 +113,15 @@ function setupIpcHandlers() {
   // Logout
   ipcMain.handle('auth:logout', async () => {
     store.delete('authToken');
+    trayManager?.setAuthStatus(false);
     return { success: true };
   });
 
-  // Get statistics
-  ipcMain.handle('api:getStatistics', async () => {
+  // FIX #2: getStatistics now forwards the date param to the backend
+  ipcMain.handle('api:getStatistics', async (_event, params: { date?: string } = {}) => {
     try {
       const token = store.get('authToken') as string;
-      const response = await apiClient.get('/api/statistics', token);
+      const response = await apiClient.get('/api/statistics', token, params);
       return response.data;
     } catch (error: any) {
       throw new Error(error.message);
@@ -151,7 +129,7 @@ function setupIpcHandlers() {
   });
 
   // Get screenshots
-  ipcMain.handle('api:getScreenshots', async (_event, params: { limit?: number; offset?: number }) => {
+  ipcMain.handle('api:getScreenshots', async (_event, params: { limit?: number; offset?: number } = {}) => {
     try {
       const token = store.get('authToken') as string;
       const response = await apiClient.get('/api/screenshots', token, params);
@@ -183,7 +161,7 @@ function setupIpcHandlers() {
     }
   });
 
-  // Get monitoring status
+  // Monitoring status
   ipcMain.handle('api:getMonitoringStatus', async () => {
     try {
       const token = store.get('authToken') as string;
@@ -194,7 +172,7 @@ function setupIpcHandlers() {
     }
   });
 
-  // Get activity stats
+  // Activity stats (charts — already date-aware)
   ipcMain.handle('api:getActivityStats', async (_event, { start, end }: { start: string; end: string }) => {
     try {
       const token = store.get('authToken') as string;
@@ -205,7 +183,7 @@ function setupIpcHandlers() {
     }
   });
 
-  // Get timeline data
+  // Timeline data (charts — already date-aware)
   ipcMain.handle('api:getTimelineData', async (_event, { date }: { date: string }) => {
     try {
       const token = store.get('authToken') as string;
@@ -216,8 +194,8 @@ function setupIpcHandlers() {
     }
   });
 
-  // New Data Handlers
-  ipcMain.handle('api:getAppLogs', async (_event, params: { limit?: number; offset?: number }) => {
+  // App logs
+  ipcMain.handle('api:getAppLogs', async (_event, params: { limit?: number; offset?: number } = {}) => {
     try {
       const token = store.get('authToken') as string;
       const response = await apiClient.get('/api/data/apps', token, params);
@@ -227,7 +205,8 @@ function setupIpcHandlers() {
     }
   });
 
-  ipcMain.handle('api:getBrowserLogs', async (_event, params: { limit?: number; offset?: number }) => {
+  // Browser logs
+  ipcMain.handle('api:getBrowserLogs', async (_event, params: { limit?: number; offset?: number } = {}) => {
     try {
       const token = store.get('authToken') as string;
       const response = await apiClient.get('/api/data/browser', token, params);
@@ -237,7 +216,8 @@ function setupIpcHandlers() {
     }
   });
 
-  ipcMain.handle('api:getClipboardLogs', async (_event, params: { limit?: number; offset?: number }) => {
+  // Clipboard logs
+  ipcMain.handle('api:getClipboardLogs', async (_event, params: { limit?: number; offset?: number } = {}) => {
     try {
       const token = store.get('authToken') as string;
       const response = await apiClient.get('/api/data/clipboard', token, params);
@@ -247,34 +227,25 @@ function setupIpcHandlers() {
     }
   });
 
-  // Quit application
+  // Quit app
   ipcMain.handle('app:quit', async () => {
+    isQuitting = true;
     app.quit();
   });
 }
 
-let backendHealthCheckInterval: NodeJS.Timeout | null = null;
-
 function startBackendHealthCheck() {
-  // Check backend health every 30 seconds
-  backendHealthCheckInterval = setInterval(async () => {
+  const checkInterval = 30000; // 30 seconds
+
+  const check = async () => {
     try {
       await apiClient.get('/health');
       trayManager?.setBackendStatus(true);
-    } catch (error) {
+    } catch {
       trayManager?.setBackendStatus(false);
     }
-  }, 30000);
+  };
 
-  // Initial check
-  apiClient.get('/health')
-    .then(() => trayManager?.setBackendStatus(true))
-    .catch(() => trayManager?.setBackendStatus(false));
+  check();
+  setInterval(check, checkInterval);
 }
-
-// Clean up on app quit
-app.on('will-quit', () => {
-  if (backendHealthCheckInterval) {
-    clearInterval(backendHealthCheckInterval);
-  }
-});

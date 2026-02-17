@@ -5,6 +5,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Enterprise Monitor</title>
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     * {
       margin: 0;
@@ -18,6 +20,16 @@
       color: #333;
     }
 
+    /* ============================================================
+       BUG FIX #1: Login overlay stays visible after login.
+       ROOT CAUSE: The original code had:
+         .container { display: none }          <- hides all containers
+         .login-container { display: flex }    <- MORE SPECIFIC, overrides above — login ALWAYS visible!
+         .login-container.active { display: flex }
+       FIX: Remove `display` from .login-container entirely.
+       Let .container { display: none } hide it,
+       and .login-container.active { display: flex } show it when active.
+    ============================================================ */
     .container {
       display: none;
     }
@@ -27,13 +39,11 @@
     }
 
     .login-container.active {
-      display: flex;
-      /* Override block to keep centering */
+      display: flex; /* override block → flex for centering */
     }
 
-    /* Login Page */
+    /* Login Page — NO display property here anymore */
     .login-container {
-      display: flex;
       align-items: center;
       justify-content: center;
       min-height: 100vh;
@@ -162,6 +172,20 @@
       background: #c82333;
     }
 
+    .btn-success {
+      padding: 6px 14px;
+      background: #28a745;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    .btn-success:hover {
+      background: #218838;
+    }
+
     .tabs {
       background: white;
       border-radius: 10px;
@@ -252,41 +276,22 @@
       background: #ffc107;
     }
 
-    .screenshot-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-      gap: 15px;
-    }
-
-    .screenshot-item {
-      background: white;
-      border-radius: 5px;
-      overflow: hidden;
-      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-    }
-
-    .screenshot-item img {
-      width: 100%;
-      height: 150px;
-      object-fit: cover;
-    }
-
-    .screenshot-item .info {
-      padding: 10px;
+    .status-badge {
+      padding: 5px 10px;
+      border-radius: 15px;
       font-size: 12px;
-      color: #666;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: #e8f5e9;
+      color: #2e7d32;
     }
 
-    .loading {
-      text-align: center;
-      padding: 40px;
-      color: #666;
+    .status-badge.paused {
+      background: #fff3e0;
+      color: #ef6c00;
     }
-  </style>
-  <!-- Chart.js -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <style>
-    /* ... existing styles ... */
+
     .dashboard-controls {
       display: flex;
       align-items: center;
@@ -296,6 +301,7 @@
       padding: 15px;
       border-radius: 10px;
       box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+      justify-content: space-between;
     }
 
     .chart-container {
@@ -317,7 +323,6 @@
     .col {
       flex: 1;
       min-width: 0;
-      /* Fix flexbox overflow issues */
     }
 
     /* Monitor Data Styles */
@@ -372,26 +377,60 @@
       background-color: #f8f9fa;
     }
 
-    .status-badge {
-      padding: 5px 10px;
-      border-radius: 15px;
-      font-size: 12px;
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      background: #e8f5e9;
-      color: #2e7d32;
+    .screenshot-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 15px;
     }
 
-    .status-badge.paused {
-      background: #fff3e0;
-      color: #ef6c00;
+    .screenshot-item {
+      background: white;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+      transition: transform 0.2s;
+    }
+
+    .screenshot-item:hover {
+      transform: translateY(-2px);
+    }
+
+    .screenshot-item img {
+      width: 100%;
+      height: 160px;
+      object-fit: cover;
+    }
+
+    .screenshot-item .info {
+      padding: 10px;
+    }
+
+    .screenshot-item .info .timestamp {
+      font-size: 12px;
+      color: #888;
+    }
+
+    /* FIX #5: Screenshot app name display */
+    .screenshot-item .info .app-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: #333;
+      margin-top: 3px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #666;
     }
   </style>
 </head>
 
 <body>
-  <!-- Login Container (Unchanged) -->
+  <!-- Login Container -->
   <div id="login-container" class="container login-container">
     <div class="login-box">
       <h1>🔒 Admin Login</h1>
@@ -421,22 +460,23 @@
     </div>
 
     <!-- Date & Monitor Controls -->
-    <div class="dashboard-controls" style="justify-content: space-between;">
+    <!-- FIX #2: Added "Search" button next to date picker -->
+    <div class="dashboard-controls">
       <div style="display: flex; align-items: center; gap: 10px;">
         <label>Date:</label>
         <input type="date" id="date-picker">
         <button class="btn-secondary" id="today-btn">Today</button>
+        <button class="btn-success" id="search-btn">Search</button>
       </div>
 
-      <!-- Moved Monitor Control -->
       <div style="display: flex; align-items: center; gap: 15px;">
         <div class="status-badge" id="status-badge">
           <span class="status-indicator active" id="status-indicator"></span>
           <span id="status-text">Active</span>
         </div>
         <button class="btn-danger" id="pause-btn" style="padding: 6px 12px; font-size: 13px;">Pause</button>
-        <button class="btn-secondary" id="resume-btn"
-          style="padding: 6px 12px; font-size: 13px; display: none; background: #28a745;">Resume</button>
+        <button class="btn-success" id="resume-btn"
+          style="padding: 6px 12px; font-size: 13px; display: none;">Resume</button>
       </div>
     </div>
 
@@ -448,10 +488,8 @@
       </div>
 
       <div class="tab-content">
-        <!-- Overview Tab (Redesigned) -->
+        <!-- Overview Tab -->
         <div id="overview-tab" class="tab-pane active">
-
-          <!-- Summary Cards -->
           <div class="stats-grid">
             <div class="stat-card">
               <h3>Active Hours</h3>
@@ -517,7 +555,6 @@
                 </tr>
               </thead>
               <tbody id="app-logs-body">
-                <!-- Data populated here -->
               </tbody>
             </table>
           </div>
@@ -535,7 +572,6 @@
                 </tr>
               </thead>
               <tbody id="browser-logs-body">
-                <!-- Data populated here -->
               </tbody>
             </table>
           </div>
@@ -552,13 +588,13 @@
                 </tr>
               </thead>
               <tbody id="clipboard-logs-body">
-                <!-- Data populated here -->
               </tbody>
             </table>
           </div>
         </div>
 
         <!-- Screenshots Tab -->
+        <!-- FIX #5: Screenshot metadata uses active_app field (rendered in renderer.js) -->
         <div id="screenshots-tab" class="tab-pane">
           <h2 style="margin-bottom: 20px;">Recent Screenshots</h2>
           <div id="screenshots-grid" class="screenshot-grid">
