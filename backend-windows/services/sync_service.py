@@ -144,7 +144,7 @@ class SyncService:
                 "windowsTitle": record.get("window_title") or "",
                 "startTime":    start_dt.isoformat(),
                 "endTime":      end_dt.isoformat(),
-                "duration":     str(duration_seconds),   # ERP expects string
+                "duration":     duration_seconds,   # Send as integer to match API/DB type
                 "syncTime":     sync_dt.isoformat()
             }
         except Exception as e:
