@@ -1,0 +1,62 @@
+{
+  "name": "enterprise-monitor",
+  "version": "1.0.0",
+  "description": "Enterprise Employee Monitoring System",
+  "main": "dist/main/main.js",
+  "author": "Your Company",
+  "license": "PROPRIETARY",
+  "scripts": {
+    "start": "npm run build && electron .",
+    "build": "tsc && npm run copy-assets",
+    "copy-assets": "xcopy /Y /I src\\renderer\\index.html dist\\renderer\\",
+    "watch": "tsc --watch",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win"
+  },
+  "dependencies": {
+    "axios": "^1.6.2",
+    "electron-store": "^8.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.5",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1",
+    "typescript": "^5.3.3"
+  },
+  "build": {
+    "appId": "com.company.enterprise-monitor",
+    "productName": "Enterprise Monitor",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "resources/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.business",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "resources/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "resources/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": true
+    }
+  }
+}
