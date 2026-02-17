@@ -1,13 +1,29 @@
+# Enterprise Monitor - Windows Backend Dependencies
+# Run: pip install -r requirements.txt
+
+# ── Web Framework ─────────────────────────────────────────────────────────────
 fastapi
-uvicorn
+uvicorn[standard]
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
 python-jose[cryptography]
 passlib[bcrypt]
+
+# ── Screenshot & Image ────────────────────────────────────────────────────────
 mss
-pillow
-pyperclip
-psutil
-pydantic
-python-multipart
-requests
-bcrypt==4.0.1
+Pillow
+
+# ── System / Windows APIs ────────────────────────────────────────────────────
 pywin32
+psutil
+pyperclip
+requests
+
+# ── NEW: Browser URL Tracking ─────────────────────────────────────────────────
+# uiautomation reads address bar controls via Windows UI Automation COM API.
+# Requires Visual C++ Redistributable. Windows-only.
+uiautomation
+
+# ── NEW: Keystroke / Text Logging ────────────────────────────────────────────
+# pynput hooks into the OS keyboard event stream without suppression.
+pynput

