@@ -116,6 +116,14 @@ function setupEventListeners() {
   document.getElementById('resume-btn').addEventListener('click', async () => {
     await resumeMonitoring();
   });
+
+  document.getElementById('update-device-alias-btn').addEventListener('click', () => {
+    updateIdentityAlias('device');
+  });
+
+  document.getElementById('update-user-alias-btn').addEventListener('click', () => {
+    updateIdentityAlias('user');
+  });
 }
 
 // ─── LOGIN / LOGOUT ──────────────────────────────────────────
@@ -162,6 +170,7 @@ async function handleLogout() {
 async function loadDashboardData() {
   if (!isAuthenticated) return;
   try {
+    await loadIdentity();
     await loadMonitoringStatus();
     if (currentTab === 'overview') {
       await Promise.all([loadStatistics(), loadChartsData()]);
@@ -186,6 +195,95 @@ async function loadStatistics() {
     console.error('Failed to load statistics:', error);
   }
 }
+
+async function loadIdentity() {
+  try {
+    const identity = await window.electronAPI.getIdentity();
+
+    // Raw IDs shown as read-only hints
+    const machineIdEl = document.getElementById('identity-machine-id');
+    const osUserEl = document.getElementById('identity-os-user');
+    if (machineIdEl) machineIdEl.textContent = `Raw: ${identity.machine_id}`;
+    if (osUserEl) osUserEl.textContent = `Raw: ${identity.os_user}`;
+
+    // Pre-fill inputs with current aliases
+    const deviceInput = document.getElementById('device-alias-input');
+    const userInput = document.getElementById('user-alias-input');
+    if (deviceInput) deviceInput.value = identity.device_alias || '';
+    if (userInput) userInput.value = identity.user_alias || '';
+  } catch (err) {
+    console.error('Failed to load identity config:', err);
+  }
+}
+
+
+/**
+ * Send an updated alias to the backend.
+ * @param {'device'|'user'} which - which alias to update
+ */
+async function updateIdentityAlias(which) {
+  const inputId = which === 'device' ? 'device-alias-input' : 'user-alias-input';
+  const btnId = which === 'device' ? 'update-device-alias-btn' : 'update-user-alias-btn';
+
+  const input = document.getElementById(inputId);
+  const btn = document.getElementById(btnId);
+  if (!input || !btn) return;
+
+  const newAlias = input.value.trim();
+  if (!newAlias) {
+    showIdentityFeedback('Alias cannot be empty.', 'error');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+
+  try {
+    const payload = which === 'device'
+      ? { device_alias: newAlias }
+      : { user_alias: newAlias };
+
+    const result = await window.electronAPI.updateIdentity(payload);
+
+    if (result && result.success) {
+      showIdentityFeedback(
+        `${which === 'device' ? 'Device' : 'User'} name updated to "${newAlias}".`,
+        'success'
+      );
+    } else {
+      showIdentityFeedback(result?.error || 'Update failed.', 'error');
+    }
+  } catch (err) {
+    console.error('Failed to update identity alias:', err);
+    showIdentityFeedback('Network error — could not save alias.', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Update';
+  }
+}
+
+
+/**
+ * Display a temporary feedback message below the identity cards.
+ * Auto-dismisses after 3 seconds.
+ * @param {string} message
+ * @param {'success'|'error'} type
+ */
+function showIdentityFeedback(message, type) {
+  const el = document.getElementById('identity-feedback');
+  if (!el) return;
+
+  el.textContent = message;
+  el.className = `identity-feedback ${type}`;
+  el.style.display = 'block';
+
+  // Clear any existing dismiss timer
+  if (el._dismissTimer) clearTimeout(el._dismissTimer);
+  el._dismissTimer = setTimeout(() => {
+    el.style.display = 'none';
+  }, 3000);
+}
+
 
 async function loadMonitoringStatus() {
   try {

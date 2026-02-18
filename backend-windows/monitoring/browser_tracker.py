@@ -25,6 +25,7 @@ NOTE: Samsung Internet and Safari are mobile/macOS-only — not available as
 """
 
 import threading
+import getpass
 import time
 import logging
 import sys
@@ -89,6 +90,7 @@ class BrowserTracker:
         self._is_paused = False
         self._last_url: str = ""
         self._uia = None
+        self._os_user: str = getpass.getuser()
 
     # ─── LIFECYCLE ───────────────────────────────────────────────────────────
 
@@ -168,7 +170,8 @@ class BrowserTracker:
             self.db_manager.insert_browser_activity(
                 browser_name=browser_name,
                 url=url,
-                page_title=title or ""
+                page_title=title or "",
+                username=self._os_user,
             )
             logger.info(f"[BrowserTracker] {browser_name} → {url}")
 

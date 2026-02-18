@@ -11,6 +11,7 @@ from datetime import datetime
 import mss
 from PIL import Image
 import psutil
+import getpass
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ class ScreenshotMonitor:
         # Screenshot storage directory
         self.screenshot_dir = Path.home() / "AppData" / "Local" / "EnterpriseMonitor" / "screenshots"
         self.screenshot_dir.mkdir(parents=True, exist_ok=True)
+        self._os_user: str = getpass.getuser()
     
     def start(self):
         """Start screenshot monitoring"""
@@ -139,10 +141,12 @@ class ScreenshotMonitor:
                     f.write(img_byte_arr.getvalue())
                 
                 # Store in database
+                # Store in database
                 self.db_manager.insert_screenshot(
                     str(filepath),
                     window_title,
-                    app_name
+                    app_name,
+                    self._os_user,                      # ← ADD THIS ARG
                 )
                 
                 logger.debug(f"Screenshot captured: {filename}")

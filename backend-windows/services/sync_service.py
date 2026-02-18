@@ -7,16 +7,22 @@ ERP API Contract:
   Fields: pcName, appName, windowsTitle, startTime, endTime, duration, syncTime
 
 Field mapping from local DB (app_activity table):
-  pcName       ← socket.gethostname()
+  pcName       ← device_alias (custom name) — falls back to socket.gethostname()
   appName      ← app_name
   windowsTitle ← window_title
   startTime    ← timestamp (ISO-8601)
   endTime      ← timestamp + duration_seconds (calculated)
-  duration     ← str(duration_seconds)
+  duration     ← duration_seconds (integer)
   syncTime     ← current UTC time at point of sync
+
+CHANGES:
+- IDENTITY: pcName now reads device_alias from device_config table per sync cycle.
+            If no alias is set, falls back to raw hostname. This means alias
+            changes take effect on the very next sync without restarting the agent.
 """
 
 import threading
+import getpass
 import time
 import logging
 import socket
@@ -25,23 +31,32 @@ from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
-# ERP endpoint — hardcoded per the API contract
-ERP_ENDPOINT = "https://api.erp.skillerszone.com/api/pctracking/appuseage"
-
-# Sync interval in seconds (configurable via config_manager)
-DEFAULT_SYNC_INTERVAL = 300  # 5 minutes
-
-# Number of records to sync per batch
-BATCH_SIZE = 50
+ERP_ENDPOINT          = "https://api.erp.skillerszone.com/api/pctracking/appuseage"
+DEFAULT_SYNC_INTERVAL = 300   # 5 minutes
+BATCH_SIZE            = 50
 
 
 class SyncService:
     def __init__(self, db_manager, config_manager):
-        self.db_manager = db_manager
+        self.db_manager     = db_manager
         self.config_manager = config_manager
-        self.is_running = False
-        self.thread = None
-        self._pc_name = socket.gethostname()
+        self.is_running     = False
+        self.thread         = None
+        # _fallback_hostname is used only when DB is unreachable
+        self._fallback_hostname = socket.gethostname()
+
+    def _get_pc_name(self) -> str:
+        """
+        Resolve the effective PC name to send to the ERP.
+        Reads device_alias from device_config; falls back to raw hostname.
+        Called fresh each sync cycle so alias changes are picked up immediately.
+        """
+        try:
+            config = self.db_manager.get_identity_config()
+            return config.get("device_alias") or self._fallback_hostname
+        except Exception as e:
+            logger.warning("Could not read device_alias from DB (%s) — using hostname", e)
+            return self._fallback_hostname
 
     # ─── LIFECYCLE ───────────────────────────────────────────────────────────
     def start(self):
@@ -61,8 +76,7 @@ class SyncService:
     # ─── MAIN LOOP ───────────────────────────────────────────────────────────
     def _sync_loop(self):
         """Periodic sync loop. Runs in a background daemon thread."""
-        # Initial delay — let the rest of the app start first
-        time.sleep(30)
+        time.sleep(30)   # Let the rest of the app start first
 
         while self.is_running:
             try:
@@ -71,7 +85,6 @@ class SyncService:
                 logger.error("Sync loop error: %s", e)
 
             interval = int(self.config_manager.get("sync_interval_seconds", DEFAULT_SYNC_INTERVAL))
-            # Interruptible sleep — checks every second so stop() is responsive
             for _ in range(interval):
                 if not self.is_running:
                     return
@@ -83,7 +96,7 @@ class SyncService:
         Read unsynced app_activity records, POST each to the ERP endpoint,
         and mark them as synced on success.
         """
-        data = self.db_manager.get_unsynced_data(limit=BATCH_SIZE)
+        data       = self.db_manager.get_unsynced_data(limit=BATCH_SIZE)
         activities = data.get("app_activity", [])
 
         if not activities:
@@ -92,19 +105,19 @@ class SyncService:
 
         logger.info("Syncing %d app_activity records to ERP", len(activities))
 
+        # Resolve alias once per batch (consistent within a batch)
+        pc_name    = self._get_pc_name()
         synced_ids = []
 
         for record in activities:
-            payload = self._build_payload(record)
+            payload = self._build_payload(record, pc_name)
             if payload is None:
-                # Skip malformed records but don't block others
                 continue
 
             success = self._post_to_erp(payload)
             if success:
                 synced_ids.append(record["id"])
             else:
-                # Stop batch on first failure — will retry next cycle
                 logger.warning(
                     "ERP POST failed for record id=%s — stopping batch, will retry",
                     record["id"]
@@ -115,37 +128,28 @@ class SyncService:
             self.db_manager.mark_as_synced("app_activity", synced_ids)
             logger.info("Marked %d records as synced", len(synced_ids))
 
-    def _build_payload(self, record: dict) -> dict | None:
+    def _build_payload(self, record: dict, pc_name: str) -> dict | None:
         """
         Transform a local app_activity row into the ERP JSON format.
-
-        Local row shape:
-            id, timestamp (ISO), app_name, window_title, duration_seconds, synced
-
-        ERP shape:
-            pcName, appName, windowsTitle, startTime, endTime, duration, syncTime
+        pc_name is passed in (resolved once per batch) rather than re-fetched per record.
         """
         try:
-            # Parse the stored timestamp (assumed UTC, no timezone info stored)
             start_dt = datetime.fromisoformat(record["timestamp"])
             if start_dt.tzinfo is None:
-                # Treat naive timestamps as UTC
                 start_dt = start_dt.replace(tzinfo=timezone.utc)
 
             duration_seconds = int(record.get("duration_seconds") or 0)
-            end_dt = start_dt + timedelta(seconds=duration_seconds)
-
-            # syncTime = moment this batch is being sent
+            end_dt  = start_dt + timedelta(seconds=duration_seconds)
             sync_dt = datetime.now(timezone.utc)
 
             return {
-                "pcName":       self._pc_name,
+                "pcName":       pc_name,
                 "appName":      record.get("app_name") or "Unknown",
                 "windowsTitle": record.get("window_title") or "",
                 "startTime":    start_dt.isoformat(),
                 "endTime":      end_dt.isoformat(),
-                "duration":     duration_seconds,   # Send as integer to match API/DB type
-                "syncTime":     sync_dt.isoformat()
+                "duration":     duration_seconds,
+                "syncTime":     sync_dt.isoformat(),
             }
         except Exception as e:
             logger.error("Failed to build payload for record %s: %s", record.get("id"), e)
@@ -154,8 +158,7 @@ class SyncService:
     def _post_to_erp(self, payload: dict) -> bool:
         """
         POST a single record to the ERP endpoint.
-        Returns True on HTTP 2xx, False on any error.
-        Timeout: 10s — don't block the sync thread.
+        Returns True on HTTP 2xx, False on any error. Timeout: 10s.
         """
         try:
             response = requests.post(
@@ -164,11 +167,10 @@ class SyncService:
                 timeout=10,
                 headers={
                     "Content-Type": "application/json",
-                    "Accept": "application/json"
+                    "Accept":       "application/json",
                 }
             )
-
-            if response.ok:  # 2xx
+            if response.ok:
                 logger.debug("ERP POST OK — app=%s duration=%ss",
                              payload["appName"], payload["duration"])
                 return True
@@ -178,7 +180,6 @@ class SyncService:
                     response.status_code, payload["appName"], response.text[:200]
                 )
                 return False
-
         except requests.exceptions.Timeout:
             logger.error("ERP POST timed out for app=%s", payload["appName"])
             return False
@@ -191,10 +192,7 @@ class SyncService:
 
     # ─── MANUAL TRIGGER ──────────────────────────────────────────────────────
     def trigger_sync_now(self):
-        """
-        Manually trigger a sync outside the scheduled interval.
-        Called from the API if needed (e.g., /api/sync/trigger endpoint).
-        """
+        """Manually trigger a sync outside the scheduled interval."""
         logger.info("Manual sync triggered")
         try:
             self._sync_app_activity()

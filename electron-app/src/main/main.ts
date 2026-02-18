@@ -237,6 +237,31 @@ function setupIpcHandlers() {
     }
   });
 
+  // Get identity config (machine_id, os_user, device_alias, user_alias)
+  ipcMain.handle('api:getIdentity', async () => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.get('/api/config/identity', token);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message);
+    }
+  });
+
+  // Update identity aliases (device_alias and/or user_alias)
+  ipcMain.handle('api:updateIdentity', async (
+    _event,
+    payload: { device_alias?: string; user_alias?: string }
+  ) => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.post('/api/config/identity', payload, token);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message);
+    }
+  });
+
   // Quit app
   ipcMain.handle('app:quit', async () => {
     isQuitting = true;

@@ -4,6 +4,7 @@ Monitors clipboard changes (for security/audit purposes)
 """
 
 import threading
+import getpass
 import time
 import logging
 from datetime import datetime
@@ -19,6 +20,7 @@ class ClipboardMonitor:
         self.is_paused = False
         self.thread = None
         self.last_clipboard_content = ""
+        self._os_user: str = getpass.getuser()
     
     def start(self):
         """Start clipboard monitoring"""
@@ -67,7 +69,7 @@ class ClipboardMonitor:
                     preview += "..."
                 
                 # Store in database
-                self.db_manager.insert_clipboard_event(content_type, preview)
+                self.db_manager.insert_clipboard_event(content_type, preview, self._os_user)
                 logger.debug(f"Clipboard event recorded: {len(current_content)} chars")
         except Exception as e:
             logger.error(f"Failed to check clipboard: {e}")

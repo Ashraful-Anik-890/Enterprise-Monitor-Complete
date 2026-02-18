@@ -20,6 +20,123 @@
       color: #333;
     }
 
+    .identity-section {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      padding: 12px 20px;
+      background: #f8f9ff;
+      border-bottom: 1px solid #e2e6ff;
+      flex-wrap: wrap;
+    }
+
+    .identity-card {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: #fff;
+      border: 1px solid #dde2f0;
+      border-radius: 8px;
+      padding: 10px 14px;
+      flex: 1;
+      min-width: 260px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+    }
+
+    .identity-icon {
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+
+    .identity-info {
+      display: flex;
+      flex-direction: column;
+      min-width: 90px;
+    }
+
+    .identity-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #888;
+    }
+
+    .identity-raw {
+      font-size: 11px;
+      color: #aaa;
+      font-style: italic;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 130px;
+    }
+
+    .identity-input-group {
+      display: flex;
+      gap: 6px;
+      flex: 1;
+    }
+
+    .identity-input {
+      flex: 1;
+      padding: 6px 10px;
+      border: 1px solid #cdd4e8;
+      border-radius: 6px;
+      font-size: 13px;
+      background: #fafbff;
+      color: #333;
+      transition: border-color 0.2s;
+    }
+
+    .identity-input:focus {
+      outline: none;
+      border-color: #667eea;
+      background: #fff;
+    }
+
+    .btn-identity-update {
+      padding: 6px 14px;
+      background: #667eea;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.2s;
+    }
+
+    .btn-identity-update:hover {
+      background: #5a6fd8;
+    }
+
+    .btn-identity-update:disabled {
+      background: #aaa;
+      cursor: not-allowed;
+    }
+
+    .identity-feedback {
+      width: 100%;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .identity-feedback.success {
+      background: #e6f9f0;
+      color: #1a8a52;
+      border: 1px solid #b3e6cf;
+    }
+
+    .identity-feedback.error {
+      background: #fff0f0;
+      color: #cc2222;
+      border: 1px solid #f5c6c6;
+    }
+
     /* ============================================================
        BUG FIX #1: Login overlay stays visible after login.
        ROOT CAUSE: The original code had:
@@ -453,7 +570,8 @@
   <!-- Dashboard Container -->
   <div id="dashboard-container" class="container dashboard">
     <div class="header">
-      <h1>Enterprise Monitor Dashboard</h1>
+      <h1>Enterprise Monitor Dashboard</h1><br>
+      <h3>Developed By Ashraful Anik</h3>
       <div class="header-actions">
         <button class="btn-secondary" id="refresh-btn">🔄 Refresh</button>
         <button class="btn-danger" id="logout-btn">Logout</button>
@@ -479,6 +597,36 @@
         <button class="btn-success" id="resume-btn"
           style="padding: 6px 12px; font-size: 13px; display: none;">Resume</button>
       </div>
+    </div>
+
+    <div class="identity-section" id="identity-section">
+      <div class="identity-card">
+        <div class="identity-icon">🖥️</div>
+        <div class="identity-info">
+          <label class="identity-label">Device Name</label>
+          <small class="identity-raw" id="identity-machine-id">Loading…</small>
+        </div>
+        <div class="identity-input-group">
+          <input type="text" id="device-alias-input" class="identity-input" placeholder="Custom device name…"
+            maxlength="64" />
+          <button class="btn-identity-update" id="update-device-alias-btn">Update</button>
+        </div>
+      </div>
+
+      <div class="identity-card">
+        <div class="identity-icon">👤</div>
+        <div class="identity-info">
+          <label class="identity-label">Current User</label>
+          <small class="identity-raw" id="identity-os-user">Loading…</small>
+        </div>
+        <div class="identity-input-group">
+          <input type="text" id="user-alias-input" class="identity-input" placeholder="Custom user name…"
+            maxlength="64" />
+          <button class="btn-identity-update" id="update-user-alias-btn">Update</button>
+        </div>
+      </div>
+
+      <div id="identity-feedback" class="identity-feedback" style="display:none;"></div>
     </div>
 
     <div class="tabs">

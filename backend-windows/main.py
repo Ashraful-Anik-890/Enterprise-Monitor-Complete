@@ -6,6 +6,7 @@ Main entry point for the monitoring service
 import uvicorn
 import logging
 from pathlib import Path
+import getpass
 
 # Setup logging
 log_dir = Path.home() / "AppData" / "Local" / "EnterpriseMonitor" / "logs"

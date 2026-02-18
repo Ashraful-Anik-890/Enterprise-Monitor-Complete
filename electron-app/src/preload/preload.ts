@@ -7,7 +7,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('auth:login', credentials),
   logout: () => ipcRenderer.invoke('auth:logout'),
 
-  // FIX #2: getStatistics now accepts { date } param for date-filtered stats
   getStatistics: (params: { date?: string }) =>
     ipcRenderer.invoke('api:getStatistics', params),
 
@@ -31,8 +30,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getKeyLogs: (params: { limit?: number; offset?: number }) =>
     ipcRenderer.invoke('api:getKeyLogs', params),
 
+  // Identity / Alias Management
+  getIdentity: () =>
+    ipcRenderer.invoke('api:getIdentity'),
+  updateIdentity: (payload: { device_alias?: string; user_alias?: string }) =>
+    ipcRenderer.invoke('api:updateIdentity', payload),
+
   // App control
-  quitApp: () => ipcRenderer.invoke('app:quit')
+  quitApp: () => ipcRenderer.invoke('app:quit'),
 });
 
 declare global {
@@ -52,6 +57,13 @@ declare global {
       getBrowserLogs: (params: { limit?: number; offset?: number }) => Promise<any>;
       getClipboardLogs: (params: { limit?: number; offset?: number }) => Promise<any>;
       getKeyLogs: (params: { limit?: number; offset?: number }) => Promise<any>;
+      getIdentity: () => Promise<{
+        machine_id: string;
+        os_user: string;
+        device_alias: string;
+        user_alias: string;
+      }>;
+      updateIdentity: (payload: { device_alias?: string; user_alias?: string }) => Promise<{ success: boolean; message?: string; error?: string }>;
       quitApp: () => Promise<void>;
     };
   }

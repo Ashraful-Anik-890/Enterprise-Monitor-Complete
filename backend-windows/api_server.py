@@ -1,21 +1,26 @@
 """
 FastAPI REST API Server
 
-CHANGES (Bug Fixes):
+CHANGES:
 - Bug 1: login() now calls auth_manager.verify_credentials() — the actual method name.
-         My previous rewrite incorrectly used auth_manager.authenticate() which does
-         not exist, causing AttributeError on every login attempt.
-- Bug 2: verify_token() dependency now wraps auth_manager.verify_token() in try/except
-         AND checks for None return. auth_manager.verify_token() no longer raises —
-         it returns None. Both layers now cleanly return HTTP 401, never 500.
+- Bug 2: verify_token() dependency wraps auth_manager.verify_token() safely.
+- IDENTITY: GET /api/config/identity — returns machine_id, os_user, device_alias, user_alias.
+- IDENTITY: POST /api/config/identity — updates device_alias and/or user_alias.
+
+FIX (v2): Restored @app.on_event("startup") and @app.on_event("shutdown") lifecycle
+           handlers that were accidentally omitted in the previous delivery. Without
+           these, no monitoring services ever started after uvicorn loaded.
+           Also restored GET/POST /api/config endpoints that were dropped.
 """
 
+import socket
+import getpass
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from auth.auth_manager import AuthManager
 from database.db_manager import DatabaseManager
@@ -40,16 +45,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-auth_manager = AuthManager()
-db_manager = DatabaseManager()
+auth_manager       = AuthManager()
+db_manager         = DatabaseManager()
 screenshot_monitor = ScreenshotMonitor(db_manager)
-clipboard_monitor = ClipboardMonitor(db_manager)
-app_tracker = AppTracker(db_manager)
-browser_tracker = BrowserTracker(db_manager)
-keylogger = Keylogger(db_manager)
-cleanup_service = CleanupService(db_manager)
-config_manager = ConfigManager()
-sync_service = SyncService(db_manager, config_manager)
+clipboard_monitor  = ClipboardMonitor(db_manager)
+app_tracker        = AppTracker(db_manager)
+browser_tracker    = BrowserTracker(db_manager)
+keylogger          = Keylogger(db_manager)
+cleanup_service    = CleanupService(db_manager)
+config_manager     = ConfigManager()
+sync_service       = SyncService(db_manager, config_manager)
 
 monitoring_active = True
 
@@ -90,16 +95,19 @@ class ConfigRequest(BaseModel):
     api_key: Optional[str] = None
     sync_interval_seconds: Optional[int] = None
 
+class IdentityResponse(BaseModel):
+    machine_id:   str
+    os_user:      str
+    device_alias: str
+    user_alias:   str
+
+class IdentityUpdateRequest(BaseModel):
+    device_alias: Optional[str] = None
+    user_alias:   Optional[str] = None
+
 
 # ─── AUTH DEPENDENCY ─────────────────────────────────────────────────────────
 async def verify_token(authorization: Optional[str] = Header(None)):
-    """
-    FastAPI dependency. Extracts Bearer token and validates it.
-
-    BUG 2 FIX: auth_manager.verify_token() now returns None instead of raising.
-    We check for None here and raise HTTPException(401). Nothing can reach the
-    server as a 500 from an expired or invalid token anymore.
-    """
     if not authorization:
         raise HTTPException(status_code=401, detail="No authorization header")
 
@@ -108,37 +116,59 @@ async def verify_token(authorization: Optional[str] = Header(None)):
         raise HTTPException(status_code=401, detail="Invalid authorization format")
 
     token = parts[1]
-
     try:
         payload = auth_manager.verify_token(token)
     except Exception as e:
-        # auth_manager.verify_token() should never raise now, but keep this
-        # as a hard safety net so a future regression cannot cause a 500.
-        logger.error(f"Unexpected error in verify_token dependency: {e}")
+        logger.error(f"Unexpected error in verify_token: {e}")
         raise HTTPException(status_code=401, detail="Token validation error")
 
     if payload is None:
-        # Covers: expired token, invalid signature, malformed token
         raise HTTPException(status_code=401, detail="Token is invalid or has expired")
 
     return payload
+
+
+# ─── LIFECYCLE  ──────────────────────────────────────────────────────────────
+@app.on_event("startup")
+async def startup_event():
+    logger.info("Starting monitoring services...")
+    screenshot_monitor.start()
+    clipboard_monitor.start()
+    app_tracker.start()
+    browser_tracker.start()
+    keylogger.start()
+    cleanup_service.start()
+    sync_service.start()
+    logger.info("All monitoring services started")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    logger.info("Stopping monitoring services...")
+    screenshot_monitor.stop()
+    clipboard_monitor.stop()
+    app_tracker.stop()
+    browser_tracker.stop()
+    keylogger.stop()
+    cleanup_service.stop()
+    sync_service.stop()
+    logger.info("All monitoring services stopped")
 
 
 # ─── HEALTH ──────────────────────────────────────────────────────────────────
 @app.get("/health")
 async def health_check():
     return {
-        "status": "healthy",
-        "platform": "windows",
+        "status":    "healthy",
+        "platform":  "windows",
         "timestamp": datetime.utcnow().isoformat()
     }
 
 @app.get("/")
 async def root():
     return {
-        "name": "Enterprise Monitor API",
-        "version": "1.0.0",
-        "status": "running",
+        "name":     "Enterprise Monitor API",
+        "version":  "1.0.0",
+        "status":   "running",
         "docs_url": "/docs"
     }
 
@@ -146,10 +176,6 @@ async def root():
 # ─── AUTH ENDPOINTS ──────────────────────────────────────────────────────────
 @app.post("/api/auth/login", response_model=LoginResponse)
 async def login(request: LoginRequest):
-    """
-    BUG 1 FIX: Was calling auth_manager.authenticate() — method does not exist.
-    Correct method is verify_credentials(username, password) → bool.
-    """
     try:
         is_valid = auth_manager.verify_credentials(request.username, request.password)
         if is_valid:
@@ -181,6 +207,43 @@ async def change_password(request: ChangePasswordRequest, user=Depends(verify_to
         return {"success": False, "error": "Failed to change password"}
 
 
+# ─── IDENTITY CONFIG ─────────────────────────────────────────────────────────
+@app.get("/api/config/identity", response_model=IdentityResponse)
+async def get_identity(user=Depends(verify_token)):
+    """
+    Returns raw machine identity plus any custom aliases.
+    Falls back to hostname / os_user when no alias is configured.
+    """
+    try:
+        config = db_manager.get_identity_config()
+        return IdentityResponse(
+            machine_id=config["machine_id"],
+            os_user=config["os_user"],
+            device_alias=config["device_alias"],
+            user_alias=config["user_alias"],
+        )
+    except Exception as e:
+        logger.error(f"Error getting identity config: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get identity config")
+
+@app.post("/api/config/identity")
+async def update_identity(request: IdentityUpdateRequest, user=Depends(verify_token)):
+    """Updates device_alias and/or user_alias. Null fields are left unchanged."""
+    if request.device_alias is None and request.user_alias is None:
+        return {"success": False, "error": "No fields to update"}
+    try:
+        ok = db_manager.update_identity_config(
+            device_alias=request.device_alias,
+            user_alias=request.user_alias,
+        )
+        if ok:
+            return {"success": True, "message": "Identity updated"}
+        return {"success": False, "error": "Update failed"}
+    except Exception as e:
+        logger.error(f"Error updating identity config: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update identity config")
+
+
 # ─── STATISTICS ──────────────────────────────────────────────────────────────
 @app.get("/api/statistics", response_model=StatisticsResponse)
 async def get_statistics(date: Optional[str] = None, user=Depends(verify_token)):
@@ -190,7 +253,7 @@ async def get_statistics(date: Optional[str] = None, user=Depends(verify_token))
             total_screenshots=stats.get("screenshots_today", 0),
             active_hours_today=stats.get("active_hours_today", 0.0),
             apps_tracked=stats.get("apps_tracked", 0),
-            clipboard_events=stats.get("clipboard_events", 0)
+            clipboard_events=stats.get("clipboard_events", 0),
         )
     except Exception as e:
         logger.error(f"Error getting statistics: {e}")
@@ -317,27 +380,12 @@ async def update_config(config: ConfigRequest, user=Depends(verify_token)):
     return {"success": True, "config": config_manager.config}
 
 
-# ─── LIFECYCLE ───────────────────────────────────────────────────────────────
-@app.on_event("startup")
-async def startup_event():
-    logger.info("Starting monitoring services...")
-    screenshot_monitor.start()
-    clipboard_monitor.start()
-    app_tracker.start()
-    browser_tracker.start()
-    keylogger.start()
-    cleanup_service.start()
-    sync_service.start()
-    logger.info("All monitoring services started")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    logger.info("Stopping monitoring services...")
-    screenshot_monitor.stop()
-    clipboard_monitor.stop()
-    app_tracker.stop()
-    browser_tracker.stop()
-    keylogger.stop()
-    cleanup_service.stop()
-    sync_service.stop()
-    logger.info("All monitoring services stopped")
+# ─── SYNC ────────────────────────────────────────────────────────────────────
+@app.post("/api/sync/trigger")
+async def trigger_sync(user=Depends(verify_token)):
+    try:
+        result = sync_service.trigger_sync_now()
+        return result
+    except Exception as e:
+        logger.error(f"Error triggering sync: {e}")
+        raise HTTPException(status_code=500, detail="Failed to trigger sync")
