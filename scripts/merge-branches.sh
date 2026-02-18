@@ -19,7 +19,7 @@ fi
 
 # Check for --delete-master flag
 DELETE_MASTER=false
-if [ "$1" == "--delete-master" ]; then
+if [ "$1" = "--delete-master" ]; then
     DELETE_MASTER=true
     echo "⚠️  Master branch will be deleted after merge"
 fi
@@ -53,7 +53,7 @@ else
     exit 1
 fi
 
-if [ "$DELETE_MASTER" == true ]; then
+if [ "$DELETE_MASTER" = true ]; then
     echo ""
     echo "Step 6: Deleting master branch..."
     
@@ -81,7 +81,7 @@ echo ""
 echo "Summary:"
 echo "- Master branch has been merged into main"
 echo "- Main branch contains all the code"
-if [ "$DELETE_MASTER" == true ]; then
+if [ "$DELETE_MASTER" = true ]; then
     echo "- Master branch has been deleted (locally and remotely)"
 else
     echo "- Master branch still exists (use --delete-master to remove it)"
