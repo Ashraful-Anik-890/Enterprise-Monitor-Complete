@@ -1,0 +1,65 @@
+name: Merge Master to Main
+
+# This workflow can be manually triggered to merge master branch into main
+# and optionally delete the master branch
+
+on:
+  workflow_dispatch:
+    inputs:
+      delete_master:
+        description: 'Delete master branch after merge'
+        required: true
+        type: boolean
+        default: false
+
+jobs:
+  merge-branches:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for all branches
+          
+      - name: Configure Git
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          
+      - name: Fetch all branches
+        run: |
+          git fetch origin main:main || true
+          git fetch origin master:master || true
+          
+      - name: Checkout main branch
+        run: git checkout main
+        
+      - name: Merge master into main
+        run: |
+          echo "Merging master into main..."
+          git merge origin/master --allow-unrelated-histories --no-edit
+          
+      - name: Push merged main
+        run: |
+          echo "Pushing merged main branch..."
+          git push origin main
+          
+      - name: Delete master branch
+        if: ${{ github.event.inputs.delete_master == 'true' }}
+        run: |
+          echo "Deleting master branch..."
+          git push origin --delete master
+          echo "Master branch deleted successfully"
+          
+      - name: Summary
+        run: |
+          echo "✅ Merge completed successfully!"
+          echo "Main branch now contains all code from master"
+          if [ "${{ github.event.inputs.delete_master }}" == "true" ]; then
+            echo "🗑️ Master branch has been deleted"
+          else
+            echo "ℹ️ Master branch still exists (not deleted)"
+          fi

@@ -4,6 +4,8 @@
 
 A comprehensive, production-ready monitoring solution built with Electron, Python FastAPI, and modern web technologies. Designed for enterprise environments to track employee productivity, application usage, and system activity.
 
+> **📌 Repository Note**: This repository is transitioning to use `main` as the default branch. See [BRANCH_MERGE_INSTRUCTIONS.md](BRANCH_MERGE_INSTRUCTIONS.md) for details on the branch consolidation process.
+
 ---
 
 ## 📋 Table of Contents
