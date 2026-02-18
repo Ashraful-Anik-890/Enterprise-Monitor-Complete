@@ -187,7 +187,7 @@ async def get_statistics(date: Optional[str] = None, user=Depends(verify_token))
     try:
         stats = db_manager.get_statistics(date=date)
         return StatisticsResponse(
-            total_screenshots=stats.get("total_screenshots", 0),
+            total_screenshots=stats.get("screenshots_today", 0),
             active_hours_today=stats.get("active_hours_today", 0.0),
             apps_tracked=stats.get("apps_tracked", 0),
             clipboard_events=stats.get("clipboard_events", 0)

@@ -2,11 +2,26 @@
 browser_tracker.py
 Tracks active browser URLs using the uiautomation library.
 
-Supported browsers: Chrome, Edge, Firefox
 Uses UI Automation (NOT Selenium) — reads the address bar control directly.
 Runs in a daemon thread, matching the existing threading architecture.
 
 Requires: pip install uiautomation pywin32
+
+BUGS FIXED:
+- Bug 1: Operator precedence: `return browser, hwnd if browser else (None, None)`
+         is parsed as `return (browser, (hwnd if browser else (None, None)))`.
+         When browser=None, hwnd gets assigned (None, None) — a non-empty tuple
+         which is truthy — so the `not hwnd` guard never fires. Fixed with explicit
+         tuple construction.
+- Bug 2: Chrome's Omnibox Name attribute is empty in modern builds. Added
+         AutomationId="omnibox" as primary lookup (works for all Chromium builds).
+         Name-based lookup is now a secondary fallback.
+- Bug 3: Only Chrome/Edge/Firefox were in BROWSER_PROCESS_MAP. Added Brave, Opera,
+         Yandex, DuckDuckGo, UC Browser, and Vivaldi. All are Chromium-based so
+         they share the same omnibox AutomationId.
+
+NOTE: Samsung Internet and Safari are mobile/macOS-only — not available as
+      Windows desktop processes, so they cannot be tracked on Windows.
 """
 
 import threading
@@ -17,15 +32,45 @@ from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# Map of process names → friendly browser names
+# ── Process name → friendly display name ──────────────────────────────────────
+# All Chromium-based browsers share AutomationId="omnibox" on their address bar.
+# Firefox has a different UIA tree and uses its own reader.
 BROWSER_PROCESS_MAP = {
-    "chrome.exe":  "Chrome",
-    "msedge.exe":  "Edge",
-    "firefox.exe": "Firefox",
+    # Chromium engine
+    "chrome.exe":          "Chrome",
+    "msedge.exe":          "Edge",
+    "brave.exe":           "Brave",
+    "opera.exe":           "Opera",
+    "operagx.exe":         "Opera GX",
+    "browser.exe":         "Yandex Browser",   # Yandex installs as browser.exe
+    "duckduckgo.exe":      "DuckDuckGo",
+    "ucbrowser.exe":       "UC Browser",
+    "vivaldi.exe":         "Vivaldi",
+    "cent.exe":            "Cent Browser",
+    "360chrome.exe":       "360 Browser",
+    # Gecko engine
+    "firefox.exe":         "Firefox",
+    "waterfox.exe":        "Waterfox",
+    "librewolf.exe":       "LibreWolf",
+    "thunderbird.exe":     "Thunderbird",      # has an address bar too
 }
 
-# Chrome/Edge address bar control name (Omnibox)
-CHROMIUM_ADDRESS_BAR_NAME = "Address and search bar"
+# Chromium Omnibox control identifiers
+# AutomationId is stable across locales; Name is locale-dependent (only Edge reliably sets it)
+CHROMIUM_OMNIBOX_AUTOMATION_ID = "omnibox"
+CHROMIUM_OMNIBOX_NAME          = "Address and search bar"
+
+# Firefox toolbar name candidates (locale-dependent — we try all of them)
+FIREFOX_TOOLBAR_NAMES = [
+    "Search with Google or enter address",
+    "Search with DuckDuckGo or enter address",
+    "Search with Bing or enter address",
+    "Search or enter address",
+    "Address bar",
+]
+
+# Gecko-engine browsers (different UIA tree from Chromium)
+GECKO_BROWSERS = {"Firefox", "Waterfox", "LibreWolf", "Thunderbird"}
 
 
 class BrowserTracker:
@@ -43,9 +88,6 @@ class BrowserTracker:
         self._is_running = False
         self._is_paused = False
         self._last_url: str = ""
-
-        # uiautomation is Windows-only — import lazily so the module can be
-        # imported on non-Windows without immediately crashing.
         self._uia = None
 
     # ─── LIFECYCLE ───────────────────────────────────────────────────────────
@@ -59,7 +101,9 @@ class BrowserTracker:
             return
 
         self._is_running = True
-        self._thread = threading.Thread(target=self._run_loop, daemon=True, name="BrowserTracker")
+        self._thread = threading.Thread(
+            target=self._run_loop, daemon=True, name="BrowserTracker"
+        )
         self._thread.start()
         logger.info("BrowserTracker started")
 
@@ -80,13 +124,13 @@ class BrowserTracker:
     # ─── MAIN LOOP ───────────────────────────────────────────────────────────
 
     def _run_loop(self):
-        # Lazy import — uiautomation takes ~0.5 s to initialise COM on first use
+        # Lazy import: uiautomation initialises COM on first use (~0.5s)
         try:
             import uiautomation as uia
             self._uia = uia
         except ImportError:
             logger.error(
-                "uiautomation not installed. Run: pip install uiautomation\n"
+                "uiautomation not installed. Run: pip install uiautomation -- "
                 "BrowserTracker will not function."
             )
             self._is_running = False
@@ -100,7 +144,7 @@ class BrowserTracker:
             except Exception as e:
                 logger.error(f"BrowserTracker poll error: {e}")
 
-            # Interruptible sleep — checks is_running every second
+            # Interruptible sleep
             for _ in range(self.POLL_INTERVAL):
                 if not self._is_running:
                     return
@@ -108,10 +152,11 @@ class BrowserTracker:
 
         logger.info("BrowserTracker loop ended")
 
+    # ─── POLL ────────────────────────────────────────────────────────────────
+
     def _poll(self):
-        """Check the active window; if it's a browser, extract and store the URL."""
         browser_name, hwnd = self._get_active_browser()
-        if not browser_name or not hwnd:
+        if browser_name is None or hwnd is None:
             return
 
         url, title = self._extract_url_and_title(browser_name, hwnd)
@@ -125,14 +170,16 @@ class BrowserTracker:
                 url=url,
                 page_title=title or ""
             )
-            logger.debug(f"Browser activity: [{browser_name}] {url}")
+            logger.info(f"[BrowserTracker] {browser_name} → {url}")
 
-    # ─── HELPERS ─────────────────────────────────────────────────────────────
+    # ─── WINDOW DETECTION ────────────────────────────────────────────────────
 
     def _get_active_browser(self) -> Tuple[Optional[str], Optional[int]]:
         """
-        Returns (browser_friendly_name, hwnd) if the foreground window belongs
-        to a tracked browser; otherwise (None, None).
+        Returns (browser_friendly_name, hwnd) for the foreground window if it
+        belongs to a tracked browser, otherwise (None, None).
+
+        FIX: explicit tuple literals prevent Python operator-precedence bugs.
         """
         try:
             import win32gui
@@ -141,92 +188,241 @@ class BrowserTracker:
 
             hwnd = win32gui.GetForegroundWindow()
             if not hwnd:
-                return None, None
+                return (None, None)
 
             _, pid = win32process.GetWindowThreadProcessId(hwnd)
             proc = psutil.Process(pid)
             exe_name = proc.name().lower()
 
             browser = BROWSER_PROCESS_MAP.get(exe_name)
-            return browser, hwnd if browser else (None, None)
+            if browser:
+                return (browser, hwnd)
+            return (None, None)
 
-        except Exception:
-            return None, None
+        except Exception as e:
+            logger.debug(f"BrowserTracker: window detection error: {e}")
+            return (None, None)
+
+    # ─── URL EXTRACTION ──────────────────────────────────────────────────────
 
     def _extract_url_and_title(
         self, browser_name: str, hwnd: int
     ) -> Tuple[Optional[str], Optional[str]]:
-        """
-        Use uiautomation to locate the address bar control and read its value.
-        Returns (url, page_title).  Both may be None on failure.
-        """
         try:
             import win32gui
             uia = self._uia
 
             window_title = win32gui.GetWindowText(hwnd)
-            ctrl = uia.ControlFromHandle(hwnd)
+            window_ctrl  = uia.ControlFromHandle(hwnd)
 
-            if browser_name in ("Chrome", "Edge"):
-                url = self._read_chromium_address_bar(ctrl)
-            elif browser_name == "Firefox":
-                url = self._read_firefox_address_bar(ctrl)
+            if browser_name in GECKO_BROWSERS:
+                url = self._read_gecko_address_bar(window_ctrl, browser_name)
             else:
-                return None, None
+                # All Chromium-based browsers (Chrome, Edge, Brave, Opera, ...)
+                url = self._read_chromium_address_bar(window_ctrl, browser_name)
 
-            return url, window_title
+            if url:
+                return (url, window_title)
+
+            logger.debug(
+                f"[BrowserTracker] Could not read URL from {browser_name} "
+                f"(title: '{window_title}')"
+            )
+            return (None, None)
 
         except Exception as e:
-            # "Access Denied" surfaces as a generic Exception from uiautomation
-            if "Access" in str(e) or "denied" in str(e).lower():
-                logger.debug(f"Access denied reading {browser_name} address bar (elevated process)")
+            err = str(e).lower()
+            if "access" in err or "denied" in err:
+                logger.debug(
+                    f"[BrowserTracker] Access denied for {browser_name} "
+                    f"(browser may be running elevated)"
+                )
             else:
-                logger.debug(f"Could not read {browser_name} URL: {e}")
-            return None, None
+                logger.debug(f"[BrowserTracker] extract error for {browser_name}: {e}")
+            return (None, None)
 
-    def _read_chromium_address_bar(self, window_ctrl) -> Optional[str]:
+    # ─── CHROMIUM READER ─────────────────────────────────────────────────────
+
+    def _read_chromium_address_bar(
+        self, window_ctrl, browser_name: str
+    ) -> Optional[str]:
         """
-        Chrome and Edge share the same Omnibox control name.
-        Search depth 15 covers all toolbar nesting.
+        Reads the Omnibox from any Chromium-based browser.
+
+        Strategy (in order):
+          1. AutomationId="omnibox"         — works for Chrome, Brave, Opera, etc.
+          2. Name="Address and search bar"  — works for Edge (and some Chrome versions)
+          3. Structural deep walk           — last resort for any Chromium variant
         """
+        uia = self._uia
+
+        # ── Strategy 1: AutomationId (most reliable across all Chromium builds) ──
         try:
-            addr = window_ctrl.EditControl(
-                Name=CHROMIUM_ADDRESS_BAR_NAME,
-                searchDepth=15
+            ctrl = window_ctrl.EditControl(
+                AutomationId=CHROMIUM_OMNIBOX_AUTOMATION_ID,
+                searchDepth=20
             )
-            if addr.Exists(0, 0):
-                value = addr.GetValuePattern().Value
-                return value if value else None
+            if ctrl.Exists(0, 0):
+                value = ctrl.GetValuePattern().Value
+                if value:
+                    logger.debug(f"[{browser_name}] URL via AutomationId: {value}")
+                    return value
+        except Exception as e:
+            logger.debug(f"[{browser_name}] AutomationId lookup error: {e}")
+
+        # ── Strategy 2: Name attribute (Edge + some Chrome versions) ─────────
+        try:
+            ctrl = window_ctrl.EditControl(
+                Name=CHROMIUM_OMNIBOX_NAME,
+                searchDepth=20
+            )
+            if ctrl.Exists(0, 0):
+                value = ctrl.GetValuePattern().Value
+                if value:
+                    logger.debug(f"[{browser_name}] URL via Name: {value}")
+                    return value
+        except Exception as e:
+            logger.debug(f"[{browser_name}] Name lookup error: {e}")
+
+        # ── Strategy 3: Structural deep walk ─────────────────────────────────
+        try:
+            result = self._deep_find_url_edit(window_ctrl, depth=0, max_depth=10)
+            if result:
+                logger.debug(f"[{browser_name}] URL via deep walk: {result}")
+                return result
+        except Exception as e:
+            logger.debug(f"[{browser_name}] Deep walk error: {e}")
+
+        return None
+
+    def _deep_find_url_edit(
+        self, ctrl, depth: int, max_depth: int
+    ) -> Optional[str]:
+        """
+        Recursively walks the UIA control tree looking for an EditControl whose
+        value looks like a URL. Limited to max_depth to bound traversal time.
+        """
+        if depth > max_depth:
+            return None
+        try:
+            if ctrl.ControlTypeName == "EditControl":
+                try:
+                    value = ctrl.GetValuePattern().Value
+                    if value and self._looks_like_url(value):
+                        return value
+                except Exception:
+                    pass
+            for child in ctrl.GetChildren():
+                found = self._deep_find_url_edit(child, depth + 1, max_depth)
+                if found:
+                    return found
         except Exception:
             pass
         return None
 
-    def _read_firefox_address_bar(self, window_ctrl) -> Optional[str]:
+    # ─── GECKO (FIREFOX) READER ──────────────────────────────────────────────
+
+    def _read_gecko_address_bar(
+        self, window_ctrl, browser_name: str
+    ) -> Optional[str]:
         """
-        Firefox URL bar: ComboBoxControl → EditControl inside.
-        The ComboBox is typically named 'Search with Google or enter address'
-        but the Name can change with locale, so we fall back to role-based search.
+        Reads the address bar from Firefox / Waterfox / LibreWolf.
+
+        Firefox v110+ changed its UIA tree: the address bar is now inside a
+        ToolbarControl, NOT a ComboBoxControl as in older versions.
+
+        Strategy (in order):
+          1. Walk ToolbarControls looking for a child EditControl with a URL value
+             — covers Firefox v110+
+          2. Named ComboBoxControl — covers Firefox < v110
+          3. Any ComboBoxControl with a URL-like child edit — legacy fallback
+        """
+        uia = self._uia
+
+        # ── Strategy 1: ToolbarControl (Firefox v110+) ───────────────────────
+        try:
+            # Walk all toolbar controls at any depth up to 15
+            toolbar = window_ctrl.ToolbarControl(searchDepth=15)
+            while toolbar and toolbar.Exists(0, 0):
+                url = self._extract_edit_url(toolbar, depth=5)
+                if url:
+                    logger.debug(f"[{browser_name}] URL via ToolbarControl: {url}")
+                    return url
+                next_ctrl = toolbar.GetNextSiblingControl()
+                if (not next_ctrl or
+                        next_ctrl.ControlTypeName != "ToolbarControl"):
+                    break
+                toolbar = next_ctrl
+        except Exception as e:
+            logger.debug(f"[{browser_name}] Toolbar walk error: {e}")
+
+        # ── Strategy 2: Named toolbar (locale variants) ───────────────────────
+        try:
+            for name in FIREFOX_TOOLBAR_NAMES:
+                ctrl = window_ctrl.ToolbarControl(Name=name, searchDepth=15)
+                if ctrl.Exists(0, 0):
+                    url = self._extract_edit_url(ctrl, depth=5)
+                    if url:
+                        logger.debug(f"[{browser_name}] URL via named toolbar: {url}")
+                        return url
+        except Exception as e:
+            logger.debug(f"[{browser_name}] Named toolbar error: {e}")
+
+        # ── Strategy 3: ComboBoxControl (Firefox < v110) ─────────────────────
+        try:
+            for name in FIREFOX_TOOLBAR_NAMES:
+                combo = window_ctrl.ComboBoxControl(Name=name, searchDepth=15)
+                if combo.Exists(0, 0):
+                    url = self._extract_edit_url(combo, depth=5)
+                    if url:
+                        logger.debug(f"[{browser_name}] URL via named ComboBox: {url}")
+                        return url
+
+            # unnamed ComboBox fallback
+            combo = window_ctrl.ComboBoxControl(searchDepth=15)
+            while combo and combo.Exists(0, 0):
+                url = self._extract_edit_url(combo, depth=5)
+                if url:
+                    logger.debug(f"[{browser_name}] URL via ComboBox walk: {url}")
+                    return url
+                next_ctrl = combo.GetNextSiblingControl()
+                if (not next_ctrl or
+                        next_ctrl.ControlTypeName != "ComboBoxControl"):
+                    break
+                combo = next_ctrl
+        except Exception as e:
+            logger.debug(f"[{browser_name}] ComboBox fallback error: {e}")
+
+        return None
+
+    # ─── HELPERS ─────────────────────────────────────────────────────────────
+
+    def _extract_edit_url(self, parent_ctrl, depth: int) -> Optional[str]:
+        """
+        Finds an EditControl child within parent_ctrl and returns its value
+        if it looks like a URL.
         """
         try:
-            # Attempt 1: named combo box (English locale)
-            combo = window_ctrl.ComboBoxControl(
-                Name="Search with Google or enter address",
-                searchDepth=15
-            )
-            if combo.Exists(0, 0):
-                edit = combo.EditControl(searchDepth=3)
-                if edit.Exists(0, 0):
-                    value = edit.GetValuePattern().Value
-                    return value if value else None
-
-            # Attempt 2: look for any ComboBox whose child Edit has a URL-like value
-            for combo in window_ctrl.GetChildren():
-                if combo.ControlTypeName == "ComboBoxControl":
-                    edit = combo.EditControl(searchDepth=3)
-                    if edit.Exists(0, 0):
-                        value = edit.GetValuePattern().Value
-                        if value and ("." in value or value.startswith("http")):
-                            return value
+            edit = parent_ctrl.EditControl(searchDepth=depth)
+            if edit.Exists(0, 0):
+                value = edit.GetValuePattern().Value
+                if value and self._looks_like_url(value):
+                    return value
         except Exception:
             pass
         return None
+
+    @staticmethod
+    def _looks_like_url(value: str) -> bool:
+        """
+        Heuristic: returns True if value looks like a URL or domain.
+        Rejects pure search queries (spaces), empty values, and single words.
+        """
+        if not value or len(value) < 3:
+            return False
+        if value.startswith(("http://", "https://", "ftp://", "file://")):
+            return True
+        # domain-like: has a dot, no spaces, more than 4 chars
+        if "." in value and " " not in value and len(value) > 4:
+            return True
+        return False
