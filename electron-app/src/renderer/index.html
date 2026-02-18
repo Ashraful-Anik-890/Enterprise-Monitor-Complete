@@ -39,7 +39,8 @@
     }
 
     .login-container.active {
-      display: flex; /* override block → flex for centering */
+      display: flex;
+      /* override block → flex for centering */
     }
 
     /* Login Page — NO display property here anymore */
@@ -539,6 +540,7 @@
           <div class="sub-tabs">
             <button class="sub-tab-btn active" data-subtab="app-tracking">App Tracking</button>
             <button class="sub-tab-btn" data-subtab="browser-tracking">Browser Tracking</button>
+            <button class="sub-tab-btn" data-subtab="text-tracking">Text Tracking</button>
             <button class="sub-tab-btn" data-subtab="clipboard-tracking">Clipboard Tracking</button>
           </div>
 
@@ -565,14 +567,30 @@
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>Timestamp</th>
+                  <th>Time</th>
                   <th>Browser</th>
-                  <th>Tab/Window Title</th>
-                  <th>Duration</th>
+                  <th>Page Title</th>
+                  <th>URL</th>
                 </tr>
               </thead>
               <tbody id="browser-logs-body">
               </tbody>
+            </table>
+          </div>
+
+          <!-- Text Tracking View -->
+          <div id="text-tracking-view" class="sub-view" style="display: none;">
+            <h3 style="margin-bottom: 15px;">Text / Keystroke Logs</h3>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Application</th>
+                  <th>Window Title</th>
+                  <th>Typed Text</th>
+                </tr>
+              </thead>
+              <tbody id="key-logs-body"></tbody>
             </table>
           </div>
 

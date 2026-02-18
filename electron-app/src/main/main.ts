@@ -216,6 +216,16 @@ function setupIpcHandlers() {
     }
   });
 
+  ipcMain.handle('api:getKeyLogs', async (_event, params = {}) => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.get('/api/data/keylogs', token, params);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.message);
+    }
+  });
+
   // Clipboard logs
   ipcMain.handle('api:getClipboardLogs', async (_event, params: { limit?: number; offset?: number } = {}) => {
     try {

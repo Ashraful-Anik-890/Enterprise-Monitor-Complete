@@ -28,6 +28,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('api:getBrowserLogs', params),
   getClipboardLogs: (params: { limit?: number; offset?: number }) =>
     ipcRenderer.invoke('api:getClipboardLogs', params),
+  getKeyLogs: (params: { limit?: number; offset?: number }) =>
+    ipcRenderer.invoke('api:getKeyLogs', params),
 
   // App control
   quitApp: () => ipcRenderer.invoke('app:quit')
@@ -49,6 +51,7 @@ declare global {
       getAppLogs: (params: { limit?: number; offset?: number }) => Promise<any>;
       getBrowserLogs: (params: { limit?: number; offset?: number }) => Promise<any>;
       getClipboardLogs: (params: { limit?: number; offset?: number }) => Promise<any>;
+      getKeyLogs: (params: { limit?: number; offset?: number }) => Promise<any>;
       quitApp: () => Promise<void>;
     };
   }

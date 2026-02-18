@@ -300,6 +300,7 @@ async function loadMonitorData() {
   if (currentSubTab === 'app-tracking') await loadAppLogs();
   else if (currentSubTab === 'browser-tracking') await loadBrowserLogs();
   else if (currentSubTab === 'clipboard-tracking') await loadClipboardLogs();
+  else if (currentSubTab === 'text-tracking') await loadKeyLogs();
 }
 
 async function loadAppLogs() {
@@ -328,7 +329,7 @@ async function loadBrowserLogs() {
   const tbody = document.getElementById('browser-logs-body');
   tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;">Loading...</td></tr>';
   try {
-    const logs = await window.electronAPI.getBrowserLogs({ limit: 50 });
+    const logs = await window.electronAPI.getBrowserLogs({ limit: 100 });
     if (!logs || logs.length === 0) {
       tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#888;">No browser activity recorded yet.</td></tr>';
       return;
@@ -336,12 +337,36 @@ async function loadBrowserLogs() {
     tbody.innerHTML = logs.map(log => `
       <tr>
         <td>${new Date(log.timestamp).toLocaleString()}</td>
-        <td>${escapeHtml(log.app_name || '-')}</td>
-        <td>${escapeHtml(log.window_title || '-')}</td>
-        <td>${formatDuration(log.duration_seconds)}</td>
+        <td>${escapeHtml(log.browser_name || '-')}</td>
+        <td>${escapeHtml(log.page_title || '-')}</td>
+        <td><a href="${escapeHtml(log.url || '')}" target="_blank" rel="noopener noreferrer"
+              style="color:#667eea;text-decoration:none;word-break:break-all;"
+              title="${escapeHtml(log.url || '')}">${escapeHtml(truncate(log.url || '', 80))}</a></td>
       </tr>`).join('');
   } catch (e) {
     console.error('Failed to load browser logs:', e);
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#dc3545;">Failed to load data.</td></tr>';
+  }
+}
+
+async function loadKeyLogs() {
+  const tbody = document.getElementById('key-logs-body');
+  tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;">Loading...</td></tr>';
+  try {
+    const logs = await window.electronAPI.getKeyLogs({ limit: 100 });
+    if (!logs || logs.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#888;">No text activity recorded yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = logs.map(log => `
+      <tr>
+        <td>${new Date(log.timestamp).toLocaleString()}</td>
+        <td>${escapeHtml(log.application || '-')}</td>
+        <td>${escapeHtml(log.window_title || '-')}</td>
+        <td style="font-family:monospace;font-size:13px;word-break:break-all;">${escapeHtml(log.content || '')}</td>
+      </tr>`).join('');
+  } catch (e) {
+    console.error('Failed to load key logs:', e);
     tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#dc3545;">Failed to load data.</td></tr>';
   }
 }
@@ -365,6 +390,10 @@ async function loadClipboardLogs() {
     console.error('Failed to load clipboard logs:', e);
     tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:20px;color:#dc3545;">Failed to load data.</td></tr>';
   }
+}
+
+function truncate(str, maxLen) {
+  return str.length > maxLen ? str.slice(0, maxLen) + '…' : str;
 }
 
 // ─── CHARTS ──────────────────────────────────────────────────
