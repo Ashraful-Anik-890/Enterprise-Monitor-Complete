@@ -485,6 +485,9 @@ launchctl load ~/Library/LaunchAgents/com.company.enterprise-monitor.plist
 
 ## 🎁 Creating Windows Executable (Complete Guide)
 
+> [!IMPORTANT]
+> **Code Changes Required**: The current `main.ts` is configured for **development mode**. To build a standalone installer, you **MUST** apply the code changes described in [Step 2.2](#22-update-main-process-to-use-bundled-backend) below. These changes tell Electron to launch the bundled Python executable instead of expecting a separate backend process.
+
 This section provides detailed instructions for creating a standalone Windows executable that bundles both the Electron app and Python backend.
 
 ### Prerequisites for Building
