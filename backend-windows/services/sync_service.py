@@ -200,3 +200,9 @@ class SyncService:
         except Exception as e:
             logger.error("Manual sync failed: %s", e)
             return {"success": False, "error": str(e)}
+
+    def push_credentials_to_erp(self, username: str):
+        """Placeholder — implement when ERP credential API is available."""
+        logger.info("Credential sync placeholder called for user: %s", username)
+
+    

@@ -7,6 +7,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('auth:login', credentials),
   logout: () => ipcRenderer.invoke('auth:logout'),
 
+  // NEW: Update credentials (username + password + security Q&A)
+  updateCredentials: (payload: {
+    new_username: string;
+    new_password: string;
+    security_q1: string;
+    security_a1: string;
+    security_q2: string;
+    security_a2: string;
+  }) => ipcRenderer.invoke('auth:updateCredentials', payload),
+
   getStatistics: (params: { date?: string }) =>
     ipcRenderer.invoke('api:getStatistics', params),
 
@@ -36,6 +46,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateIdentity: (payload: { device_alias?: string; user_alias?: string }) =>
     ipcRenderer.invoke('api:updateIdentity', payload),
 
+  // NEW: Screen Recording
+  toggleVideoRecording: () => ipcRenderer.invoke('api:toggleVideoRecording'),
+  getVideoStatus: () => ipcRenderer.invoke('api:getVideoStatus'),
+  getVideos: (params?: { limit?: number }) => ipcRenderer.invoke('api:getVideos', params),
+
+  // NEW: Open folder in Windows Explorer
+  openFolder: (filepath: string) => ipcRenderer.invoke('app:openFolder', filepath),
+  getTimezone: () => ipcRenderer.invoke('api:getTimezone'),
+  setTimezone: (tz: string) => ipcRenderer.invoke('api:setTimezone', tz),
   // App control
   quitApp: () => ipcRenderer.invoke('app:quit'),
 });
@@ -46,6 +65,14 @@ declare global {
       checkAuth: () => Promise<{ authenticated: boolean }>;
       login: (credentials: { username: string; password: string }) => Promise<{ success: boolean; token?: string; error?: string }>;
       logout: () => Promise<{ success: boolean }>;
+      updateCredentials: (payload: {
+        new_username: string;
+        new_password: string;
+        security_q1: string;
+        security_a1: string;
+        security_q2: string;
+        security_a2: string;
+      }) => Promise<{ success: boolean; force_logout?: boolean; error?: string; warning?: string }>;
       getStatistics: (params: { date?: string }) => Promise<any>;
       getScreenshots: (params: { limit?: number; offset?: number }) => Promise<any>;
       pauseMonitoring: () => Promise<any>;
@@ -64,6 +91,13 @@ declare global {
         user_alias: string;
       }>;
       updateIdentity: (payload: { device_alias?: string; user_alias?: string }) => Promise<{ success: boolean; message?: string; error?: string }>;
+      toggleVideoRecording: () => Promise<{ success: boolean; recording: boolean }>;
+      getVideoStatus: () => Promise<{ recording: boolean; is_active: boolean }>;
+      getVideos: (params?: { limit?: number }) => Promise<any[]>;
+      openFolder: (filepath: string) => Promise<void>;
+      getTimezone: () => Promise<{ timezone: string }>;
+      setTimezone: (tz: string) => Promise<{ success: boolean; timezone: string; error?: string }>;
+
       quitApp: () => Promise<void>;
     };
   }

@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Enterprise Employee Monitoring System",
   "main": "dist/main/main.js",
-  "author": "Your Company",
+  "author": "Ashraful Anik",
   "license": "PROPRIETARY",
   "scripts": {
     "start": "npm run build && electron .",
@@ -11,9 +11,8 @@
     "copy-assets": "xcopy /Y /I src\\renderer\\index.html dist\\renderer\\ && xcopy /Y src\\renderer\\renderer.js dist\\renderer\\",
     "watch": "tsc --watch",
     "pack": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder",
-    "dist:mac": "npm run build && electron-builder --mac",
-    "dist:win": "npm run build && electron-builder --win"
+    "dist": "npm run build && electron-builder --win --x64",
+    "dist:dir": "npm run build && electron-builder --win --x64 --dir"
   },
   "dependencies": {
     "axios": "^1.6.2",
@@ -26,37 +25,45 @@
     "typescript": "^5.3.3"
   },
   "build": {
-    "appId": "com.company.enterprise-monitor",
+    "appId": "com.ashraful.enterprise-monitor",
     "productName": "Enterprise Monitor",
+    "copyright": "Developed by Ashraful Anik",
     "directories": {
       "output": "release"
     },
     "files": [
       "dist/**/*",
-      "resources/**/*",
+      "node_modules/**/*",
       "package.json"
     ],
-    "mac": {
-      "category": "public.app-category.business",
-      "target": [
-        "dmg",
-        "zip"
-      ],
-      "icon": "resources/icon.icns",
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false
-    },
     "win": {
       "target": [
-        "nsis"
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
-      "icon": "resources/icon.ico"
+      "icon": "resources/icon.png",
+      "requestedExecutionLevel": "requireAdministrator"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": false,
-      "createStartMenuShortcut": true
-    }
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Enterprise Monitor"
+    },
+    "extraResources": [
+      {
+        "from": "resources/",
+        "to": "resources/",
+        "filter": [
+          "**/*",
+          "!*.md"
+        ]
+      }
+    ]
   }
 }

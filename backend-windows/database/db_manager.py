@@ -117,6 +117,17 @@ class DatabaseManager:
             )
         ''')
 
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS video_recordings (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp        TEXT NOT NULL,
+                file_path        TEXT NOT NULL,
+                duration_seconds INTEGER DEFAULT 0,
+                is_synced        INTEGER DEFAULT 0,
+                created_at       TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
         conn.commit()
         conn.close()
         self._run_migrations()
@@ -330,6 +341,52 @@ class DatabaseManager:
             ]
         except Exception as e:
             logger.error(f"Failed to get screenshots: {e}")
+            return []
+        finally:
+            conn.close()
+    
+    def save_video_recording(self, timestamp: str, file_path: str, duration_seconds: int):
+        """Insert a completed recording chunk into video_recordings."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """INSERT INTO video_recordings (timestamp, file_path, duration_seconds)
+                   VALUES (?, ?, ?)""",
+                (timestamp, file_path, duration_seconds)
+            )
+            conn.commit()
+        except Exception as e:
+            logger.error("Failed to save video recording: %s", e)
+            conn.rollback()
+        finally:
+            conn.close()
+
+    def get_video_recordings(self, limit: int = 50) -> list:
+        """Return the most recent recording chunks, newest first."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """SELECT id, timestamp, file_path, duration_seconds, is_synced
+                   FROM video_recordings
+                   ORDER BY timestamp DESC
+                   LIMIT ?""",
+                (limit,)
+            )
+            rows = cursor.fetchall()
+            return [
+                {
+                    "id":               row[0],
+                    "timestamp":        row[1],
+                    "file_path":        row[2],
+                    "duration_seconds": row[3],
+                    "is_synced":        bool(row[4]),
+                }
+                for row in rows
+            ]
+        except Exception as e:
+            logger.error("Failed to get video recordings: %s", e)
             return []
         finally:
             conn.close()

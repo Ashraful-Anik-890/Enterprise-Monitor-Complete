@@ -1,9 +1,10 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, shell } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { TrayManager } from './tray';
 import { ApiClient } from './api-client';
 import Store from 'electron-store';
+
 
 const store = new Store();
 const apiClient = new ApiClient('http://127.0.0.1:51235');
@@ -266,6 +267,114 @@ function setupIpcHandlers() {
   ipcMain.handle('app:quit', async () => {
     isQuitting = true;
     app.quit();
+  });
+
+  ipcMain.handle('auth:updateCredentials', async (_event, payload: {
+    new_username: string;
+    new_password: string;
+    security_q1: string;
+    security_a1: string;
+    security_q2: string;
+    security_a2: string;
+  }) => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.post('/api/auth/update-credentials', payload, token);
+      if (response.data?.success && response.data?.force_logout) {
+        // Invalidate stored session — user must log in again with new credentials
+        store.delete('authToken');
+        trayManager?.setAuthStatus(false);
+      }
+      return response.data;
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Toggle screen recording
+  ipcMain.handle('api:toggleVideoRecording', async () => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.post('/api/monitoring/video/toggle', {}, token);
+      return response.data;
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get recording status
+  ipcMain.handle('api:getVideoStatus', async () => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.get('/api/monitoring/video/status', token);
+      return response.data;
+    } catch (error: any) {
+      return { recording: false, is_active: false };
+    }
+  });
+
+  // Get video list
+  ipcMain.handle('api:getVideos', async (_event, params: { limit?: number } = {}) => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.get('/api/data/videos', token, params);
+      return response.data;
+    } catch (error: any) {
+      return [];
+    }
+  });
+
+  // Open folder / show file in Windows Explorer
+  ipcMain.handle('app:openFolder', async (_event, filepath: string) => {
+    try {
+      // Normalize: Python Path produces forward slashes; Windows shell needs backslashes
+      const normalizedPath = path.normalize(filepath);
+
+      if (fs.existsSync(normalizedPath)) {
+        // File exists → highlight it in Explorer
+        shell.showItemInFolder(normalizedPath);
+      } else {
+        // File gone (deleted/moved) → open the parent directory
+        const parentDir = path.dirname(normalizedPath);
+        if (fs.existsSync(parentDir)) {
+          await shell.openPath(parentDir);
+        } else {
+          // Parent also missing → open the known recordings root derived from home
+          const recordingsRoot = path.join(
+            process.env.LOCALAPPDATA || path.join(require('os').homedir(), 'AppData', 'Local'),
+            'EnterpriseMonitor',
+            'screen_recordings'
+          );
+          if (!fs.existsSync(recordingsRoot)) {
+            fs.mkdirSync(recordingsRoot, { recursive: true });
+          }
+          await shell.openPath(recordingsRoot);
+        }
+      }
+    } catch (err: any) {
+      console.error('app:openFolder error:', err.message);
+    }
+  });
+
+  ipcMain.handle('api:getTimezone', async () => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.get('/api/config/timezone', token);
+      return response.data;
+    } catch (error: any) {
+      return { timezone: 'UTC' };   // safe fallback — never crash
+    }
+  });
+
+  // Save display timezone to backend config
+  ipcMain.handle('api:setTimezone', async (_event, tz: string) => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.post('/api/config/timezone', { timezone: tz }, token);
+      return response.data;
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
   });
 }
 

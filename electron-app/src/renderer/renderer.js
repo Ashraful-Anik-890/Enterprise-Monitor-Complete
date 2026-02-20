@@ -1,36 +1,25 @@
 // ============================================================
-// renderer.js
-//
-// ROOT CAUSE OF ALL EMPTY DATA:
-//   package.json copy-assets only copied index.html to dist/.
-//   renderer.js was NEVER copied to dist/renderer/, so Electron
-//   was always running the original broken version regardless of
-//   what was saved in src/renderer/renderer.js.
-//   Fixed in package.json. This file now gets deployed correctly.
-//
-// ADDITIONAL FIX vs previous version:
-//   Today button and date init now use LOCAL date instead of UTC.
-//   new Date().toISOString() returns UTC — if you're UTC+n, your
-//   local date is ahead; you'd see "yesterday" in the picker and
-//   get zero results because data is stored against local date.
+// renderer.js — Enterprise Monitor
+// Includes: credential modal, screen recording UI, video list,
+//           login/dashboard UI updates, all existing features preserved.
 // ============================================================
 
-// Global state
+// ─── GLOBAL STATE ────────────────────────────────────────────
 let isAuthenticated = false;
 let currentTab = 'overview';
 let currentSubTab = 'app-tracking';
 let charts = {};
 
-// Use LOCAL date (not UTC) so the picker matches data on disk
 function getLocalDateString() {
   const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 let currentDate = getLocalDateString();
+let currentTimezone = 'UTC';
 
 // ─── INIT ────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
@@ -69,65 +58,72 @@ function showDashboard() {
 
 // ─── EVENT LISTENERS ─────────────────────────────────────────
 function setupEventListeners() {
-  document.getElementById('login-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    await handleLogin();
+  // Login
+  document.getElementById('login-btn').addEventListener('click', handleLoginClick);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const loginCont = document.getElementById('login-container');
+      if (loginCont.classList.contains('active')) handleLoginClick();
+    }
   });
 
-  document.getElementById('logout-btn').addEventListener('click', async () => {
-    await handleLogout();
-  });
+  // Header
+  document.getElementById('logout-btn').addEventListener('click', handleLogout);
+  document.getElementById('refresh-btn').addEventListener('click', () => loadDashboardData());
+  document.getElementById('change-credentials-btn').addEventListener('click', openCredentialsModal);
 
-  document.getElementById('refresh-btn').addEventListener('click', async () => {
-    await loadDashboardData();
-  });
-
-  // Date picker: update variable but wait for Search click
-  document.getElementById('date-picker').addEventListener('change', (e) => {
-    currentDate = e.target.value;
-  });
-
-  // Today: use LOCAL date, load immediately
+  // Date controls
+  document.getElementById('date-picker').addEventListener('change', (e) => { currentDate = e.target.value; });
   document.getElementById('today-btn').addEventListener('click', () => {
     currentDate = getLocalDateString();
     document.getElementById('date-picker').value = currentDate;
     loadDashboardData();
   });
-
-  // Search: explicit trigger with selected date
   document.getElementById('search-btn').addEventListener('click', () => {
-    const pickerVal = document.getElementById('date-picker').value;
-    if (pickerVal) currentDate = pickerVal;
+    const tzSelect = document.getElementById('timezone-select');
+    if (tzSelect) {
+      tzSelect.addEventListener('change', (e) => {
+        saveTimezone(e.target.value);
+      });
+    }
+    const v = document.getElementById('date-picker').value;
+    if (v) currentDate = v;
     loadDashboardData();
   });
 
+  // Pause / Resume (header controls + overview tab)
+  document.getElementById('pause-btn').addEventListener('click', pauseMonitoring);
+  document.getElementById('resume-btn').addEventListener('click', resumeMonitoring);
+  const pause2 = document.getElementById('pause-btn2');
+  const resume2 = document.getElementById('resume-btn2');
+  if (pause2) pause2.addEventListener('click', pauseMonitoring);
+  if (resume2) resume2.addEventListener('click', resumeMonitoring);
+
+  // Tabs
   document.querySelectorAll('.tab-button').forEach(btn => {
     btn.addEventListener('click', (e) => switchTab(e.currentTarget.dataset.tab));
   });
-
   document.querySelectorAll('.sub-tab-btn').forEach(btn => {
     btn.addEventListener('click', (e) => switchSubTab(e.currentTarget.dataset.subtab));
   });
 
-  document.getElementById('pause-btn').addEventListener('click', async () => {
-    await pauseMonitoring();
+  // Identity
+  document.getElementById('update-device-alias-btn').addEventListener('click', () => updateIdentityAlias('device'));
+  document.getElementById('update-user-alias-btn').addEventListener('click', () => updateIdentityAlias('user'));
+
+  // Credentials modal
+  document.getElementById('modal-cancel-btn').addEventListener('click', closeCredentialsModal);
+  document.getElementById('modal-submit-btn').addEventListener('click', handleUpdateCredentials);
+  document.getElementById('credentials-modal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeCredentialsModal();
   });
 
-  document.getElementById('resume-btn').addEventListener('click', async () => {
-    await resumeMonitoring();
-  });
-
-  document.getElementById('update-device-alias-btn').addEventListener('click', () => {
-    updateIdentityAlias('device');
-  });
-
-  document.getElementById('update-user-alias-btn').addEventListener('click', () => {
-    updateIdentityAlias('user');
-  });
+  // Recording toggle
+  document.getElementById('recording-toggle').addEventListener('change', handleRecordingToggle);
 }
 
 // ─── LOGIN / LOGOUT ──────────────────────────────────────────
-async function handleLogin() {
+async function handleLoginClick() {
   const username = document.getElementById('username').value;
   const password = document.getElementById('password').value;
   const errorDiv = document.getElementById('login-error');
@@ -135,7 +131,7 @@ async function handleLogin() {
 
   errorDiv.textContent = '';
   loginBtn.disabled = true;
-  loginBtn.textContent = 'Logging in...';
+  loginBtn.textContent = 'Signing in…';
 
   try {
     const result = await window.electronAPI.login({ username, password });
@@ -148,7 +144,7 @@ async function handleLogin() {
       errorDiv.textContent = result.error || 'Invalid credentials';
     }
   } catch (error) {
-    errorDiv.textContent = 'Login failed. Please check if the backend service is running.';
+    errorDiv.textContent = 'Login failed. Check if the backend service is running.';
   } finally {
     loginBtn.disabled = false;
     loginBtn.textContent = 'Login';
@@ -160,18 +156,117 @@ async function handleLogout() {
     await window.electronAPI.logout();
     isAuthenticated = false;
     showLogin();
-    document.getElementById('login-form').reset();
+    document.getElementById('username').value = '';
+    document.getElementById('password').value = '';
+    document.getElementById('login-error').textContent = '';
   } catch (error) {
     console.error('Logout failed:', error);
   }
+}
+
+// ─── CHANGE CREDENTIALS MODAL ────────────────────────────────
+function openCredentialsModal() {
+  document.getElementById('modal-new-username').value = '';
+  document.getElementById('modal-new-password').value = '';
+  document.getElementById('modal-confirm-password').value = '';
+  document.getElementById('modal-sq1').value = '';
+  document.getElementById('modal-sa1').value = '';
+  document.getElementById('modal-sq2').value = '';
+  document.getElementById('modal-sa2').value = '';
+  document.getElementById('modal-error').style.display = 'none';
+  document.getElementById('modal-success').style.display = 'none';
+  document.getElementById('modal-submit-btn').disabled = false;
+  document.getElementById('credentials-modal').classList.add('open');
+}
+
+function closeCredentialsModal() {
+  document.getElementById('credentials-modal').classList.remove('open');
+}
+
+async function handleUpdateCredentials() {
+  const newUsername = document.getElementById('modal-new-username').value.trim();
+  const newPassword = document.getElementById('modal-new-password').value;
+  const confirmPass = document.getElementById('modal-confirm-password').value;
+  const sq1 = document.getElementById('modal-sq1').value;
+  const sa1 = document.getElementById('modal-sa1').value.trim();
+  const sq2 = document.getElementById('modal-sq2').value;
+  const sa2 = document.getElementById('modal-sa2').value.trim();
+
+  const errorEl = document.getElementById('modal-error');
+  const successEl = document.getElementById('modal-success');
+  const submitBtn = document.getElementById('modal-submit-btn');
+
+  errorEl.style.display = 'none';
+  successEl.style.display = 'none';
+
+  // Client-side validation
+  if (!newUsername) return showModalError('Username is required.');
+  if (!newPassword) return showModalError('Password is required.');
+  if (newPassword !== confirmPass) return showModalError('Passwords do not match.');
+  if (!sq1 || !sa1) return showModalError('Security Question 1 and its answer are required.');
+  if (!sq2 || !sa2) return showModalError('Security Question 2 and its answer are required.');
+  if (sq1 === sq2) return showModalError('Please choose two different security questions.');
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Saving…';
+
+  try {
+    const result = await window.electronAPI.updateCredentials({
+      new_username: newUsername,
+      new_password: newPassword,
+      security_q1: sq1, security_a1: sa1,
+      security_q2: sq2, security_a2: sa2,
+    });
+
+    if (result.success) {
+      successEl.textContent = 'Credentials updated! You will be logged out now.';
+      successEl.style.display = 'block';
+      setTimeout(async () => {
+        closeCredentialsModal();
+        await handleLogout();
+      }, 2000);
+    } else {
+      showModalError(result.error || 'Failed to update credentials.');
+    }
+  } catch (err) {
+    showModalError('Request failed. Check backend connection.');
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = '💾 Save Changes';
+  }
+}
+
+function showModalError(msg) {
+  const el = document.getElementById('modal-error');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+// ─── TAB SWITCHING ───────────────────────────────────────────
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelector(`[data-tab="${tab}"]`)?.classList.add('active');
+  document.getElementById(`${tab}-tab`)?.classList.add('active');
+  loadDashboardData();
+}
+
+function switchSubTab(subtab) {
+  currentSubTab = subtab;
+  document.querySelectorAll('.sub-tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.sub-tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelector(`[data-subtab="${subtab}"]`)?.classList.add('active');
+  document.getElementById(`${subtab}-subtab`)?.classList.add('active');
+  loadMonitorData();
 }
 
 // ─── DATA LOADING ────────────────────────────────────────────
 async function loadDashboardData() {
   if (!isAuthenticated) return;
   try {
+    await loadTimezone();     // ← NEW: load TZ before rendering any timestamps
     await loadIdentity();
-    await loadMonitoringStatus();
     if (currentTab === 'overview') {
       await Promise.all([loadStatistics(), loadChartsData()]);
     } else if (currentTab === 'monitor-data') {
@@ -187,177 +282,373 @@ async function loadDashboardData() {
 async function loadStatistics() {
   try {
     const stats = await window.electronAPI.getStatistics({ date: currentDate });
-    document.getElementById('stat-screenshots').textContent = stats.total_screenshots || 0;
-    document.getElementById('stat-hours').textContent = (stats.active_hours_today || 0).toFixed(1);
-    document.getElementById('stat-apps').textContent = stats.apps_tracked || 0;
-    document.getElementById('stat-clipboard').textContent = stats.clipboard_events || 0;
-  } catch (error) {
-    console.error('Failed to load statistics:', error);
+    document.getElementById('stat-screenshots').textContent = stats.total_screenshots ?? 0;
+    document.getElementById('stat-hours').textContent = (stats.active_hours_today ?? 0).toFixed(1);
+    document.getElementById('stat-apps').textContent = stats.apps_tracked ?? 0;
+    document.getElementById('stat-clipboard').textContent = stats.clipboard_events ?? 0;
+  } catch (err) {
+    console.error('Failed to load statistics:', err);
+  }
+}
+
+async function loadMonitoringStatus() {
+  try {
+    const status = await window.electronAPI.getMonitoringStatus();
+    const badge = document.getElementById('status-badge');
+    const ind = document.getElementById('status-indicator');
+    const txt = document.getElementById('status-text');
+    const pauseBtn = document.getElementById('pause-btn');
+    const resumeBtn = document.getElementById('resume-btn');
+
+    if (status.is_monitoring) {
+      ind?.classList.replace('paused', 'active');
+      if (txt) txt.textContent = 'Active';
+      if (badge) badge.style.color = '#1a8a52';
+      if (pauseBtn) pauseBtn.style.display = '';
+      if (resumeBtn) resumeBtn.style.display = 'none';
+    } else {
+      ind?.classList.replace('active', 'paused');
+      if (txt) txt.textContent = 'Paused';
+      if (badge) badge.style.color = '#b8860b';
+      if (pauseBtn) pauseBtn.style.display = 'none';
+      if (resumeBtn) resumeBtn.style.display = '';
+    }
+  } catch (err) {
+    console.error('Failed to load monitoring status:', err);
+  }
+}
+
+// ─── TIMEZONE ─────────────────────────────────────────────────
+async function loadTimezone() {
+  try {
+    const result = await window.electronAPI.getTimezone();
+    currentTimezone = result.timezone || 'UTC';
+    const sel = document.getElementById('timezone-select');
+    if (sel) sel.value = currentTimezone;
+    updateTzBadge();
+  } catch (e) {
+    // Non-fatal — keep UTC default
+    console.warn('Could not load timezone config:', e);
+  }
+}
+
+async function saveTimezone(tz) {
+  try {
+    currentTimezone = tz;
+    updateTzBadge();
+    await window.electronAPI.setTimezone(tz);
+    // Re-render whichever data tab is currently visible
+    await loadDashboardData();
+  } catch (e) {
+    console.error('Failed to save timezone:', e);
+  }
+}
+
+function updateTzBadge() {
+  const badge = document.getElementById('tz-badge');
+  if (!badge) return;
+  try {
+    // Show current UTC offset for the selected zone
+    const now = new Date();
+    const offset = new Intl.DateTimeFormat('en', {
+      timeZone: currentTimezone,
+      timeZoneName: 'short',
+    }).formatToParts(now).find(p => p.type === 'timeZoneName')?.value || '';
+    badge.textContent = offset ? `(${offset})` : '';
+  } catch {
+    badge.textContent = '';
   }
 }
 
 async function loadIdentity() {
   try {
     const identity = await window.electronAPI.getIdentity();
-
-    // Raw IDs shown as read-only hints
-    const machineIdEl = document.getElementById('identity-machine-id');
-    const osUserEl = document.getElementById('identity-os-user');
-    if (machineIdEl) machineIdEl.textContent = `Raw: ${identity.machine_id}`;
-    if (osUserEl) osUserEl.textContent = `Raw: ${identity.os_user}`;
-
-    // Pre-fill inputs with current aliases
-    const deviceInput = document.getElementById('device-alias-input');
-    const userInput = document.getElementById('user-alias-input');
-    if (deviceInput) deviceInput.value = identity.device_alias || '';
-    if (userInput) userInput.value = identity.user_alias || '';
+    const mid = document.getElementById('identity-machine-id');
+    const osu = document.getElementById('identity-os-user');
+    if (mid) mid.textContent = `Raw: ${identity.machine_id}`;
+    if (osu) osu.textContent = `Raw: ${identity.os_user}`;
+    const di = document.getElementById('device-alias-input');
+    const ui = document.getElementById('user-alias-input');
+    if (di) di.value = identity.device_alias || '';
+    if (ui) ui.value = identity.user_alias || '';
   } catch (err) {
-    console.error('Failed to load identity config:', err);
+    console.error('Failed to load identity:', err);
   }
 }
 
-
-/**
- * Send an updated alias to the backend.
- * @param {'device'|'user'} which - which alias to update
- */
 async function updateIdentityAlias(which) {
   const inputId = which === 'device' ? 'device-alias-input' : 'user-alias-input';
   const btnId = which === 'device' ? 'update-device-alias-btn' : 'update-user-alias-btn';
-
   const input = document.getElementById(inputId);
   const btn = document.getElementById(btnId);
   if (!input || !btn) return;
 
-  const newAlias = input.value.trim();
-  if (!newAlias) {
-    showIdentityFeedback('Alias cannot be empty.', 'error');
-    return;
-  }
+  const val = input.value.trim();
+  if (!val) { showIdentityFeedback('Alias cannot be empty.', 'error'); return; }
 
   btn.disabled = true;
-  btn.textContent = 'Saving…';
+  btn.textContent = '…';
 
   try {
-    const payload = which === 'device'
-      ? { device_alias: newAlias }
-      : { user_alias: newAlias };
-
+    const payload = which === 'device' ? { device_alias: val } : { user_alias: val };
     const result = await window.electronAPI.updateIdentity(payload);
-
-    if (result && result.success) {
-      showIdentityFeedback(
-        `${which === 'device' ? 'Device' : 'User'} name updated to "${newAlias}".`,
-        'success'
-      );
+    if (result.success) {
+      showIdentityFeedback(`${which === 'device' ? 'Device' : 'User'} alias updated.`, 'success');
     } else {
-      showIdentityFeedback(result?.error || 'Update failed.', 'error');
+      showIdentityFeedback(result.error || 'Update failed.', 'error');
     }
   } catch (err) {
-    console.error('Failed to update identity alias:', err);
-    showIdentityFeedback('Network error — could not save alias.', 'error');
+    showIdentityFeedback('Request failed.', 'error');
   } finally {
     btn.disabled = false;
     btn.textContent = 'Update';
   }
 }
 
-
-/**
- * Display a temporary feedback message below the identity cards.
- * Auto-dismisses after 3 seconds.
- * @param {string} message
- * @param {'success'|'error'} type
- */
-function showIdentityFeedback(message, type) {
+function showIdentityFeedback(msg, type) {
   const el = document.getElementById('identity-feedback');
   if (!el) return;
-
-  el.textContent = message;
+  el.textContent = msg;
   el.className = `identity-feedback ${type}`;
   el.style.display = 'block';
-
-  // Clear any existing dismiss timer
-  if (el._dismissTimer) clearTimeout(el._dismissTimer);
-  el._dismissTimer = setTimeout(() => {
-    el.style.display = 'none';
-  }, 3000);
+  setTimeout(() => { el.style.display = 'none'; }, 3000);
 }
 
-
-async function loadMonitoringStatus() {
-  try {
-    const status = await window.electronAPI.getMonitoringStatus();
-    const indicator = document.getElementById('status-indicator');
-    const statusText = document.getElementById('status-text');
-    const badge = document.getElementById('status-badge');
-    const pauseBtn = document.getElementById('pause-btn');
-    const resumeBtn = document.getElementById('resume-btn');
-
-    if (status.is_monitoring) {
-      indicator.className = 'status-indicator active';
-      statusText.textContent = 'Monitoring Active';
-      badge.className = 'status-badge';
-      pauseBtn.style.display = 'inline-block';
-      resumeBtn.style.display = 'none';
-    } else {
-      indicator.className = 'status-indicator paused';
-      statusText.textContent = 'Monitoring Paused';
-      badge.className = 'status-badge paused';
-      pauseBtn.style.display = 'none';
-      resumeBtn.style.display = 'inline-block';
-    }
-  } catch (error) {
-    console.error('Failed to load monitoring status:', error);
-  }
+// ─── MONITOR DATA ────────────────────────────────────────────
+async function loadMonitorData() {
+  if (currentSubTab === 'app-tracking') await loadAppLogs();
+  else if (currentSubTab === 'browser') await loadBrowserLogs();
+  else if (currentSubTab === 'clipboard') await loadClipboardLogs();
+  else if (currentSubTab === 'keylogs') await loadKeyLogs();
+  else if (currentSubTab === 'video') await loadVideoTab();
 }
 
-async function loadChartsData() {
+async function loadAppLogs() {
+  const tbody = document.getElementById('app-logs-body');
+  tbody.innerHTML = '<tr><td colspan="4" class="loading">Loading…</td></tr>';
   try {
-    const [activityData, timelineData] = await Promise.all([
-      window.electronAPI.getActivityStats({ start: currentDate, end: currentDate }),
-      window.electronAPI.getTimelineData({ date: currentDate })
-    ]);
-    updateCharts(activityData, timelineData);
-  } catch (e) {
-    console.error('Failed to load charts data:', e);
-  }
-}
-
-async function loadScreenshots() {
-  try {
-    const screenshots = await window.electronAPI.getScreenshots({ limit: 20 });
-    const grid = document.getElementById('screenshots-grid');
-    if (!screenshots || screenshots.length === 0) {
-      grid.innerHTML = '<div class="loading">No screenshots available yet.</div>';
+    const logs = await window.electronAPI.getAppLogs({ limit: 100 });
+    if (!logs?.length) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#888;">No app activity recorded yet.</td></tr>';
       return;
     }
-    const placeholder = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='280' height='160'%3E%3Crect fill='%23eee' width='280' height='160'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' fill='%23999' dy='.3em'%3ENo Image%3C/text%3E%3C/svg%3E";
-    grid.innerHTML = screenshots.map(s => {
-      const appLabel = s.active_app || s.active_window || 'Unknown';
-      return `
-        <div class="screenshot-item">
-          <img src="${s.file_path}" alt="Screenshot" onerror="this.src='${placeholder}'">
-          <div class="info">
-            <div class="timestamp">${new Date(s.timestamp).toLocaleString()}</div>
-            <div class="app-name">📱 ${escapeHtml(appLabel)}</div>
-          </div>
-        </div>`;
-    }).join('');
-  } catch (error) {
-    console.error('Failed to load screenshots:', error);
-    document.getElementById('screenshots-grid').innerHTML =
-      '<div class="loading">Failed to load screenshots.</div>';
+    tbody.innerHTML = logs.map(log => `
+      <tr>
+        <td>${formatWithTZ(log.timestamp)}</td>
+        <td>${escapeHtml(log.app_name || '-')}</td>
+        <td>${escapeHtml(log.window_title || '-')}</td>
+        <td>${formatDuration(log.duration_seconds)}</td>
+      </tr>`).join('');
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#dc3545;padding:20px;">Failed to load data.</td></tr>';
   }
 }
 
-// ─── MONITORING CONTROLS ─────────────────────────────────────
+async function loadBrowserLogs() {
+  const tbody = document.getElementById('browser-logs-body');
+  tbody.innerHTML = '<tr><td colspan="4" class="loading">Loading…</td></tr>';
+  try {
+    const logs = await window.electronAPI.getBrowserLogs({ limit: 100 });
+    if (!logs?.length) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#888;">No browser activity recorded yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = logs.map(log => `
+      <tr>
+        <td>${formatWithTZ(log.timestamp)}</td>
+        <td>${escapeHtml(log.browser_name || '-')}</td>
+        <td>${escapeHtml(log.page_title || '-')}</td>
+        <td><a href="${escapeHtml(log.url || '')}" target="_blank" rel="noopener noreferrer"
+               style="color:#667eea;text-decoration:none;word-break:break-all;">${escapeHtml(truncate(log.url || '', 80))}</a></td>
+      </tr>`).join('');
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#dc3545;padding:20px;">Failed to load data.</td></tr>';
+  }
+}
+
+async function loadClipboardLogs() {
+  const tbody = document.getElementById('clipboard-logs-body');
+  tbody.innerHTML = '<tr><td colspan="3" class="loading">Loading…</td></tr>';
+  try {
+    const logs = await window.electronAPI.getClipboardLogs({ limit: 100 });
+    if (!logs?.length) {
+      tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:20px;color:#888;">No clipboard activity recorded yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = logs.map(log => `
+      <tr>
+        <td>${formatWithTZ(log.timestamp)}</td>
+        <td>${escapeHtml(log.content_type || '-')}</td>
+        <td>${escapeHtml(truncate(log.content_preview || '', 80))}</td>
+      </tr>`).join('');
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#dc3545;padding:20px;">Failed to load data.</td></tr>';
+  }
+}
+
+async function loadKeyLogs() {
+  const tbody = document.getElementById('key-logs-body');
+  tbody.innerHTML = '<tr><td colspan="4" class="loading">Loading…</td></tr>';
+  try {
+    const logs = await window.electronAPI.getKeyLogs({ limit: 100 });
+    if (!logs?.length) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#888;">No keystrokes recorded yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = logs.map(log => `
+      <tr>
+        <td>${formatWithTZ(log.timestamp)}</td>
+        <td>${escapeHtml(log.application || '-')}</td>
+        <td>${escapeHtml(log.window_title || '-')}</td>
+        <td>${escapeHtml(truncate(log.content || '', 120))}</td>
+      </tr>`).join('');
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#dc3545;padding:20px;">Failed to load data.</td></tr>';
+  }
+}
+
+// ─── SCREEN RECORDING TAB ────────────────────────────────────
+async function loadVideoTab() {
+  await loadVideoStatus();
+  await loadVideoList();
+}
+
+async function loadVideoStatus() {
+  try {
+    const status = await window.electronAPI.getVideoStatus();
+    const toggle = document.getElementById('recording-toggle');
+    const badge = document.getElementById('rec-badge');
+    const badgeTxt = document.getElementById('rec-badge-text');
+    const dot = badge.querySelector('.rec-dot');
+
+    toggle.checked = status.recording;
+
+    if (status.recording) {
+      badge.className = 'rec-badge on';
+      badgeTxt.textContent = 'RECORDING';
+      dot.classList.add('blink');
+    } else {
+      badge.className = 'rec-badge off';
+      badgeTxt.textContent = 'OFF';
+      dot.classList.remove('blink');
+    }
+  } catch (err) {
+    console.error('Failed to load video status:', err);
+  }
+}
+
+async function handleRecordingToggle() {
+  const toggle = document.getElementById('recording-toggle');
+  toggle.disabled = true;
+  try {
+    const result = await window.electronAPI.toggleVideoRecording();
+    if (result.success) {
+      await loadVideoStatus();
+    } else {
+      // Revert toggle on failure
+      toggle.checked = !toggle.checked;
+      console.error('Toggle failed:', result.error);
+    }
+  } catch (err) {
+    toggle.checked = !toggle.checked;
+    console.error('Toggle request failed:', err);
+  } finally {
+    toggle.disabled = false;
+  }
+}
+
+async function loadVideoList() {
+  const container = document.getElementById('video-list-container');
+  container.innerHTML = '<div class="loading">Loading recordings…</div>';
+
+  try {
+    const videos = await window.electronAPI.getVideos({ limit: 50 });
+
+    if (!videos || videos.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-icon">🎥</div>
+          <p>No recordings yet.<br>Enable screen recording using the toggle above.</p>
+        </div>`;
+      return;
+    }
+
+    const rows = videos.map(v => {
+      const ts = formatWithTZ(v.timestamp);
+      const dur = formatDuration(v.duration_seconds);
+      const fname = v.file_path.split('\\').pop() || v.file_path.split('/').pop() || v.file_path;
+      return `
+        <tr>
+          <td>${ts}</td>
+          <td style="font-family:monospace;font-size:12px;">${escapeHtml(fname)}</td>
+          <td>${dur}</td>
+          <td>${v.is_synced ? '<span style="color:#28a745;font-weight:600;">✓ Synced</span>' : '<span style="color:#aaa;">Pending</span>'}</td>
+          <td>
+            <button class="btn-folder" onclick="openVideoFolder(${JSON.stringify(v.file_path)})">
+              📂 Open
+            </button>
+          </td>
+        </tr>`;
+    }).join('');
+
+    container.innerHTML = `
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Recorded At</th>
+              <th>Filename</th>
+              <th>Duration</th>
+              <th>Status</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  } catch (err) {
+    container.innerHTML = '<div style="color:#dc3545;padding:20px;text-align:center;">Failed to load recordings.</div>';
+  }
+}
+
+async function openVideoFolder(filepath) {
+  try {
+    await window.electronAPI.openFolder(filepath);
+  } catch (err) {
+    console.error('Failed to open folder:', err);
+  }
+}
+
+// ─── SCREENSHOTS ──────────────────────────────────────────────
+async function loadScreenshots() {
+  const container = document.getElementById('screenshots-container');
+  container.innerHTML = '<div class="loading">Loading screenshots…</div>';
+  try {
+    const screenshots = await window.electronAPI.getScreenshots({ limit: 50 });
+    if (!screenshots?.length) {
+      container.innerHTML = '<div class="empty-state"><div class="empty-icon">📸</div><p>No screenshots yet.</p></div>';
+      return;
+    }
+    container.innerHTML = screenshots.map(s => `
+      <div class="screenshot-item">
+        <img src="file://${s.file_path}" alt="Screenshot" onerror="this.style.display='none'">
+        <div class="info">
+          <div class="timestamp">${formatWithTZ(s.timestamp)}</div>
+          <div class="app-name">${escapeHtml(s.active_app || 'Unknown')}</div>
+        </div>
+      </div>`).join('');
+  } catch (err) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">❌</div><p>Failed to load screenshots.</p></div>';
+  }
+}
+
+// ─── MONITORING CONTROLS ──────────────────────────────────────
 async function pauseMonitoring() {
   try {
     await window.electronAPI.pauseMonitoring();
     await loadMonitoringStatus();
-  } catch (error) {
-    alert('Failed to pause monitoring');
+  } catch (err) {
+    console.error('Pause failed:', err);
   }
 }
 
@@ -365,229 +656,140 @@ async function resumeMonitoring() {
   try {
     await window.electronAPI.resumeMonitoring();
     await loadMonitoringStatus();
-  } catch (error) {
-    alert('Failed to resume monitoring');
+  } catch (err) {
+    console.error('Resume failed:', err);
   }
-}
-
-// ─── TAB SWITCHING ───────────────────────────────────────────
-function switchTab(tabName) {
-  currentTab = tabName;
-  document.querySelectorAll('.tab-button').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.tab === tabName);
-  });
-  document.querySelectorAll('.tab-pane').forEach(pane => pane.classList.remove('active'));
-  const pane = document.getElementById(`${tabName}-tab`);
-  if (pane) pane.classList.add('active');
-  loadDashboardData();
-}
-
-function switchSubTab(subTabName) {
-  currentSubTab = subTabName;
-  document.querySelectorAll('.sub-tab-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.subtab === subTabName);
-  });
-  document.querySelectorAll('.sub-view').forEach(view => (view.style.display = 'none'));
-  const view = document.getElementById(`${subTabName}-view`);
-  if (view) view.style.display = 'block';
-  loadMonitorData();
-}
-
-// ─── MONITOR DATA TABLES ─────────────────────────────────────
-async function loadMonitorData() {
-  if (currentSubTab === 'app-tracking') await loadAppLogs();
-  else if (currentSubTab === 'browser-tracking') await loadBrowserLogs();
-  else if (currentSubTab === 'clipboard-tracking') await loadClipboardLogs();
-  else if (currentSubTab === 'text-tracking') await loadKeyLogs();
-}
-
-async function loadAppLogs() {
-  const tbody = document.getElementById('app-logs-body');
-  tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;">Loading...</td></tr>';
-  try {
-    const logs = await window.electronAPI.getAppLogs({ limit: 50 });
-    if (!logs || logs.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#888;">No app activity recorded yet.</td></tr>';
-      return;
-    }
-    tbody.innerHTML = logs.map(log => `
-      <tr>
-        <td>${new Date(log.timestamp).toLocaleString()}</td>
-        <td>${escapeHtml(log.app_name || '-')}</td>
-        <td>${escapeHtml(log.window_title || '-')}</td>
-        <td>${formatDuration(log.duration_seconds)}</td>
-      </tr>`).join('');
-  } catch (e) {
-    console.error('Failed to load app logs:', e);
-    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#dc3545;">Failed to load data.</td></tr>';
-  }
-}
-
-async function loadBrowserLogs() {
-  const tbody = document.getElementById('browser-logs-body');
-  tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;">Loading...</td></tr>';
-  try {
-    const logs = await window.electronAPI.getBrowserLogs({ limit: 100 });
-    if (!logs || logs.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#888;">No browser activity recorded yet.</td></tr>';
-      return;
-    }
-    tbody.innerHTML = logs.map(log => `
-      <tr>
-        <td>${new Date(log.timestamp).toLocaleString()}</td>
-        <td>${escapeHtml(log.browser_name || '-')}</td>
-        <td>${escapeHtml(log.page_title || '-')}</td>
-        <td><a href="${escapeHtml(log.url || '')}" target="_blank" rel="noopener noreferrer"
-              style="color:#667eea;text-decoration:none;word-break:break-all;"
-              title="${escapeHtml(log.url || '')}">${escapeHtml(truncate(log.url || '', 80))}</a></td>
-      </tr>`).join('');
-  } catch (e) {
-    console.error('Failed to load browser logs:', e);
-    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#dc3545;">Failed to load data.</td></tr>';
-  }
-}
-
-async function loadKeyLogs() {
-  const tbody = document.getElementById('key-logs-body');
-  tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;">Loading...</td></tr>';
-  try {
-    const logs = await window.electronAPI.getKeyLogs({ limit: 100 });
-    if (!logs || logs.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#888;">No text activity recorded yet.</td></tr>';
-      return;
-    }
-    tbody.innerHTML = logs.map(log => `
-      <tr>
-        <td>${new Date(log.timestamp).toLocaleString()}</td>
-        <td>${escapeHtml(log.application || '-')}</td>
-        <td>${escapeHtml(log.window_title || '-')}</td>
-        <td style="font-family:monospace;font-size:13px;word-break:break-all;">${escapeHtml(log.content || '')}</td>
-      </tr>`).join('');
-  } catch (e) {
-    console.error('Failed to load key logs:', e);
-    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#dc3545;">Failed to load data.</td></tr>';
-  }
-}
-
-async function loadClipboardLogs() {
-  const tbody = document.getElementById('clipboard-logs-body');
-  tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:20px;">Loading...</td></tr>';
-  try {
-    const logs = await window.electronAPI.getClipboardLogs({ limit: 50 });
-    if (!logs || logs.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:20px;color:#888;">No clipboard events recorded yet.</td></tr>';
-      return;
-    }
-    tbody.innerHTML = logs.map(log => `
-      <tr>
-        <td>${new Date(log.timestamp).toLocaleString()}</td>
-        <td>${escapeHtml(log.content_type || '-')}</td>
-        <td>${escapeHtml(log.content_preview || '')}</td>
-      </tr>`).join('');
-  } catch (e) {
-    console.error('Failed to load clipboard logs:', e);
-    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:20px;color:#dc3545;">Failed to load data.</td></tr>';
-  }
-}
-
-function truncate(str, maxLen) {
-  return str.length > maxLen ? str.slice(0, maxLen) + '…' : str;
 }
 
 // ─── CHARTS ──────────────────────────────────────────────────
 function initializeCharts() {
-  if (charts.timeline) return; // already initialized
+  const appCtx = document.getElementById('appUsageChart');
+  const tlCtx = document.getElementById('timelineChart');
+  if (!appCtx || !tlCtx) return;
 
-  const timelineCtx = document.getElementById('timeline-chart').getContext('2d');
-  charts.timeline = new Chart(timelineCtx, {
-    type: 'bar',
-    data: { labels: [], datasets: [] },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: { x: { title: { display: true, text: 'Hour of Day' } } }
-    }
-  });
-
-  const appCtx = document.getElementById('app-usage-chart').getContext('2d');
-  charts.appUsage = new Chart(appCtx, {
-    type: 'bar',
-    data: { labels: [], datasets: [] },
-    options: {
-      indexAxis: 'y',
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false } }
-    }
-  });
-
-  const catCtx = document.getElementById('category-chart').getContext('2d');
-  charts.category = new Chart(catCtx, {
+  charts.appUsage = new Chart(appCtx.getContext('2d'), {
     type: 'doughnut',
-    data: { labels: [], datasets: [] },
-    options: { responsive: true, maintainAspectRatio: false }
+    data: { labels: [], datasets: [{ data: [], backgroundColor: ['#667eea', '#764ba2', '#f0a500', '#28a745', '#dc3545', '#17a2b8', '#fd7e14'] }] },
+    options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } } } },
+  });
+
+  charts.timeline = new Chart(tlCtx.getContext('2d'), {
+    type: 'bar',
+    data: { labels: [], datasets: [{ label: 'Active (min)', data: [], backgroundColor: 'rgba(102,126,234,0.7)', borderRadius: 4 }] },
+    options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } },
   });
 }
 
-function updateCharts(activityData, timelineData) {
-  if (!charts.appUsage || !charts.category || !charts.timeline) {
-    console.warn('Charts not initialized — skipping update');
-    return;
-  }
+async function loadChartsData() {
+  try {
+    const today = currentDate;
 
-  // App usage (backend returns { app_name, total_seconds })
-  const labels = (activityData || []).map(a => a.app_name);
-  const data = (activityData || []).map(a => parseFloat((a.total_seconds / 60).toFixed(1)));
+    // FIX 1: pass ONLY "YYYY-MM-DD" — db_manager appends the time parts internally
+    const [activity, timeline] = await Promise.all([
+      window.electronAPI.getActivityStats({ start: today, end: today }),
+      window.electronAPI.getTimelineData({ date: today }),
+    ]);
 
-  charts.appUsage.data = {
-    labels,
-    datasets: [{ label: 'Minutes', data, backgroundColor: 'rgba(102,126,234,0.7)', borderColor: 'rgba(102,126,234,1)', borderWidth: 1 }]
-  };
-  charts.appUsage.update();
-
-  charts.category.data = {
-    labels: labels.slice(0, 5),
-    datasets: [{ data: data.slice(0, 5), backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF'] }]
-  };
-  charts.category.update();
-
-  // Timeline: bucket activity by hour
-  const hourlyData = new Array(24).fill(0);
-  (timelineData || []).forEach(item => {
-    if (item.timestamp) {
-      const hour = new Date(item.timestamp).getHours();
-      hourlyData[hour] += (item.duration_seconds || 0) / 60;
+    // ── App Usage Doughnut ────────────────────────────────────────────────
+    // Backend returns: [{app_name: "chrome.exe", total_seconds: 300}, ...]
+    if (Array.isArray(activity) && activity.length > 0 && charts.appUsage) {
+      const top7 = activity.slice(0, 7);
+      charts.appUsage.data.labels = top7.map(e => {
+        const name = (e.app_name || 'Unknown').replace(/\.exe$/i, '');
+        return name.length > 20 ? name.substring(0, 18) + '…' : name;
+      });
+      charts.appUsage.data.datasets[0].data = top7.map(e =>
+        Math.max(1, Math.round((e.total_seconds || 0) / 60))
+      );
+      charts.appUsage.update();
+    } else if (charts.appUsage) {
+      charts.appUsage.data.labels = [];
+      charts.appUsage.data.datasets[0].data = [];
+      charts.appUsage.update();
     }
-  });
 
-  charts.timeline.data = {
-    labels: Array.from({ length: 24 }, (_, i) => `${i}:00`),
-    datasets: [{
-      label: 'Minutes Active',
-      data: hourlyData.map(v => parseFloat(v.toFixed(1))),
-      backgroundColor: 'rgba(75,192,192,0.6)',
-      borderColor: 'rgba(75,192,192,1)',
-      borderWidth: 1
-    }]
-  };
-  charts.timeline.update();
+    // ── Activity Timeline Bar ─────────────────────────────────────────────
+    // FIX 2: Backend returns raw app_activity rows — bucket them into hourly slots
+    // [{timestamp: "2026-02-19T08:30:00...", duration_seconds: 45, app_name: "..."}]
+    if (Array.isArray(timeline) && timeline.length > 0 && charts.timeline) {
+      // Build a full 24-hour map so hours with zero activity still show
+      const hourMap = {};
+      for (let h = 0; h < 24; h++) {
+        hourMap[String(h).padStart(2, '0') + ':00'] = 0;
+      }
+      timeline.forEach(t => {
+        if (!t.timestamp) return;
+        const hour = new Date(t.timestamp).getHours();
+        const label = String(hour).padStart(2, '0') + ':00';
+        hourMap[label] = (hourMap[label] || 0) + (t.duration_seconds || 0);
+      });
+
+      // Trim leading/trailing empty hours for a cleaner chart
+      const allHours = Object.entries(hourMap);
+      const firstNonZero = allHours.findIndex(([, v]) => v > 0);
+      const lastNonZero = allHours.reduce((acc, [, v], i) => v > 0 ? i : acc, -1);
+
+      // Show the active window ± 1 hour padding, or fall back to business hours
+      const visible = firstNonZero >= 0
+        ? allHours.slice(Math.max(0, firstNonZero - 1), lastNonZero + 2)
+        : allHours.slice(7, 19);
+
+      charts.timeline.data.labels = visible.map(([label]) => label);
+      charts.timeline.data.datasets[0].data = visible.map(([, secs]) =>
+        Math.round(secs / 60)   // convert seconds → minutes for readable axis
+      );
+      charts.timeline.update();
+    } else if (charts.timeline) {
+      charts.timeline.data.labels = [];
+      charts.timeline.data.datasets[0].data = [];
+      charts.timeline.update();
+    }
+
+  } catch (err) {
+    console.error('Failed to load chart data:', err);
+  }
 }
 
-// ─── HELPERS ─────────────────────────────────────────────────
+//param {string} isoString  - UTC ISO-8601 timestamp from the database
+//param {string} [tz]       
+//returns {string}          
+
+function formatWithTZ(isoString, tz) {
+  if (!isoString) return '—';
+  try {
+    const zone = tz || currentTimezone || 'UTC';
+    return new Date(isoString).toLocaleString('en-US', {
+      timeZone: zone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+  } catch (e) {
+    // Fallback: browser default if the TZ string is bad
+    return new Date(isoString).toLocaleString();
+  }
+}
+// ─── UTILITIES ────────────────────────────────────────────────
+function escapeHtml(str) {
+  const d = document.createElement('div');
+  d.textContent = String(str);
+  return d.innerHTML;
+}
+
+function truncate(str, max) {
+  return str.length > max ? str.substring(0, max) + '…' : str;
+}
+
 function formatDuration(seconds) {
-  if (!seconds || seconds <= 0) return '0s';
-  if (seconds < 60) return `${seconds}s`;
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  if (mins < 60) return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
-  const hrs = Math.floor(mins / 60);
-  const remMins = mins % 60;
-  return remMins > 0 ? `${hrs}h ${remMins}m` : `${hrs}h`;
-}
-
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = String(text);
-  return div.innerHTML;
+  if (!seconds) return '0s';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
 }

