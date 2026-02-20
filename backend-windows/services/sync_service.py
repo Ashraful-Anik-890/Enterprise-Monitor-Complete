@@ -31,7 +31,6 @@ from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
-ERP_ENDPOINT          = "https://api.erp.skillerszone.com/api/pctracking/appuseage"
 DEFAULT_SYNC_INTERVAL = 300   # 5 minutes
 BATCH_SIZE            = 50
 
@@ -65,7 +64,7 @@ class SyncService:
         self.is_running = True
         self.thread = threading.Thread(target=self._sync_loop, daemon=True)
         self.thread.start()
-        logger.info("Sync service started (ERP: %s)", ERP_ENDPOINT)
+        logger.info("Sync service started — endpoint resolved from config at sync time")
 
     def stop(self):
         self.is_running = False
@@ -157,18 +156,32 @@ class SyncService:
 
     def _post_to_erp(self, payload: dict) -> bool:
         """
-        POST a single record to the ERP endpoint.
-        Returns True on HTTP 2xx, False on any error. Timeout: 10s.
+        POST a single record to the configured ERP endpoint.
+        Reads server_url and api_key fresh from config_manager on every call
+        so that GUI changes take effect without a service restart.
+        Returns True on HTTP 2xx, False on any error or missing config.
         """
+        server_url = self.config_manager.get("server_url", "").strip()
+        if not server_url:
+            logger.warning("ERP server_url is not configured — skipping sync. "
+                           "Set it via the 'Config Server API' button in the dashboard.")
+            return False
+
+        api_key = self.config_manager.get("api_key", "").strip()
+
+        headers = {
+            "Content-Type": "application/json",
+            "Accept":       "application/json",
+        }
+        if api_key:
+            headers["X-API-Key"] = api_key
+
         try:
             response = requests.post(
-                ERP_ENDPOINT,
+                server_url,
                 json=payload,
                 timeout=10,
-                headers={
-                    "Content-Type": "application/json",
-                    "Accept":       "application/json",
-                }
+                headers=headers,
             )
             if response.ok:
                 logger.debug("ERP POST OK — app=%s duration=%ss",

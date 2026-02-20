@@ -54,6 +54,7 @@ function showLogin() {
 function showDashboard() {
   document.getElementById('login-container').classList.remove('active');
   document.getElementById('dashboard-container').classList.add('active');
+  startTokenCountdown();
 }
 
 // ─── EVENT LISTENERS ─────────────────────────────────────────
@@ -80,16 +81,16 @@ function setupEventListeners() {
     loadDashboardData();
   });
   document.getElementById('search-btn').addEventListener('click', () => {
-    const tzSelect = document.getElementById('timezone-select');
-    if (tzSelect) {
-      tzSelect.addEventListener('change', (e) => {
-        saveTimezone(e.target.value);
-      });
-    }
     const v = document.getElementById('date-picker').value;
     if (v) currentDate = v;
     loadDashboardData();
   });
+
+  // Timezone — must be top-level, NOT nested inside search-btn
+  const tzSelect = document.getElementById('timezone-select');
+  if (tzSelect) {
+    tzSelect.addEventListener('change', (e) => saveTimezone(e.target.value));
+  }
 
   // Pause / Resume (header controls + overview tab)
   document.getElementById('pause-btn').addEventListener('click', pauseMonitoring);
@@ -117,6 +118,14 @@ function setupEventListeners() {
   document.getElementById('credentials-modal').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) closeCredentialsModal();
   });
+
+  // Server config modal
+  const scModal = document.getElementById('server-config-modal');
+  if (scModal) {
+    document.getElementById('sc-cancel-btn').addEventListener('click', closeServerConfigModal);
+    document.getElementById('sc-save-btn').addEventListener('click', handleSaveServerConfig);
+    scModal.addEventListener('click', (e) => { if (e.target === scModal) closeServerConfigModal(); });
+  }
 
   // Recording toggle
   document.getElementById('recording-toggle').addEventListener('change', handleRecordingToggle);
@@ -153,6 +162,7 @@ async function handleLoginClick() {
 
 async function handleLogout() {
   try {
+    clearTokenCountdown();
     await window.electronAPI.logout();
     isAuthenticated = false;
     showLogin();
@@ -242,6 +252,73 @@ function showModalError(msg) {
   el.style.display = 'block';
 }
 
+// ─── SERVER API CONFIG MODAL ─────────────────────────────────
+function openServerConfigModal() {
+  document.getElementById('server-config-error').style.display = 'none';
+  document.getElementById('server-config-success').style.display = 'none';
+  document.getElementById('server-config-modal').classList.add('open');
+
+  // Pre-populate with current values
+  window.electronAPI.getConfig().then(cfg => {
+    document.getElementById('sc-server-url').value = cfg.server_url || '';
+    document.getElementById('sc-api-key').value = cfg.api_key || '';
+    document.getElementById('sc-sync-interval').value = cfg.sync_interval_seconds ?? 300;
+  }).catch(() => { });
+}
+
+function closeServerConfigModal() {
+  document.getElementById('server-config-modal').classList.remove('open');
+}
+
+async function handleSaveServerConfig() {
+  const serverUrl = document.getElementById('sc-server-url').value.trim();
+  const apiKey = document.getElementById('sc-api-key').value.trim();
+  const syncInterval = parseInt(document.getElementById('sc-sync-interval').value, 10) || 300;
+  const errorEl = document.getElementById('server-config-error');
+  const successEl = document.getElementById('server-config-success');
+  const saveBtn = document.getElementById('sc-save-btn');
+
+  errorEl.style.display = 'none';
+  successEl.style.display = 'none';
+
+  if (!serverUrl) {
+    errorEl.textContent = 'Server URL is required.';
+    errorEl.style.display = 'block';
+    return;
+  }
+  try { new URL(serverUrl); } catch {
+    errorEl.textContent = 'Invalid URL format. Must start with https://';
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Saving…';
+
+  try {
+    const result = await window.electronAPI.setConfig({
+      server_url: serverUrl,
+      api_key: apiKey,
+      sync_interval_seconds: syncInterval,
+    });
+    if (result.success) {
+      successEl.textContent = 'Configuration saved. Next sync will use the new endpoint.';
+      successEl.style.display = 'block';
+      setTimeout(closeServerConfigModal, 2000);
+    } else {
+      errorEl.textContent = result.error || 'Failed to save configuration.';
+      errorEl.style.display = 'block';
+    }
+  } catch (err) {
+    errorEl.textContent = 'Request failed. Is the backend running?';
+    errorEl.style.display = 'block';
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = '💾 Save';
+  }
+}
+
+
 // ─── TAB SWITCHING ───────────────────────────────────────────
 function switchTab(tab) {
   currentTab = tab;
@@ -265,7 +342,6 @@ function switchSubTab(subtab) {
 async function loadDashboardData() {
   if (!isAuthenticated) return;
   try {
-    await loadTimezone();     // ← NEW: load TZ before rendering any timestamps
     await loadIdentity();
     if (currentTab === 'overview') {
       await Promise.all([loadStatistics(), loadChartsData()]);
@@ -337,8 +413,15 @@ async function saveTimezone(tz) {
     currentTimezone = tz;
     updateTzBadge();
     await window.electronAPI.setTimezone(tz);
-    // Re-render whichever data tab is currently visible
-    await loadDashboardData();
+    // Re-render only the charts — no need to reload all data or re-fetch timezone
+    if (currentTab === 'overview') {
+      await loadChartsData();
+    }
+    // If on monitor-data tab, timestamps in the tables use formatWithTZ() which
+    // reads currentTimezone directly — reload the active subtab only
+    if (currentTab === 'monitor-data') {
+      await loadMonitorData();
+    }
   } catch (e) {
     console.error('Failed to save timezone:', e);
   }
@@ -576,15 +659,17 @@ async function loadVideoList() {
     const rows = videos.map(v => {
       const ts = formatWithTZ(v.timestamp);
       const dur = formatDuration(v.duration_seconds);
-      const fname = v.file_path.split('\\').pop() || v.file_path.split('/').pop() || v.file_path;
+      const fname = escapeHtml(v.file_path.split('\\').pop() || v.file_path.split('/').pop() || v.file_path);
+      const safePath = escapeHtml(v.file_path);
+      const status = v.is_synced ? '<span style="color:#28a745;font-weight:600;">✓ Synced</span>' : '<span style="color:#aaa;">Pending</span>';
       return `
         <tr>
           <td>${ts}</td>
-          <td style="font-family:monospace;font-size:12px;">${escapeHtml(fname)}</td>
+          <td style="font-family:monospace;font-size:12px;">${fname}</td>
           <td>${dur}</td>
-          <td>${v.is_synced ? '<span style="color:#28a745;font-weight:600;">✓ Synced</span>' : '<span style="color:#aaa;">Pending</span>'}</td>
+          <td>${status}</td>
           <td>
-            <button class="btn-folder" onclick="openVideoFolder(${JSON.stringify(v.file_path)})">
+            <button class="btn-folder" data-filepath="${safePath}">
               📂 Open
             </button>
           </td>
@@ -606,16 +691,25 @@ async function loadVideoList() {
           <tbody>${rows}</tbody>
         </table>
       </div>`;
+
+    // Attach open-folder listeners via delegation — never use inline onclick for file paths
+    // because HTML attribute parsing corrupts Windows backslashes.
+    container.querySelectorAll('.btn-folder[data-filepath]').forEach(btn => {
+      btn.addEventListener('click', () => openVideoFolder(btn.dataset.filepath));
+    });
+
   } catch (err) {
     container.innerHTML = '<div style="color:#dc3545;padding:20px;text-align:center;">Failed to load recordings.</div>';
   }
 }
 
 async function openVideoFolder(filepath) {
+  if (!filepath) return;
   try {
     await window.electronAPI.openFolder(filepath);
   } catch (err) {
     console.error('Failed to open folder:', err);
+    alert('Could not open folder. Check the Electron console for details.');
   }
 }
 
@@ -717,10 +811,17 @@ async function loadChartsData() {
       for (let h = 0; h < 24; h++) {
         hourMap[String(h).padStart(2, '0') + ':00'] = 0;
       }
+      const tzForChart = currentTimezone || 'UTC';
       timeline.forEach(t => {
         if (!t.timestamp) return;
-        const hour = new Date(t.timestamp).getHours();
-        const label = String(hour).padStart(2, '0') + ':00';
+        // Extract the hour in the *selected* timezone, not browser local time
+        const hourStr = new Intl.DateTimeFormat('en-US', {
+          timeZone: tzForChart,
+          hour: '2-digit',
+          hour12: false,
+        }).format(new Date(t.timestamp));
+        // hourStr is like "08" or "23"
+        const label = hourStr.padStart(2, '0') + ':00';
         hourMap[label] = (hourMap[label] || 0) + (t.duration_seconds || 0);
       });
 
@@ -792,4 +893,49 @@ function formatDuration(seconds) {
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
+}
+
+// ─── JWT COUNTDOWN TIMER ─────────────────────────────────────
+let _tokenCountdownInterval = null;
+
+function clearTokenCountdown() {
+  if (_tokenCountdownInterval) {
+    clearInterval(_tokenCountdownInterval);
+    _tokenCountdownInterval = null;
+  }
+  const el = document.getElementById('token-timer');
+  if (el) el.textContent = '';
+}
+
+async function startTokenCountdown() {
+  clearTokenCountdown();
+  const el = document.getElementById('token-timer');
+  if (!el) return;   // element not in DOM — no-op
+
+  const { remainingMs } = await window.electronAPI.getTokenExpiry();
+  if (remainingMs <= 0) {
+    await handleLogout();
+    return;
+  }
+
+  let remaining = Math.floor(remainingMs / 1000);
+
+  function tick() {
+    if (remaining <= 0) {
+      clearTokenCountdown();
+      if (el) el.textContent = 'Session expired';
+      handleLogout();
+      return;
+    }
+    const m = Math.floor(remaining / 60);
+    const s = remaining % 60;
+    if (el) {
+      el.textContent = `Session: ${m}:${String(s).padStart(2, '0')}`;
+      el.style.color = remaining <= 120 ? '#e74c3c' : '#aab';   // red in last 2 min
+    }
+    remaining--;
+  }
+
+  tick();  // paint immediately; don't wait 1s for first render
+  _tokenCountdownInterval = setInterval(tick, 1000);
 }

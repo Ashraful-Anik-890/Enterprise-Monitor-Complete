@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+import win32api
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,21 @@ TARGET_W       = 1280
 TARGET_H       = 720
 FOURCC         = "mp4v"      #
 FILE_EXT       = ".mp4"
-VIDEO_DIR      = Path("C:/ProgramData/EnterpriseMonitor/videos")
+# VIDEO_DIR is now resolved dynamically per-user in _resolve_video_dir()
+
+
+def _resolve_video_dir() -> Path:
+    """
+    Resolve the video storage directory at runtime.
+    Uses LOCALAPPDATA env var when available (standard Windows),
+    falls back to Path.home() / AppData / Local for portable builds.
+    """
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        base = Path(local_app_data)
+    else:
+        base = Path.home() / "AppData" / "Local"
+    return base / "EnterpriseMonitor" / "Videos"
 
 
 class ScreenRecorder:
@@ -55,17 +70,18 @@ class ScreenRecorder:
         self._is_running  = False
         self._lock        = threading.Lock()
 
+        self.video_dir = _resolve_video_dir()
         try:
-            VIDEO_DIR.mkdir(parents=True, exist_ok=True)
-            logger.info("Video directory ready: %s", VIDEO_DIR)
+            self.video_dir.mkdir(parents=True, exist_ok=True)
+            logger.info("Video directory ready: %s", self.video_dir)
         except PermissionError:
             logger.error(
                 "PERMISSION DENIED creating video dir: %s — "
-                "run main.py as Administrator (or as SYSTEM service). "
-                "Screen recording will not work until resolved.", VIDEO_DIR
+                "ensure the process runs as the logged-in user, not SYSTEM.",
+                self.video_dir
             )
         except Exception as e:
-            logger.error("Failed to create video directory %s: %s", VIDEO_DIR, e)
+            logger.error("Failed to create video directory %s: %s", self.video_dir, e)
 
     # ─── PUBLIC API ──────────────────────────────────────────────────────────
 
@@ -121,7 +137,7 @@ class ScreenRecorder:
 
         while not self._stop_event.is_set():
             chunk_start  = datetime.utcnow()
-            filepath     = self._build_filepath(chunk_start)
+            filepath = self._build_filepath(chunk_start)
             writer       = None
             frames_written = 0
 
@@ -150,6 +166,27 @@ class ScreenRecorder:
                             bgr  = arr[:, :, :3]                               # drop alpha
                             frame = cv2.resize(bgr, (TARGET_W, TARGET_H),
                                                interpolation=cv2.INTER_LINEAR)
+
+                            # ── Draw hardware cursor onto the frame ───────────
+                            # mss does not capture the OS cursor layer;
+                            # we must composite it manually per-frame.
+                            try:
+                                cx, cy = win32api.GetCursorPos()
+                                # Scale cursor coords from native resolution → 720p
+                                scale_x = TARGET_W / monitor["width"]
+                                scale_y = TARGET_H / monitor["height"]
+                                # Offset by monitor origin (multi-monitor support)
+                                rel_x = int((cx - monitor["left"]) * scale_x)
+                                rel_y = int((cy - monitor["top"])  * scale_y)
+                                if 0 <= rel_x < TARGET_W and 0 <= rel_y < TARGET_H:
+                                    # White filled circle with black outline — visible on any background
+                                    cv2.circle(frame, (rel_x, rel_y), 7,  (0, 0, 0),   -1)
+                                    cv2.circle(frame, (rel_x, rel_y), 5,  (255, 255, 255), -1)
+                                    cv2.circle(frame, (rel_x, rel_y), 2,  (0, 0, 0),   -1)
+                            except Exception:
+                                pass  # cursor read failure must never drop a frame
+                            # ─────────────────────────────────────────────────
+
                             writer.write(frame)
                             frames_written += 1
                         except Exception as frame_err:
@@ -184,11 +221,10 @@ class ScreenRecorder:
 
     # ─── HELPERS ─────────────────────────────────────────────────────────────
 
-    @staticmethod
-    def _build_filepath(dt: datetime) -> Path:
+    def _build_filepath(self, dt: datetime) -> Path:
         """Build a timestamped filename for a recording chunk."""
         filename = dt.strftime("rec_%Y%m%d_%H%M%S") + FILE_EXT
-        return VIDEO_DIR / filename
+        return self.video_dir / filename
 
     def _save_recording_to_db(self, filepath: str, timestamp: str, duration_seconds: int):
         """Persist finished chunk metadata into video_recordings table."""

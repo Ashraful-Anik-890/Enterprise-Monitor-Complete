@@ -18,6 +18,7 @@ pywin32
 psutil
 pyperclip
 requests
+tzdata
 
 # ── NEW: Browser URL Tracking ─────────────────────────────────────────────────
 # uiautomation reads address bar controls via Windows UI Automation COM API.

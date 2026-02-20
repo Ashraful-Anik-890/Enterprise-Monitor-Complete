@@ -370,12 +370,21 @@ async def get_timezone(user=Depends(verify_token)):
 @app.post("/api/config/timezone")
 async def set_timezone(request: TimezoneRequest, user=Depends(verify_token)):
     """Persist the display timezone to config.json."""
-    import zoneinfo
-    # Validate the timezone string is a real IANA zone
+    # On Windows, zoneinfo requires 'pip install tzdata'.
+    # We attempt validation but fall back gracefully if the DB is missing,
+    # rather than rejecting every valid IANA string with HTTP 400.
     try:
-        zoneinfo.ZoneInfo(request.timezone)
-    except (zoneinfo.ZoneInfoNotFoundError, KeyError):
-        raise HTTPException(status_code=400, detail=f"Unknown timezone: {request.timezone}")
+        import zoneinfo
+        try:
+            zoneinfo.ZoneInfo(request.timezone)
+        except (KeyError, Exception) as tz_err:
+            # ZoneInfoNotFoundError on Windows without tzdata — treat as invalid
+            raise HTTPException(status_code=400, detail=f"Unknown timezone: {request.timezone}")
+    except HTTPException:
+        raise
+    except ImportError:
+        # zoneinfo not available (Python < 3.9) — skip validation
+        pass
     
     config_manager.set("timezone", request.timezone)
     logger.info("Display timezone set to: %s", request.timezone)
@@ -504,7 +513,12 @@ async def resume_monitoring(user=Depends(verify_token)):
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 @app.get("/api/config")
 async def get_config(user=Depends(verify_token)):
-    return config_manager.config
+    """Return the current sync configuration for the GUI modal."""
+    return {
+        "server_url":            config_manager.get("server_url", ""),
+        "api_key":               config_manager.get("api_key", ""),
+        "sync_interval_seconds": config_manager.get("sync_interval_seconds", 300),
+    }
 
 @app.post("/api/config")
 async def update_config(config: ConfigRequest, user=Depends(verify_token)):

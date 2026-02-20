@@ -1265,11 +1265,17 @@
 
           <div class="monitoring-controls">
             <h3 style="margin-bottom:12px;font-size:14px;color:#555;">Monitoring Controls</h3>
-            <div style="display:flex;gap:10px;align-items:center;">
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
               <button class="btn-danger" id="pause-btn2" style="padding:8px 16px;font-size:13px;">⏸ Pause
                 Monitoring</button>
               <button class="btn-success" id="resume-btn2" style="padding:8px 16px;font-size:13px;display:none;">▶
                 Resume Monitoring</button>
+              <button id="server-config-btn" onclick="openServerConfigModal()"
+                style="padding:7px 14px;font-size:13px;background:#5a67d8;color:#fff;border:none;border-radius:6px;cursor:pointer;">
+                ⚙ Config Server API
+              </button>
+              <span id="token-timer"
+                style="font-size:12px;color:#aab;margin-left:8px;font-variant-numeric:tabular-nums;"></span>
             </div>
           </div>
 
@@ -1485,6 +1491,59 @@
       <div class="modal-actions">
         <button class="btn-cancel" id="modal-cancel-btn">Cancel</button>
         <button class="btn-submit" id="modal-submit-btn">💾 Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SERVER API CONFIG MODAL ─────────────────────────────── -->
+  <div id="server-config-modal" class="modal-overlay">
+    <div class="modal-box"
+      style="max-width:480px;background:#fff;border-radius:14px;padding:32px;box-shadow:0 24px 80px rgba(0,0,0,0.3);position:relative;">
+      <div class="modal-header" style="margin-bottom:20px;">
+        <h2 style="font-size:18px;font-weight:700;color:#1a1a2e;margin-bottom:6px;">⚙ Config Server API</h2>
+        <p style="color:#888;font-size:13px;margin-top:4px;">
+          Configure the ERP endpoint this agent syncs data to.
+        </p>
+      </div>
+
+      <div class="form-group" style="margin-bottom:16px;">
+        <label
+          style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#666;margin-bottom:6px;">Server
+          URL <span style="color:#e74c3c;">*</span></label>
+        <input type="url" id="sc-server-url" placeholder="https://api.example.com/api/pctracking/appuseage"
+          style="width:100%;padding:10px 12px;border:2px solid #e8eaf0;border-radius:7px;font-size:14px;color:#333;background:#fafbff;transition:border-color 0.2s;" />
+      </div>
+
+      <div class="form-group" style="margin-bottom:16px;">
+        <label
+          style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#666;margin-bottom:6px;">API
+          Key <span style="color:#888;font-size:11px;text-transform:none;">(optional)</span></label>
+        <input type="password" id="sc-api-key" placeholder="Leave blank if not required"
+          style="width:100%;padding:10px 12px;border:2px solid #e8eaf0;border-radius:7px;font-size:14px;color:#333;background:#fafbff;transition:border-color 0.2s;" />
+      </div>
+
+      <div class="form-group" style="margin-bottom:24px;">
+        <label
+          style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#666;margin-bottom:6px;">Sync
+          Interval (seconds)</label>
+        <input type="number" id="sc-sync-interval" value="300" min="30" max="86400"
+          style="width:100%;padding:10px 12px;border:2px solid #e8eaf0;border-radius:7px;font-size:14px;color:#333;background:#fafbff;transition:border-color 0.2s;" />
+      </div>
+
+      <div id="server-config-error"
+        style="display:none;color:#e74c3c;font-size:13px;margin-bottom:16px;text-align:center;"></div>
+      <div id="server-config-success"
+        style="display:none;color:#1a8a52;font-size:13px;margin-bottom:16px;text-align:center;"></div>
+
+      <div style="display:flex;gap:10px;margin-top:24px;">
+        <button id="sc-cancel-btn"
+          style="flex:1;padding:11px;background:#f0f2f8;color:#555;border:none;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;">
+          Cancel
+        </button>
+        <button id="sc-save-btn"
+          style="flex:2;padding:11px;background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);color:white;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:opacity 0.2s;">
+          💾 Save
+        </button>
       </div>
     </div>
   </div>

@@ -55,6 +55,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openFolder: (filepath: string) => ipcRenderer.invoke('app:openFolder', filepath),
   getTimezone: () => ipcRenderer.invoke('api:getTimezone'),
   setTimezone: (tz: string) => ipcRenderer.invoke('api:setTimezone', tz),
+  getTokenExpiry: () => ipcRenderer.invoke('auth:getTokenExpiry'),
+  getConfig: () => ipcRenderer.invoke('api:getConfig'),
+  setConfig: (payload: { server_url: string; api_key: string; sync_interval_seconds?: number }) =>
+    ipcRenderer.invoke('api:setConfig', payload),
   // App control
   quitApp: () => ipcRenderer.invoke('app:quit'),
 });
@@ -97,6 +101,10 @@ declare global {
       openFolder: (filepath: string) => Promise<void>;
       getTimezone: () => Promise<{ timezone: string }>;
       setTimezone: (tz: string) => Promise<{ success: boolean; timezone: string; error?: string }>;
+      getTokenExpiry: () => Promise<{ remainingMs: number }>;
+      getConfig: () => Promise<{ server_url: string; api_key: string; sync_interval_seconds: number }>;
+      setConfig: (payload: { server_url: string; api_key: string; sync_interval_seconds?: number }) =>
+        Promise<{ success: boolean; error?: string }>;
 
       quitApp: () => Promise<void>;
     };

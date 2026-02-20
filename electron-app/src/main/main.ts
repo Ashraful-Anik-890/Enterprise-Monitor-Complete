@@ -118,6 +118,25 @@ function setupIpcHandlers() {
     return { success: true };
   });
 
+  // Decode JWT exp claim from stored token — used by renderer countdown timer
+  ipcMain.handle('auth:getTokenExpiry', () => {
+    const token = store.get('authToken') as string | undefined;
+    if (!token) return { remainingMs: 0 };
+    try {
+      // JWT payload is the second base64url segment
+      const payloadB64 = token.split('.')[1];
+      if (!payloadB64) return { remainingMs: 0 };
+      // atob is not available in Node; use Buffer instead
+      const json = Buffer.from(payloadB64, 'base64').toString('utf8');
+      const { exp } = JSON.parse(json) as { exp?: number };
+      if (!exp) return { remainingMs: 0 };
+      const remainingMs = exp * 1000 - Date.now();
+      return { remainingMs: Math.max(0, remainingMs) };
+    } catch {
+      return { remainingMs: 0 };
+    }
+  });
+
   // FIX #2: getStatistics now forwards the date param to the backend
   ipcMain.handle('api:getStatistics', async (_event, params: { date?: string } = {}) => {
     try {
@@ -329,6 +348,9 @@ function setupIpcHandlers() {
     try {
       // Normalize: Python Path produces forward slashes; Windows shell needs backslashes
       const normalizedPath = path.normalize(filepath);
+      console.log('[app:openFolder] received:', JSON.stringify(filepath));
+      console.log('[app:openFolder] normalized:', normalizedPath);
+      console.log('[app:openFolder] exists:', fs.existsSync(normalizedPath));
 
       if (fs.existsSync(normalizedPath)) {
         // File exists → highlight it in Explorer
@@ -343,7 +365,7 @@ function setupIpcHandlers() {
           const recordingsRoot = path.join(
             process.env.LOCALAPPDATA || path.join(require('os').homedir(), 'AppData', 'Local'),
             'EnterpriseMonitor',
-            'screen_recordings'
+            'Videos'
           );
           if (!fs.existsSync(recordingsRoot)) {
             fs.mkdirSync(recordingsRoot, { recursive: true });
@@ -371,6 +393,32 @@ function setupIpcHandlers() {
     try {
       const token = store.get('authToken') as string;
       const response = await apiClient.post('/api/config/timezone', { timezone: tz }, token);
+      return response.data;
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Read current server config for the Config Server API modal
+  ipcMain.handle('api:getConfig', async () => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.get('/api/config', token);
+      return response.data;
+    } catch (error: any) {
+      return { server_url: '', api_key: '', sync_interval_seconds: 300 };
+    }
+  });
+
+  // Save server config from the Config Server API modal
+  ipcMain.handle('api:setConfig', async (_event, payload: {
+    server_url: string;
+    api_key: string;
+    sync_interval_seconds?: number;
+  }) => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.post('/api/config', payload, token);
       return response.data;
     } catch (error: any) {
       return { success: false, error: error.message };

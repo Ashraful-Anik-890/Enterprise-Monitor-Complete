@@ -173,7 +173,7 @@ class BrowserTracker:
                 page_title=title or "",
                 username=self._os_user,
             )
-            logger.info(f"[BrowserTracker] {browser_name} → {url}")
+            logger.info(f"[BrowserTracker] {browser_name} -> {url}")
 
     # ─── WINDOW DETECTION ────────────────────────────────────────────────────
 

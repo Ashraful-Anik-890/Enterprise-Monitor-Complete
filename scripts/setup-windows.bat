@@ -8,7 +8,7 @@ SETLOCAL ENABLEDELAYEDEXPANSION
 :: PREREQUISITES (run these manually BEFORE this script):
 ::   1.  Install Python 3.11+ (https://python.org) — add to PATH
 ::   2.  pip install pyinstaller mss opencv-python numpy fastapi
-::       uvicorn[standard] pynput pywin32 psutil requests
+::       uvicorn[standard] pynput pywin32 psutil requests tzdata
 ::       python-jose[cryptography]
 ::   3.  Place nssm.exe in: resources\nssm.exe
 ::       Download from: https://nssm.cc/download (2.24 stable)
@@ -50,7 +50,6 @@ SET "SERVICE_NAME=EnterpriseMonitorBackend"
 SET "INSTALL_DIR=C:\ProgramData\EnterpriseMonitor"
 SET "EXE_DEST=%INSTALL_DIR%\backend\enterprise_monitor_backend.exe"
 SET "LOG_DIR=%INSTALL_DIR%\logs"
-SET "VIDEO_DIR=%INSTALL_DIR%\videos"
 
 echo [Step 1/7] Verifying prerequisites...
 echo.
@@ -88,7 +87,6 @@ echo [Step 2/7] Creating install directories...
 IF NOT EXIST "%INSTALL_DIR%"         MKDIR "%INSTALL_DIR%"
 IF NOT EXIST "%INSTALL_DIR%\backend" MKDIR "%INSTALL_DIR%\backend"
 IF NOT EXIST "%LOG_DIR%"             MKDIR "%LOG_DIR%"
-IF NOT EXIST "%VIDEO_DIR%"           MKDIR "%VIDEO_DIR%"
 echo   [OK] Directories created.
 
 echo.
@@ -214,7 +212,7 @@ echo.
 echo   Service name : %SERVICE_NAME%
 echo   Executable   : %EXE_DEST%
 echo   Logs         : %LOG_DIR%\
-echo   Videos       : %VIDEO_DIR%\
+echo   Videos       : ^%LOCALAPPDATA^%\EnterpriseMonitor\Videos\ (resolves per-user)
 echo   API port     : http://127.0.0.1:51235
 echo.
 echo   NEXT STEP: Install the Electron frontend
