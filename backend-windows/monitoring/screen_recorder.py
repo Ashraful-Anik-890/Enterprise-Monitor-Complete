@@ -41,15 +41,15 @@ FILE_EXT       = ".mp4"
 def _resolve_video_dir() -> Path:
     """
     Resolve the video storage directory at runtime.
-    Uses LOCALAPPDATA env var when available (standard Windows),
-    falls back to Path.home() / AppData / Local for portable builds.
+    Uses PROGRAMDATA env var when available (standard Windows),
+    falls back to C:/ProgramData for portable builds.
     """
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if local_app_data:
-        base = Path(local_app_data)
+    program_data = os.environ.get("PROGRAMDATA")
+    if program_data:
+        base = Path(program_data)
     else:
-        base = Path.home() / "AppData" / "Local"
-    return base / "EnterpriseMonitor" / "Videos"
+        base = Path(os.environ.get("SystemDrive", "C:")) / "ProgramData"
+    return base / "EnterpriseMonitor" / "videos"
 
 
 class ScreenRecorder:

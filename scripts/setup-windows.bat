@@ -65,7 +65,7 @@ IF %ERRORLEVEL% NEQ 0 (
 echo   [OK] Python found.
 
 :: Check PyInstaller
-pyinstaller --version >nul 2>&1
+python -m PyInstaller --version >nul 2>&1
 IF %ERRORLEVEL% NEQ 0 (
     echo [ERROR] PyInstaller not found. Run: pip install pyinstaller
     pause
