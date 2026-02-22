@@ -2,7 +2,19 @@
 
 **Professional Employee Monitoring System for Windows**
 
-A comprehensive, production-ready monitoring solution built with Electron, Python FastAPI, and modern web technologies. Designed for enterprise environments to track employee productivity, application usage, and system activity.
+A comprehensive, production-ready monitoring solution built with Electron, Python FastAPI, and modern web technologies. Designed for enterprise environments to track employee productivity, application usage, browser history, keystrokes, screenshots, clipboard activity, and screen recordings — all synchronized to your ERP server over HTTPS.
+
+| Capability | Details |
+|---|---|
+| 📸 Screenshot Capture | Every 5 s, auto-compressed to 60–80 KB |
+| 🖥️ App Tracking | Active process + window title every 5 s |
+| 🌐 Browser URL Tracking | UI Automation — no proxy, no extension needed |
+| ⌨️ Keystroke Logging | Buffered per-window, privacy filter on login screens |
+| 📹 Screen Recording | 720p MP4 in 5-min chunks (admin-controlled, off by default) |
+| 📋 Clipboard Monitoring | Real-time content-type + 100-char preview |
+| 🔄 6-Type ERP Sync | Per-endpoint URLs, batched uploads, automatic retry |
+| 🖥️ Admin Dashboard | Electron GUI — charts, logs, screenshot gallery, config modal |
+| 🔒 JWT Auth | 30-minute tokens, enforced password strength policy |
 
 ---
 
@@ -13,30 +25,29 @@ A comprehensive, production-ready monitoring solution built with Electron, Pytho
 - [Technology Stack](#-technology-stack)
 - [Key Features](#-key-features)
 - [Data Flow & Storage](#-data-flow--storage)
-- [Quick Start](#-quick-start)
+- [Quick Start (Development)](#-quick-start-development)
+- [Production Deployment](#-production-deployment)
+- [Building the Electron Installer](#-building-the-electron-installer)
 - [Project Structure](#-project-structure)
-- [Security](#-security)
-- [Documentation](#-documentation)
+- [API Reference](#-api-reference)
+- [Configuration Reference](#-configuration-reference)
+- [Security & Privacy](#-security--privacy)
+- [Troubleshooting](#-troubleshooting)
+- [Important Notes](#-important-notes)
+- [Support & Logs](#-support--logs)
 
 ---
 
 ## 🎯 Overview
 
-Enterprise Monitor is a **Windows-focused** employee monitoring system that provides:
-
-- **Real-time Activity Tracking**: Monitor active applications, windows, and user behavior
-- **Screenshot Capture**: Automated screenshots with configurable intervals
-- **Clipboard Monitoring**: Track clipboard events for security auditing
-- **Central Server Sync**: Automatic data synchronization to ERP server
-- **Admin Dashboard**: Modern web-based interface for viewing analytics
-- **System Tray Integration**: Lightweight, non-intrusive background operation
+Enterprise Monitor is a **Windows-focused** employee monitoring system. The backend is a Python FastAPI service that runs as a Windows service; the front-end is an Electron app that connects to it over HTTP on localhost.
 
 ### Platform Support
 
-- **Primary**: Windows 10/11 (Fully functional)
-- **Secondary**: macOS 13+ (Basic backend support available in `backend-macos/`)
-
-> **Note**: This README focuses on the Windows implementation as it's the primary deployment target.
+| Platform | Status | Path |
+|---|---|---|
+| **Windows 10/11** | ✅ Fully supported | `backend-windows/` |
+| **macOS 13+** | 🔶 Experimental | `backend-macos/` |
 
 ---
 
@@ -45,382 +56,415 @@ Enterprise Monitor is a **Windows-focused** employee monitoring system that prov
 ### System Overview
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    ELECTRON APP (GUI)                       │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │  Main Process│  │   Renderer   │  │  System Tray │     │
-│  │  (Node.js)   │  │  (HTML/CSS/JS)│  │   Manager    │     │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘     │
-│         │                  │                  │              │
-│         └──────────────────┴──────────────────┘              │
-│                            │                                 │
-│                    IPC Communication                         │
-│                            │                                 │
-└────────────────────────────┼─────────────────────────────────┘
-                             │
-                   HTTP REST API (Port 51235)
-                             │
-┌────────────────────────────┼─────────────────────────────────┐
-│              PYTHON BACKEND (FastAPI)                        │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │                  API Server                           │   │
-│  │  • Authentication (JWT)                               │   │
-│  │  • RESTful Endpoints                                  │   │
-│  │  • CORS Middleware                                    │   │
-│  └──────────────┬───────────────────────────────────────┘   │
-│                 │                                            │
-│  ┌──────────────┴───────────────────────────────────────┐   │
-│  │           MONITORING SERVICES                         │   │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │   │
-│  │  │ Screenshot  │  │ App Tracker │  │  Clipboard  │  │   │
-│  │  │  Monitor    │  │   Service   │  │   Monitor   │  │   │
-│  │  │  (5s cycle) │  │  (5s cycle) │  │ (Real-time) │  │   │
-│  │  └─────────────┘  └─────────────┘  └─────────────┘  │   │
-│  │  ┌─────────────┐  ┌─────────────┐                   │   │
-│  │  │   Cleanup   │  │    Sync     │                   │   │
-│  │  │   Service   │  │   Service   │                   │   │
-│  │  │ (24h cycle) │  │ (60s cycle) │                   │   │
-│  │  └─────────────┘  └─────────────┘                   │   │
-│  └──────────────┬───────────────────────────────────────┘   │
-│                 │                                            │
-│  ┌──────────────┴───────────────────────────────────────┐   │
-│  │              DATABASE LAYER                           │   │
-│  │  • SQLite Database                                    │   │
-│  │  • Tables: screenshots, app_activity, clipboard      │   │
-│  │  • Sync tracking (synced flag)                       │   │
-│  └──────────────┬───────────────────────────────────────┘   │
-│                 │                                            │
-└─────────────────┼────────────────────────────────────────────┘
-                  │
-                  │ HTTPS POST (Every 60s)
-                  │
-┌─────────────────┼────────────────────────────────────────────┐
-│                 ▼                                            │
-│        ERP SERVER (External)                                 │
-│  https://api.erp.skillerszone.com/api/pctracking/appuseage  │
-│  • Receives app activity data                               │
-│  • Centralized monitoring dashboard                         │
-└──────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                       ELECTRON APP (GUI)                       │
+│  ┌───────────────┐  ┌──────────────────┐  ┌────────────────┐  │
+│  │  Main Process │  │    Renderer      │  │  System Tray   │  │
+│  │  (Node.js)    │  │  (HTML/CSS/JS)   │  │   Manager      │  │
+│  └───────┬───────┘  └────────┬─────────┘  └───────┬────────┘  │
+│          └───────────────────┴───────────────────┘             │
+│                              │  IPC (contextBridge)            │
+└──────────────────────────────┼─────────────────────────────────┘
+                               │
+                 HTTP REST API — http://127.0.0.1:51235
+                               │
+┌──────────────────────────────┼─────────────────────────────────┐
+│               PYTHON BACKEND (FastAPI + Uvicorn)               │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  api_server.py  •  JWT Auth  •  CORS  •  Pydantic models │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│  ┌──────────────────── MONITORING SERVICES ─────────────────┐  │
+│  │  Screenshot (5 s)    App Tracker (5 s)                   │  │
+│  │  Browser Tracker (5 s, UI Automation COM)                │  │
+│  │  Keylogger (pynput)  Clipboard (real-time)               │  │
+│  │  Screen Recorder (admin-toggled, 720p MP4)               │  │
+│  │  Data Cleaner (24 h) Sync Service v2 (300 s, 6 types)   │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│  ┌──────────────────── SQLite DATABASE ─────────────────────┐  │
+│  │  screenshots  app_activity  clipboard_events             │  │
+│  │  browser_activity  text_logs  video_recordings           │  │
+│  │  device_config  (identity KV store)                      │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                               │
+              HTTPS POST every 300 s — 6 separate endpoints
+                               │
+┌──────────────────────────────▼─────────────────────────────────┐
+│        ERP SERVER (External) — 6 configurable endpoints        │
+│  url_app_activity  → POST JSON   (app usage sessions)          │
+│  url_browser       → POST JSON   (browser URL visits)          │
+│  url_clipboard     → POST JSON   (clipboard events)            │
+│  url_keystrokes    → POST JSON   (keystroke / text logs)       │
+│  url_screenshots   → POST multipart (PNG files + metadata)     │
+│  url_videos        → POST multipart (MP4 chunks + metadata)    │
+└────────────────────────────────────────────────────────────────┘
 ```
 
-### Component Breakdown
+### How the Components Fit Together
 
-#### 1. **Electron App** (`electron-app/`)
-- **Main Process** (`src/main/main.ts`): 
-  - Manages application lifecycle
-  - Creates browser windows
-  - Handles IPC communication
-  - Manages system tray
-  - Auto-starts on Windows login
-  
-- **Renderer Process** (`src/renderer/`):
-  - Dashboard UI (HTML/CSS/JavaScript)
-  - Chart.js for data visualization
-  - Date picker for historical data
-  - Real-time statistics display
-
-- **Preload Script** (`src/preload/`):
-  - Secure bridge between main and renderer
-  - Exposes safe APIs to renderer
-
-#### 2. **Python Backend** (`backend-windows/`)
-- **API Server** (`api_server.py`):
-  - FastAPI application
-  - JWT authentication
-  - RESTful endpoints
-  - CORS enabled for Electron
-
-- **Monitoring Services** (`monitoring/`):
-  - `screenshot.py`: Captures screenshots every 5 seconds, optimizes to 60-80KB
-  - `app_tracker.py`: Tracks active application and window title every 5 seconds
-  - `clipboard.py`: Monitors clipboard changes in real-time
-  - `data_cleaner.py`: Deletes data older than 7 days (runs every 24 hours)
-
-- **Services** (`services/`):
-  - `sync_service.py`: Syncs app activity to ERP server every 60 seconds
-
-- **Database** (`database/`):
-  - `db_manager.py`: SQLite operations, schema management, migrations
-
-- **Authentication** (`auth/`):
-  - `auth_manager.py`: JWT token generation/validation, password hashing (bcrypt)
-
-- **Configuration** (`utils/`):
-  - `config_manager.py`: Persistent config storage (JSON)
+1. **Electron app** is the admin console. It launches hidden in the system tray, connects to the Python backend over HTTP, and renders the dashboard in a `BrowserWindow`.
+2. **Python backend** (FastAPI on port `51235`) owns all monitoring logic. It writes to SQLite, syncs to ERP, and exposes a JWT-authenticated REST API.
+3. **In production**, the Python backend is compiled to a single `.exe` via PyInstaller and installed as a **Windows service** via NSSM — auto-starting at boot, no user session required.
 
 ---
 
 ## 🛠️ Technology Stack
 
-### Frontend (Electron App)
+### Electron App
+
 | Technology | Version | Purpose |
-|------------|---------|---------|
-| **Electron** | 28.x | Cross-platform desktop framework |
+|---|---|---|
+| **Electron** | 40.x | Desktop shell |
 | **TypeScript** | 5.3.x | Type-safe JavaScript |
-| **Chart.js** | Latest | Data visualization (charts, graphs) |
-| **Axios** | 1.6.x | HTTP client for API calls |
-| **electron-store** | 8.1.x | Persistent local storage |
+| **Chart.js** | CDN latest | Activity charts |
+| **Axios** | 1.6.x | HTTP calls to backend |
+| **electron-store** | 8.1.x | Persistent local settings |
+| **electron-builder** | 26.x | NSIS installer packaging |
 
-### Backend (Windows)
-| Technology | Version | Purpose |
-|------------|---------|---------|
-| **Python** | 3.11+ | Backend runtime |
-| **FastAPI** | Latest | Modern async web framework |
-| **Uvicorn** | Latest | ASGI server |
-| **SQLite** | 3.x | Embedded database |
-| **python-jose** | Latest | JWT token handling |
-| **passlib** | Latest | Password hashing (bcrypt) |
-| **mss** | Latest | Screenshot capture |
-| **Pillow** | Latest | Image processing |
-| **pyperclip** | Latest | Clipboard monitoring |
-| **psutil** | Latest | Process/system utilities |
-| **pywin32** | Latest | Windows API access |
-| **requests** | Latest | HTTP client for ERP sync |
+### Python Backend
 
-### Build & Deployment
+| Package | Purpose |
+|---|---|
+| **FastAPI** | Async REST framework |
+| **Uvicorn** | ASGI server (localhost only) |
+| **SQLite 3** | Embedded data store |
+| **python-jose** | JWT HS256 tokens |
+| **passlib** | Password utility library |
+| **mss** | Screen capture (screenshots + video frames) |
+| **Pillow** | JPEG compression for screenshots |
+| **opencv-python** | MP4 encoding (mp4v / XVID codec) |
+| **numpy** | Frame array manipulation for video |
+| **pywin32** | `win32gui` / `win32process` — foreground window info |
+| **psutil** | Process name lookup from PID |
+| **uiautomation** | Read browser address bar via Windows COM |
+| **pynput** | OS keyboard event hook for keystroke logging |
+| **pyperclip** | Clipboard read helper |
+| **requests** | HTTPS sync to ERP endpoints |
+| **tzdata** | IANA timezone database (Windows lacks built-in) |
+
+### Installer / DevOps
+
 | Tool | Purpose |
-|------|---------|
-| **electron-builder** | Create Windows installer (NSIS) |
-| **TypeScript Compiler** | Compile TS to JS |
-| **npm** | Package management |
+|---|---|
+| **PyInstaller** | Package Python backend → single `.exe` |
+| **NSSM** (bundled in `resources/`) | Register `.exe` as a Windows service |
+| **icacls** | Lock log/video dirs from standard users |
 
 ---
 
 ## ✨ Key Features
 
-### 1. **Screenshot Monitoring**
-- **Interval**: Every 5 seconds (configurable in `screenshot.py`)
-- **Optimization**: Automatically compressed to 60-80KB per image
-- **Storage**: Local filesystem (`%LOCALAPPDATA%\EnterpriseMonitor\screenshots\`)
-- **Metadata**: Stores timestamp, file path, active window, active app in database
-- **Sync Flag**: Tracks which screenshots have been synced to server
+### 1. Screenshot Monitoring
 
-### 2. **Application Tracking**
-- **Interval**: Every 5 seconds
-- **Data Captured**:
-  - Application name (e.g., `chrome.exe`, `WINWORD.EXE`)
-  - Window title (e.g., "Document1 - Microsoft Word")
-  - Duration in seconds
-  - Timestamp
-- **Purpose**: Productivity analytics, time tracking
-- **Sync**: Automatically synced to ERP server
+- **Interval**: every 5 s (configurable via `interval_seconds` in `screenshot.py`)
+- **Compression**: JPEG, target 60–80 KB per image
+- **Storage**: `%LOCALAPPDATA%\EnterpriseMonitor\screenshots\`
+- **Metadata**: `timestamp`, `file_path`, `active_window`, `active_app`, `username`
+- **Sync**: multipart upload to `url_screenshots` endpoint
 
-### 3. **Clipboard Monitoring**
-- **Mode**: Real-time event-based
-- **Data Captured**:
-  - Content type (text, image, file)
-  - Content preview (first 100 characters for text)
-  - Timestamp
-- **Purpose**: Security auditing, data leak prevention
-- **Privacy**: Only stores preview, not full content
+### 2. Application Tracking
 
-### 4. **Central Server Synchronization**
-- **Endpoint**: `https://api.erp.skillerszone.com/api/pctracking/appuseage`
-- **Interval**: Every 60 seconds (configurable)
-- **Data Synced**: App activity records
-- **Payload Format**:
-  ```json
-  {
-    "pcName": "DESKTOP-ABC123",
-    "appName": "chrome.exe",
-    "windowsTitle": "GitHub - Google Chrome",
-    "startTime": "2026-02-17T12:00:00Z",
-    "endTime": "2026-02-17T12:00:05Z",
-    "duration": "5",
-    "syncTime": "2026-02-17T12:01:00Z"
-  }
-  ```
-- **Retry Logic**: Failed syncs are retried in next cycle
-- **Batch Size**: 50 records per sync
+- **Interval**: every 5 s
+- **Method**: `win32gui.GetForegroundWindow()` → PID → `psutil.Process(pid).name()`
+- **Data**: process name, window title, duration in seconds, username, timestamp
+- **Sync**: JSON POST to `url_app_activity`
 
-### 5. **Automated Data Cleanup**
-- **Schedule**: Every 24 hours
-- **Retention**: 7 days (configurable)
-- **Scope**: Deletes old screenshots, app activity, clipboard events
-- **Purpose**: Manage disk space, comply with data retention policies
+### 3. Browser URL Tracking
 
-### 6. **Admin Dashboard**
-- **Authentication**: JWT-based login
-- **Default Credentials**: `admin` / `admin123` (⚠️ Change in production!)
-- **Features**:
-  - Real-time statistics (screenshots, active hours, apps tracked, clipboard events)
-  - Date picker for historical data
-  - Activity charts (timeline, app usage, category breakdown)
-  - Detailed logs (app tracking, browser tracking, clipboard tracking)
-  - Screenshot gallery
-  - Monitoring controls (pause/resume)
+- **Method**: Windows UI Automation COM API reads the active browser's address bar control directly. No extension, proxy, or certificate is required.
+- **Supported browsers**:
 
-### 7. **System Tray Integration**
-- **Auto-start**: Launches on Windows login
-- **Background Operation**: Runs silently in system tray
-- **Tray Menu**:
-  - Open Dashboard
-  - Backend Status Indicator
-  - Auth Status Indicator
-  - Quit Application
+  | Browser | Process |
+  |---|---|
+  | Chrome | `chrome.exe` |
+  | Edge | `msedge.exe` |
+  | Firefox | `firefox.exe` |
+  | Brave | `brave.exe` |
+  | Opera | `opera.exe` |
+  | Opera GX | `operagx.exe` |
+  | Yandex Browser | `browser.exe` |
+  | DuckDuckGo | `duckduckgo.exe` |
+  | UC Browser | `ucbrowser.exe` |
+  | Vivaldi | `vivaldi.exe` |
+  | Cent Browser | `cent.exe` |
+  | 360 Browser | `360chrome.exe` |
+  | Waterfox | `waterfox.exe` |
+  | LibreWolf | `librewolf.exe` |
+  | Thunderbird | `thunderbird.exe` *(email client — tracked via its address bar)* |
+
+- **Data**: `browser_name`, `url`, `page_title`, `username`, `timestamp`
+- **Sync**: JSON POST to `url_browser`
+
+### 4. Keystroke / Text Logging
+
+- **Library**: `pynput.keyboard.Listener` — OS-level event hook, non-suppressing
+- **Buffering**: keystrokes are buffered per active window; flushed on `Enter` key or window switch
+- **Privacy filter**: capture **suspended** when the active window title contains any of:
+  `password`, `login`, `sign in`, `signin`, `credentials`
+- **Data**: `application`, `window_title`, `content` (flushed buffer), `username`, `timestamp`
+- **Sync**: JSON POST to `url_keystrokes`
+
+### 5. Clipboard Monitoring
+
+- **Trigger**: OS clipboard-change event via pyperclip polling
+- **Data**: `content_type` (text/image/file), `content_preview` (first 100 chars), `username`, `timestamp`
+- **Privacy**: full clipboard content is never stored
+- **Sync**: JSON POST to `url_clipboard`
+
+### 6. Screen Recording
+
+- **Default**: **OFF** — must be enabled explicitly by an admin
+- **Toggle**: dashboard button or `POST /api/monitoring/video/toggle`
+- **Format**: MP4 (mp4v / XVID codec via OpenCV)
+- **Resolution**: 1280 × 720 at 10 FPS
+- **Rotation**: new file every 5 minutes
+- **Storage**: `C:\ProgramData\EnterpriseMonitor\videos\` (restricted ACLs)
+- **Metadata**: `timestamp`, `file_path`, `duration_seconds` in `video_recordings` table
+- **Sync**: multipart upload to `url_videos` (3 files per cycle)
+
+### 7. ERP Synchronization — v2 (6 Types)
+
+| Config Key | Method | Content-Type | Batch Size |
+|---|---|---|---|
+| `url_app_activity` | POST | `application/json` | 50 records |
+| `url_browser` | POST | `application/json` | 50 records |
+| `url_clipboard` | POST | `application/json` | 50 records |
+| `url_keystrokes` | POST | `application/json` | 50 records |
+| `url_screenshots` | POST | `multipart/form-data` | 10 files |
+| `url_videos` | POST | `multipart/form-data` | 3 files |
+
+- **Interval**: every 300 s (configurable)
+- **Auth header**: `X-API-Key: <api_key>` (when configured)
+- **Retry**: failed records stay `synced = 0` and are retried next cycle
+- **Missing files**: marked synced immediately to avoid infinite retry after cleanup
+
+#### Payload Examples
+
+**app_activity**
+```json
+{
+  "pcName":       "DESKTOP-ABC123",
+  "appName":      "chrome.exe",
+  "windowsTitle": "GitHub - Google Chrome",
+  "startTime":    "2026-02-17T12:00:00+00:00",
+  "endTime":      "2026-02-17T12:00:05+00:00",
+  "duration":     5,
+  "syncTime":     "2026-02-17T12:05:00+00:00"
+}
+```
+
+**browser**
+```json
+{
+  "pcName":      "DESKTOP-ABC123",
+  "browserName": "Chrome",
+  "url":         "https://github.com",
+  "pageTitle":   "GitHub",
+  "timestamp":   "2026-02-17T12:00:00+00:00",
+  "syncTime":    "2026-02-17T12:05:00+00:00"
+}
+```
+
+**clipboard**
+```json
+{
+  "pcName":         "DESKTOP-ABC123",
+  "contentType":    "text",
+  "contentPreview": "https://example.com/link",
+  "timestamp":      "2026-02-17T12:00:00+00:00",
+  "syncTime":       "2026-02-17T12:05:00+00:00"
+}
+```
+
+**keystrokes**
+```json
+{
+  "pcName":      "DESKTOP-ABC123",
+  "application": "WINWORD.EXE",
+  "windowTitle": "Document1 - Microsoft Word",
+  "content":     "quarterly sales report draft",
+  "timestamp":   "2026-02-17T12:00:00+00:00",
+  "syncTime":    "2026-02-17T12:05:00+00:00"
+}
+```
+
+**screenshots / videos** — multipart/form-data with metadata fields + binary file.
+
+### 8. Automated Data Cleanup
+
+- **Runs**: once at startup, then every 24 hours
+- **Retention**: 7 days (configurable via `retention_days`)
+- **Scope**: all five tracking tables + screenshot files on disk
+
+### 9. Admin Dashboard
+
+- **Default credentials**: `admin` / `Admin@123` (⚠️ change immediately)
+- **Password policy**: 8–16 characters, uppercase + lowercase + special symbol required
+- **Sections**: Overview · Timeline · App Usage · App Logs · Browser Logs · Keystroke Logs · Clipboard Logs · Screenshots · Recordings · Config API
+
+### 10. Identity Management
+
+Override the raw hostname sent in sync payloads:
+
+```json
+POST /api/config/identity
+{"device_alias": "Finance-PC-01", "user_alias": "Jane Smith"}
+```
+
+### 11. System Tray Integration
+
+- Starts **hidden** — only tray icon visible
+- Registers as a Windows **login item** (auto-launches on user login)
+- Closing the dashboard **hides** it; only "Quit" in tray exits
 
 ---
 
 ## 💾 Data Flow & Storage
 
-### Local Storage Locations
-
-All data is stored in the user's local application data folder:
-
-**Base Directory**: `%LOCALAPPDATA%\EnterpriseMonitor\`
+### File System Layout
 
 ```
-C:\Users\{Username}\AppData\Local\EnterpriseMonitor\
-├── monitoring.db          # SQLite database
-├── config.json            # Configuration file
+%LOCALAPPDATA%\EnterpriseMonitor\
+├── monitoring.db          ← SQLite database (7 tables)
+├── config.json            ← Runtime configuration
+├── users.json             ← Admin credentials  ⚠️ plain text — protect this file
+├── security_qa.json       ← Security Q&A pairs (answers stored lowercase)
 ├── logs\
-│   └── backend.log        # Application logs
+│   ├── backend.log              ← Main application log
+│   ├── backend_stdout.log       ← NSSM service stdout
+│   └── backend_stderr.log       ← NSSM service stderr
 └── screenshots\
     ├── screenshot_20260217_120000.jpg
-    ├── screenshot_20260217_120005.jpg
+    └── ...
+
+C:\ProgramData\EnterpriseMonitor\
+├── backend\
+│   └── enterprise_monitor_backend.exe   ← PyInstaller binary
+└── videos\
+    ├── recording_20260217_120000.mp4    ← 5-minute chunk
     └── ...
 ```
 
-### Database Schema
+### Database Schema (`monitoring.db`)
 
-**SQLite Database**: `monitoring.db`
+> All five tracking tables include `username TEXT DEFAULT ''` and `synced INTEGER DEFAULT 0`.
 
-#### Table: `screenshots`
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER PRIMARY KEY | Auto-increment ID |
-| timestamp | TEXT | ISO-8601 timestamp |
-| file_path | TEXT | Absolute path to screenshot file |
-| active_window | TEXT | Window title at capture time |
-| active_app | TEXT | Application name at capture time |
-| created_at | TEXT | Record creation timestamp |
-| synced | INTEGER | 0 = not synced, 1 = synced to server |
+**`screenshots`**
 
-#### Table: `app_activity`
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER PRIMARY KEY | Auto-increment ID |
-| timestamp | TEXT | ISO-8601 timestamp |
-| app_name | TEXT | Application executable name |
-| window_title | TEXT | Window title |
-| duration_seconds | INTEGER | Duration of activity |
-| created_at | TEXT | Record creation timestamp |
-| synced | INTEGER | 0 = not synced, 1 = synced to server |
+| Column | Type | Notes |
+|---|---|---|
+| id | INTEGER PK | |
+| timestamp | TEXT | ISO-8601 UTC |
+| file_path | TEXT | Absolute path |
+| active_window | TEXT | Window title at capture |
+| active_app | TEXT | Executable name |
+| username | TEXT | OS username |
+| created_at | TEXT | |
+| synced | INTEGER | 0 = pending, 1 = done |
 
-#### Table: `clipboard_events`
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER PRIMARY KEY | Auto-increment ID |
-| timestamp | TEXT | ISO-8601 timestamp |
-| content_type | TEXT | Type of clipboard content |
-| content_preview | TEXT | Preview of content (max 100 chars) |
-| created_at | TEXT | Record creation timestamp |
-| synced | INTEGER | 0 = not synced, 1 = synced to server |
+**`app_activity`**
 
-### Configuration File
+| Column | Type | Notes |
+|---|---|---|
+| id | INTEGER PK | |
+| timestamp | TEXT | |
+| app_name | TEXT | e.g. `chrome.exe` |
+| window_title | TEXT | |
+| duration_seconds | INTEGER | |
+| username | TEXT | |
+| created_at | TEXT | |
+| synced | INTEGER | |
 
-**File**: `config.json`
+**`clipboard_events`**
+
+| Column | Type | Notes |
+|---|---|---|
+| id | INTEGER PK | |
+| timestamp | TEXT | |
+| content_type | TEXT | `text` / `image` / `file` |
+| content_preview | TEXT | Max 100 chars |
+| username | TEXT | |
+| created_at | TEXT | |
+| synced | INTEGER | |
+
+**`browser_activity`** *(added via migration)*
+
+| Column | Type | Notes |
+|---|---|---|
+| id | INTEGER PK | |
+| timestamp | TEXT | |
+| browser_name | TEXT | e.g. `Chrome` |
+| url | TEXT | Full URL |
+| page_title | TEXT | |
+| username | TEXT | |
+| created_at | TEXT | |
+| synced | INTEGER | added via migration |
+
+**`text_logs`** *(added via migration)*
+
+| Column | Type | Notes |
+|---|---|---|
+| id | INTEGER PK | |
+| timestamp | TEXT | |
+| application | TEXT | Executable name |
+| window_title | TEXT | |
+| content | TEXT | Flushed keystroke buffer |
+| username | TEXT | |
+| created_at | TEXT | |
+| synced | INTEGER | added via migration |
+
+**`video_recordings`**
+
+| Column | Type | Notes |
+|---|---|---|
+| id | INTEGER PK | |
+| timestamp | TEXT | Recording start |
+| file_path | TEXT | Absolute path |
+| duration_seconds | INTEGER | |
+| is_synced | INTEGER | 0 = pending, 1 = done |
+| created_at | TEXT | |
+
+**`device_config`** (KV store)
+
+| Column | Type | Notes |
+|---|---|---|
+| key | TEXT PK | `device_alias` or `user_alias` |
+| value | TEXT | |
+
+### Configuration File (`config.json`)
 
 ```json
 {
-  "server_url": "",
-  "api_key": "",
-  "device_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "sync_interval_seconds": 60,
-  "screenshot_interval": 60
+  "api_key":               "",
+  "sync_interval_seconds": 300,
+  "url_app_activity":      "",
+  "url_browser":           "",
+  "url_clipboard":         "",
+  "url_keystrokes":        "",
+  "url_screenshots":       "",
+  "url_videos":            "",
+  "server_url":            "",
+  "recording_enabled":     false,
+  "timezone":              "UTC",
+  "device_id":             "auto-generated-uuid"
 }
 ```
 
-### Data Synchronization Flow
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  1. MONITORING SERVICES COLLECT DATA                        │
-│     • Screenshot Monitor captures screen every 5s           │
-│     • App Tracker logs active app every 5s                  │
-│     • Clipboard Monitor detects clipboard changes           │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│  2. DATA STORED IN LOCAL SQLite DATABASE                    │
-│     • INSERT with synced = 0                                │
-│     • Metadata stored (timestamp, app, window, etc.)        │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│  3. SYNC SERVICE RUNS (Every 60 seconds)                    │
-│     • Query: SELECT * FROM app_activity WHERE synced = 0    │
-│     • Batch size: 50 records                                │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│  4. POST TO ERP SERVER                                      │
-│     • URL: https://api.erp.skillerszone.com/...             │
-│     • Payload: JSON with pcName, appName, timestamps, etc.  │
-│     • Timeout: 10 seconds                                   │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│  5. MARK AS SYNCED ON SUCCESS                               │
-│     • UPDATE app_activity SET synced = 1 WHERE id IN (...)  │
-│     • Failed records remain synced = 0 for retry            │
-└─────────────────────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│  6. CLEANUP SERVICE (Every 24 hours)                        │
-│     • DELETE FROM * WHERE timestamp < (now - 7 days)        │
-│     • Frees disk space                                      │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### API Endpoints
-
-#### Authentication
-- `POST /api/auth/login` - Login with username/password, returns JWT token
-- `GET /api/auth/check` - Verify JWT token validity
-- `POST /api/auth/change-password` - Change user password
-
-#### Statistics
-- `GET /api/statistics?date=YYYY-MM-DD` - Get statistics for specific date
-- `GET /api/stats/activity?start=YYYY-MM-DD&end=YYYY-MM-DD` - Activity stats for date range
-- `GET /api/stats/timeline?date=YYYY-MM-DD` - Timeline data for specific date
-
-#### Screenshots
-- `GET /api/screenshots?limit=20&offset=0` - Get screenshot records (paginated)
-
-#### Data Logs
-- `GET /api/data/apps?limit=50&offset=0` - Get app activity logs
-- `GET /api/data/browser?limit=50&offset=0` - Get browser activity logs
-- `GET /api/data/clipboard?limit=50&offset=0` - Get clipboard event logs
-
-#### Monitoring Control
-- `GET /api/monitoring/status` - Get monitoring status (active/paused)
-- `POST /api/monitoring/pause` - Pause monitoring services
-- `POST /api/monitoring/resume` - Resume monitoring services
-
-#### Configuration
-- `GET /api/config` - Get current configuration
-- `POST /api/config` - Update configuration (server_url, api_key, sync_interval)
-
-#### Health
-- `GET /health` - Health check endpoint
-- `GET /` - API info and version
+> `server_url` and `device_id` are kept for backward compatibility with v1 installs.
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Development)
 
 ### Prerequisites
-- **Windows 10/11**
-- **Python 3.11+** ([Download](https://www.python.org/downloads/))
-- **Node.js 18+** ([Download](https://nodejs.org/))
 
-### 1. Setup Backend
+- Windows 10/11
+- Python 3.11+ — [python.org](https://www.python.org/downloads/)
+- Node.js 18+ — [nodejs.org](https://nodejs.org/)
+- Visual C++ Redistributable 2015–2022 — [Download](https://aka.ms/vs/17/release/vc_redist.x64.exe) *(required by `uiautomation`)*
+
+### Step 1 — Start the Python Backend
+
 ```cmd
 cd backend-windows
 python -m venv venv
@@ -429,9 +473,10 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Backend will start on `http://127.0.0.1:51235`
+Backend binds to **`http://127.0.0.1:51235`** (localhost only — not accessible over the network).
 
-### 2. Setup Electron App
+### Step 2 — Start the Electron Dashboard
+
 ```cmd
 cd electron-app
 npm install
@@ -439,11 +484,97 @@ npm run build
 npm start
 ```
 
-### 3. Login
-- **Username**: `admin`
-- **Password**: `admin123`
+### Step 3 — Log In
 
-⚠️ **Change default password immediately in production!**
+| Field | Value |
+|---|---|
+| Username | `admin` |
+| Password | `Admin@123` |
+
+> ⚠️ **Change this password immediately** via Settings → Change Credentials.
+
+### Step 4 — Configure ERP Endpoints
+
+Click **"Config Server API"** in the dashboard and enter your per-type endpoint URLs and API key.
+
+---
+
+## 🏭 Production Deployment
+
+For production the backend runs as a **Windows service** (auto-start at boot, no active user session required). The `scripts\setup-windows.bat` script automates the full install.
+
+### Requirements
+
+- Run as **Administrator**
+- Python 3.11+ in PATH with `pip install pyinstaller` done once
+- `resources\nssm.exe` present (already bundled in the repo)
+
+### Run the Installer
+
+```cmd
+REM Right-click → Run as Administrator
+scripts\setup-windows.bat
+```
+
+### What the Script Does (7 Steps)
+
+| Step | Action |
+|---|---|
+| 1 | Verify Python, PyInstaller, nssm.exe are available |
+| 2 | Create `C:\ProgramData\EnterpriseMonitor\{backend,logs,videos}` + apply ACLs |
+| 3 | Build `enterprise_monitor_backend.exe` via PyInstaller (`--onefile --noconsole`) |
+| 4 | Copy `.exe` to `C:\ProgramData\EnterpriseMonitor\backend\` |
+| 5 | Remove existing `EnterpriseMonitorBackend` service (if any) |
+| 6 | Install + configure the service via NSSM (auto-start, 5 MB log rotation) |
+| 7 | Start the service |
+
+> PyInstaller build time is approximately 3–8 minutes on first run.
+
+### ACL Security Applied by the Installer
+
+| Directory | Admins / SYSTEM | Standard Users |
+|---|---|---|
+| `C:\ProgramData\EnterpriseMonitor\` | Full Control | No list / no read |
+| `.\logs\` | Full Control | **Denied** read + execute |
+| `.\videos\` | Full Control | **Denied** read + execute |
+
+Standard users cannot discover log files or view their own recordings.
+
+### Service Management Commands
+
+```cmd
+nssm start   EnterpriseMonitorBackend
+nssm stop    EnterpriseMonitorBackend
+nssm restart EnterpriseMonitorBackend
+nssm status  EnterpriseMonitorBackend
+nssm remove  EnterpriseMonitorBackend confirm
+```
+
+---
+
+## 📦 Building the Electron Installer
+
+```cmd
+cd electron-app
+npm install
+npm run dist
+```
+
+Produces a NSIS installer at `electron-app\release\Enterprise Monitor Setup x.x.x.exe`.
+
+| Script | Output |
+|---|---|
+| `npm start` | Build TypeScript + launch dev mode |
+| `npm run build` | TypeScript → JS only |
+| `npm run dist` | Full NSIS installer (`.exe`) |
+| `npm run dist:dir` | Unpacked directory (no installer) |
+| `npm run pack` | Unpacked dir (fast test build) |
+
+**Installer settings** (from `package.json`):
+- App ID: `com.ashraful.enterprise-monitor`
+- Elevation: `requireAdministrator`
+- Shortcuts: Desktop + Start Menu
+- Architecture: x64 only
 
 ---
 
@@ -451,142 +582,351 @@ npm start
 
 ```
 enterprise-monitor-complete/
-├── electron-app/                 # Electron GUI application
-│   ├── dist/                     # Compiled TypeScript output
-│   ├── node_modules/             # Node dependencies
-│   ├── resources/                # App icons
+│
+├── electron-app/
 │   ├── src/
 │   │   ├── main/
-│   │   │   ├── main.ts           # Main process entry point
-│   │   │   ├── api-client.ts     # HTTP client for backend API
-│   │   │   └── tray.ts           # System tray manager
+│   │   │   ├── main.ts           # App lifecycle, IPC, login-item, tray
+│   │   │   ├── api-client.ts     # Axios wrapper for backend REST API
+│   │   │   └── tray.ts           # System tray icon + context menu
 │   │   ├── preload/
-│   │   │   └── preload.ts        # Secure IPC bridge
+│   │   │   └── preload.ts        # contextBridge — safe IPC surface
 │   │   └── renderer/
-│   │       ├── index.html        # Dashboard UI
-│   │       └── renderer.js       # Dashboard logic & charts
-│   ├── package.json              # Node dependencies & build scripts
-│   └── tsconfig.json             # TypeScript configuration
+│   │       ├── index.html        # Full dashboard UI + Config API modal
+│   │       └── renderer.js       # Chart.js, log tables, API calls, date picker
+│   ├── resources/
+│   │   ├── icon.ico / icon.png / icon.icns
+│   │   └── nssm.exe              # Bundled for installer extraResources
+│   ├── package.json              # Electron deps + electron-builder config
+│   └── tsconfig.json
 │
-├── backend-windows/              # Python backend for Windows
-│   ├── api_server.py             # FastAPI application & routes
-│   ├── main.py                   # Entry point, starts Uvicorn server
-│   ├── requirements.txt          # Python dependencies
+├── backend-windows/
+│   ├── main.py                   # Uvicorn entry-point (127.0.0.1:51235)
+│   ├── api_server.py             # FastAPI app, all routes, lifecycle hooks
+│   ├── requirements.txt          # pip dependencies
 │   ├── auth/
-│   │   └── auth_manager.py       # JWT & password management
+│   │   └── auth_manager.py       # JWT, password policy, security Q&A
 │   ├── database/
-│   │   └── db_manager.py         # SQLite operations
+│   │   └── db_manager.py         # SQLite CRUD, schema, auto-migrations
 │   ├── monitoring/
-│   │   ├── screenshot.py         # Screenshot capture service
-│   │   ├── app_tracker.py        # Application tracking service
-│   │   ├── clipboard.py          # Clipboard monitoring service
-│   │   └── data_cleaner.py       # Automated cleanup service
+│   │   ├── screenshot.py         # Periodic JPEG capture
+│   │   ├── app_tracker.py        # Foreground process + window title
+│   │   ├── browser_tracker.py    # UI Automation address-bar reader
+│   │   ├── keylogger.py          # pynput buffered keystroke capture
+│   │   ├── screen_recorder.py    # mss + OpenCV rolling MP4 recorder
+│   │   ├── clipboard.py          # Clipboard change monitor
+│   │   └── data_cleaner.py       # 7-day retention cleanup
 │   ├── services/
-│   │   └── sync_service.py       # ERP server synchronization
+│   │   └── sync_service.py       # SyncService v2 — 6-type ERP sync
 │   └── utils/
-│       └── config_manager.py     # Configuration management
+│       └── config_manager.py     # JSON config read/write (get/set)
 │
-├── backend-macos/                # Swift backend for macOS (optional)
-│   └── (Swift/Vapor implementation)
+├── backend-macos/                # Swift/Vapor skeleton (experimental)
+│   ├── Package.swift
+│   └── Sources/main.swift
 │
-├── scripts/                      # Setup scripts
-│   ├── setup-windows.bat         # Windows setup automation
-│   └── setup-macos.sh            # macOS setup automation
+├── resources/
+│   ├── icon.ico / icon.png / icon.icns
+│   └── nssm.exe
 │
-├── README.md                     # This file
-├── IMPLEMENTATION_GUIDE.md       # Detailed setup & deployment guide
-└── .gitignore                    # Git ignore rules
+├── scripts/
+│   ├── setup-windows.bat         # 7-step production installer (run as Administrator)
+│   └── setup-macos.sh            # macOS dev setup
+│
+├── README.md
+├── IMPLEMENTATION_GUIDE.md       # Detailed deployment & troubleshooting guide
+└── .gitignore
 ```
 
 ---
 
-## 🔐 Security
+## 📡 API Reference
+
+All endpoints except `/health` and `/` require `Authorization: Bearer <token>`.
+
+Obtain a token: `POST /api/auth/login` → `{"success": true, "token": "..."}`
 
 ### Authentication
-- **JWT Tokens**: Secure, stateless authentication
-- **Password Hashing**: bcrypt with salt
-- **Token Expiration**: 24 hours (configurable)
-- **Default Credentials**: `admin` / `admin123` (⚠️ **MUST CHANGE**)
 
-### Data Security
-- **Local Storage**: All data stored locally on user machine
-- **HTTPS**: ERP sync uses HTTPS
-- **No Cloud Storage**: Screenshots stored locally only
-- **Access Control**: Admin-only access to dashboard
+| Method | Path | Body / Notes |
+|---|---|---|
+| POST | `/api/auth/login` | `{username, password}` → `{success, token}` |
+| GET | `/api/auth/check` | Validates token → `{authenticated, username}` |
+| POST | `/api/auth/change-password` | `{old_password, new_password}` |
+| POST | `/api/auth/update-credentials` | `{new_username, new_password, security_q1, security_a1, security_q2, security_a2}` → `{success, force_logout}` |
 
-### Privacy Considerations
-⚠️ **Legal Compliance Required**:
-- Inform employees about monitoring
-- Obtain consent where legally required
-- Comply with GDPR, CCPA, and local laws
-- Implement data retention policies
-- Provide data access/deletion mechanisms
+> `update-credentials` changes username + password atomically and forces a re-login.
+
+### Statistics & Charts
+
+| Method | Path | Query Params |
+|---|---|---|
+| GET | `/api/statistics` | `date=YYYY-MM-DD` (optional, defaults to today) |
+| GET | `/api/stats/activity` | `start=YYYY-MM-DD&end=YYYY-MM-DD` |
+| GET | `/api/stats/timeline` | `date=YYYY-MM-DD` |
+
+### Data Logs
+
+| Method | Path | Default `limit` |
+|---|---|---|
+| GET | `/api/screenshots` | 20 |
+| GET | `/api/data/apps` | 50 |
+| GET | `/api/data/browser` | 50 |
+| GET | `/api/data/keylogs` | 100 |
+| GET | `/api/data/clipboard` | 50 |
+| GET | `/api/data/videos` | 50 |
+
+All log endpoints accept `limit` and `offset` query params (except `/api/data/videos` which uses `limit` only).
+
+### Monitoring Control
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/monitoring/status` | `{is_monitoring, uptime_seconds}` |
+| POST | `/api/monitoring/pause` | Pauses screenshot, app, browser, clipboard, keylogger |
+| POST | `/api/monitoring/resume` | Resumes all five services |
+| POST | `/api/monitoring/video/toggle` | Enables or disables screen recording |
+| GET | `/api/monitoring/video/status` | `{recording: bool, is_active: bool}` |
+
+### Configuration
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/config` | Returns all fields |
+| POST | `/api/config` | Updates any subset (null = skip) |
+| GET | `/api/config/identity` | `{machine_id, os_user, device_alias, user_alias}` |
+| POST | `/api/config/identity` | `{device_alias?, user_alias?}` |
+| GET | `/api/config/timezone` | `{timezone}` IANA string |
+| POST | `/api/config/timezone` | `{timezone}` IANA string |
+
+### Sync
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/api/sync/trigger` | Runs all 6 sync types immediately; returns per-type synced counts |
+
+### Health
+
+| Method | Path | Auth required |
+|---|---|---|
+| GET | `/health` | No |
+| GET | `/` | No — returns name, version, docs_url |
+
+**Interactive API docs**: http://localhost:51235/docs (Swagger UI) · http://localhost:51235/redoc (ReDoc)
 
 ---
 
-## 📚 Documentation
-
-- **[IMPLEMENTATION_GUIDE.md](IMPLEMENTATION_GUIDE.md)**: Complete setup, deployment, and troubleshooting guide
-- **API Documentation**: Available at `http://localhost:51235/docs` when backend is running
-- **Logs**: Check `%LOCALAPPDATA%\EnterpriseMonitor\logs\backend.log` for debugging
-
----
-
-## 🔧 Configuration
+## ⚙️ Configuration Reference
 
 ### Change Screenshot Interval
+
 Edit `backend-windows/monitoring/screenshot.py`:
 ```python
-# Line 18
-def __init__(self, db_manager, interval_seconds: int = 5):
-    self.interval_seconds = 300  # Change to 300 for 5 minutes
+class ScreenshotMonitor:
+    def __init__(self, db_manager, interval_seconds: int = 5):
+        self.interval_seconds = 60  # e.g. once per minute
 ```
 
-### Change Sync Interval
-Edit `backend-windows/services/sync_service.py`:
-```python
-# Line 32
-DEFAULT_SYNC_INTERVAL = 300  # Change to desired seconds
+### Change Sync Interval via API
+
+```cmd
+curl -X POST http://localhost:51235/api/config ^
+  -H "Authorization: Bearer YOUR_TOKEN" ^
+  -H "Content-Type: application/json" ^
+  -d "{"sync_interval_seconds": 600}"
 ```
 
-Or update via API:
-```bash
-curl -X POST http://localhost:51235/api/config \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"sync_interval_seconds": 300}'
+### Configure All ERP Endpoints
+
+```cmd
+curl -X POST http://localhost:51235/api/config ^
+  -H "Authorization: Bearer YOUR_TOKEN" ^
+  -H "Content-Type: application/json" ^
+  -d "{"api_key":"YOUR_KEY","url_app_activity":"https://erp.example.com/app","url_browser":"https://erp.example.com/browser","url_clipboard":"https://erp.example.com/clipboard","url_keystrokes":"https://erp.example.com/keystrokes","url_screenshots":"https://erp.example.com/screenshots","url_videos":"https://erp.example.com/videos"}"
+```
+
+### Set Device / User Display Name
+
+```cmd
+curl -X POST http://localhost:51235/api/config/identity ^
+  -H "Authorization: Bearer YOUR_TOKEN" ^
+  -H "Content-Type: application/json" ^
+  -d "{"device_alias":"Finance-PC-01","user_alias":"Jane Smith"}"
+```
+
+### Change Display Timezone
+
+```cmd
+curl -X POST http://localhost:51235/api/config/timezone ^
+  -H "Authorization: Bearer YOUR_TOKEN" ^
+  -H "Content-Type: application/json" ^
+  -d "{"timezone":"Asia/Dhaka"}"
 ```
 
 ### Change Data Retention Period
-Edit `backend-windows/monitoring/data_cleaner.py` to modify the 7-day default.
+
+Edit `backend-windows/monitoring/data_cleaner.py`:
+```python
+cleanup_service = CleanupService(db_manager, retention_days=14)
+```
+
+### Enable Screen Recording
+
+```cmd
+curl -X POST http://localhost:51235/api/monitoring/video/toggle ^
+  -H "Authorization: Bearer YOUR_TOKEN"
+REM Response: {"success": true, "recording": true}
+```
+
+---
+
+## 🔐 Security & Privacy
+
+### Authentication Model
+
+| Aspect | Detail |
+|---|---|
+| Token format | JWT HS256 |
+| Token expiry | **30 minutes** |
+| Secret key | `SECRET_KEY` in `auth/auth_manager.py` — **must change before production** |
+| Credentials store | `%LOCALAPPDATA%\EnterpriseMonitor\users.json` (plain-text JSON) |
+| Security Q&A store | `%LOCALAPPDATA%\EnterpriseMonitor\security_qa.json` |
+| Default credentials | `admin` / `Admin@123` |
+
+### Password Policy
+
+Enforced on every password change or credential update:
+
+- Length: **8–16 characters**
+- At least one **uppercase** letter (A–Z)
+- At least one **lowercase** letter (a–z)
+- At least one **special symbol**: `! @ # $ % ^ & * ( ) , . ? " : { } | < >`
+
+### Network & Storage Security
+
+| Measure | Detail |
+|---|---|
+| API binding | `127.0.0.1` only — not reachable over the network |
+| ERP sync | HTTPS only |
+| Log / video ACLs | `icacls` denies standard `Users` group (applied by installer) |
+| Keystroke privacy filter | Capture paused on windows titled `password`, `login`, `sign in`, `signin`, `credentials` |
+| Electron sandbox | `contextIsolation: true`, `nodeIntegration: false` |
+| File uploads | Only sent if the matching URL is configured |
+
+### ⚠️ Known Security Limitations
+
+The following are **known limitations of the current implementation** that should be addressed before deploying in a production environment:
+
+| Limitation | Risk | Recommended Fix |
+|---|---|---|
+| **Plain-text credentials** | `users.json` stores passwords in plain text. If this file is read (e.g., via backup, shadow copy, or privilege escalation), credentials are exposed. | Replace with bcrypt-hashed storage. The `passlib` library is already a dependency. |
+| **Plain-text security Q&A** | `security_qa.json` stores answers lowercased but not hashed. | Hash answers with bcrypt before storing. |
+| **Hardcoded JWT secret** | `SECRET_KEY = "your-secret-key-change-this-in-production"` is committed to source. All installations using the default share the same signing key. | Generate a unique secret per installation (e.g., in `setup-windows.bat`) and write it to a protected config file. Never commit a real secret to source control. |
+| **30-minute JWT expiry** | Short expiry requires frequent re-login in the admin dashboard. There is no refresh-token mechanism in the current code. | Either add a refresh-token endpoint, or extend `ACCESS_TOKEN_EXPIRE_MINUTES` for internal deployments where long sessions are acceptable. |
+| **NTFS ACLs not a complete defence** | File permissions can be bypassed by Volume Shadow Copies, backup tools, or local admin privilege escalation. | Combine ACLs with hashed credential storage (see above). |
+
+### Legal & Privacy Compliance
+
+> ⚠️ **You are responsible for compliance with applicable law.**
+
+Before deploying:
+- Notify employees in writing that their workstations are monitored
+- Obtain consent where required (GDPR, CCPA, PDPA, etc.)
+- Define a data retention and deletion policy
+- Provide employees a way to access or request deletion of their data
+- Assess whether keystroke logging and screen recording require additional disclosures
+
+---
+
+## 🔧 Troubleshooting
+
+### Backend Won't Start
+
+| Symptom | Fix |
+|---|---|
+| `ModuleNotFoundError` | `pip install -r requirements.txt` inside the venv |
+| Port 51235 in use | `netstat -ano \| findstr 51235` → `taskkill /PID <pid> /F` |
+| `uiautomation` DLL error | Install Visual C++ Redistributable 2015–2022 |
+| `No module named 'cv2'` | `pip install opencv-python` |
+| `No module named 'win32api'` | `pip install pywin32` then `python Scripts/pywin32_postinstall.py -install` |
+
+### Dashboard Shows "Backend Offline"
+
+1. `curl http://localhost:51235/health`
+2. Read `%LOCALAPPDATA%\EnterpriseMonitor\logs\backend.log`
+3. If running as service: `nssm status EnterpriseMonitorBackend`
+4. Check `C:\ProgramData\EnterpriseMonitor\logs\backend_stderr.log`
+
+### Login Fails
+
+- Default password is `Admin@123` — capital A, `@` symbol, then `123`
+- Check `%LOCALAPPDATA%\EnterpriseMonitor\users.json` for the stored value
+- JWT tokens expire in **30 minutes** — log out and back in if expired
+
+### Browser URLs Not Captured
+
+- Install Visual C++ Redistributable 2015–2022
+- Only the **foreground** (active) browser window is tracked — minimized windows are skipped
+- Check `backend.log` for `uiautomation` errors
+
+### Screen Recording Files Won't Play
+
+- Ensure `opencv-python` is installed
+- Check available disk space on `C:\ProgramData\`
+- Files use the `mp4v` (XVID) codec — try **VLC** if Windows Media Player fails
+
+### PyInstaller Build Fails
+
+```cmd
+rmdir /s /q backend-windows\build
+rmdir /s /q backend-windows\dist
+pip install --upgrade pyinstaller
+cd backend-windows
+python -m PyInstaller --onefile --noconsole main.py
+```
 
 ---
 
 ## 🚨 Important Notes
 
-1. **⚠️ Change Default Password**: The default `admin/admin123` credentials are for initial setup only
-2. **💾 Disk Space**: Monitor screenshot storage, ~1-2GB per week per user
-3. **🔒 Privacy**: Ensure legal compliance before deployment
-4. **🌐 Network**: ERP sync requires internet connectivity
-5. **🪟 Windows Only**: This build is optimized for Windows; macOS support is experimental
+1. **🔑 Change default password** — `admin` / `Admin@123` must be changed on first login
+2. **🔐 Rotate the JWT secret** — edit `SECRET_KEY` in `auth/auth_manager.py` before any production deployment
+3. **📁 Secure `users.json`** — credentials are stored in plain text; restrict access with NTFS ACLs
+4. **💾 Monitor disk usage** — screenshots use ~1–2 GB/week per user; video storage varies with recording hours
+5. **🔒 Obtain consent** — keystroke logging and screen recording require explicit written employee consent in most jurisdictions
+6. **🌐 Network required for sync** — ERP endpoints must be reachable for data to leave the device
+7. **🎥 Screen recording is OFF by default** — it must be explicitly enabled by an admin
+8. **🪟 Windows only** — `pywin32`, `uiautomation`, and `pynput._win32` make this backend Windows-specific
+9. **🔒 Localhost only** — the backend API is intentionally bound to `127.0.0.1`
+
+---
+
+## 📚 Further Documentation
+
+- **[IMPLEMENTATION_GUIDE.md](IMPLEMENTATION_GUIDE.md)** — full deployment walkthrough, ERP integration patterns, troubleshooting
+- **Swagger UI** — `http://localhost:51235/docs`
+- **ReDoc** — `http://localhost:51235/redoc`
+
+---
+
+## 📞 Support & Logs
+
+| Resource | Location |
+|---|---|
+| Main application log | `%LOCALAPPDATA%\EnterpriseMonitor\logs\backend.log` |
+| Service stdout | `C:\ProgramData\EnterpriseMonitor\logs\backend_stdout.log` |
+| Service stderr | `C:\ProgramData\EnterpriseMonitor\logs\backend_stderr.log` |
+| Health check | `curl http://localhost:51235/health` |
+| API documentation | `http://localhost:51235/docs` |
+| Service status | `nssm status EnterpriseMonitorBackend` |
 
 ---
 
 ## 📄 License
 
-**PROPRIETARY** - Internal use only
+**PROPRIETARY** — Internal use only.  
+Developed by **Ashraful Anik** / Skillers Zone LTD.
 
 ---
 
-## 📞 Support
-
-- **Logs**: `%LOCALAPPDATA%\EnterpriseMonitor\logs\backend.log`
-- **Health Check**: `curl http://localhost:51235/health`
-- **API Docs**: `http://localhost:51235/docs`
-
----
-
-**Version**: 1.0.0  
-**Platform**: Windows 10/11  
-**Last Updated**: February 2026  
-**Built by**: Skillers Zone LTD
+**Version**: 2.0.0 &nbsp;|&nbsp; **Platform**: Windows 10/11 (x64) &nbsp;|&nbsp; **Last Updated**: February 2026
