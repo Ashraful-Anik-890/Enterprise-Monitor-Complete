@@ -1085,6 +1085,190 @@
       font-style: italic;
       white-space: nowrap;
     }
+
+    /* ── Server Config Modal ──────────────────────────────────────────── */
+    .sc-modal-box {
+      max-width: 560px;
+      width: 100%;
+      background: #fff;
+      border-radius: 14px;
+      padding: 28px 32px;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.32);
+      max-height: 88vh;
+      overflow-y: auto;
+      position: relative;
+    }
+
+    .sc-header h2 {
+      font-size: 18px;
+      font-weight: 700;
+      color: #1a1a2e;
+      margin-bottom: 4px;
+    }
+
+    .sc-header p {
+      font-size: 12px;
+      color: #888;
+      margin-bottom: 16px;
+      line-height: 1.5;
+    }
+
+    .sc-global-row {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .sc-field-half {
+      flex: 1;
+    }
+
+    .sc-label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #666;
+      margin-bottom: 5px;
+    }
+
+    .sc-opt {
+      font-size: 10px;
+      font-weight: 400;
+      text-transform: none;
+      color: #aaa;
+    }
+
+    .sc-input {
+      width: 100%;
+      padding: 9px 11px;
+      border: 2px solid #e8eaf0;
+      border-radius: 7px;
+      font-size: 13px;
+      color: #333;
+      background: #fafbff;
+      box-sizing: border-box;
+      transition: border-color 0.2s;
+    }
+
+    .sc-input:focus {
+      outline: none;
+      border-color: #667eea;
+      background: #fff;
+    }
+
+    .sc-url-input {
+      font-size: 12px;
+    }
+
+    .sc-divider {
+      border: none;
+      border-top: 1px solid #f0f2f8;
+      margin: 14px 0;
+    }
+
+    .sc-type-block {
+      margin-bottom: 16px;
+    }
+
+    .sc-type-label {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 6px;
+    }
+
+    .sc-icon {
+      font-size: 15px;
+    }
+
+    .sc-badge {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 10px;
+      margin-left: auto;
+    }
+
+    .json-badge {
+      background: #e8f4fd;
+      color: #2b7abf;
+    }
+
+    .file-badge {
+      background: #fef3e2;
+      color: #c87914;
+    }
+
+    .sc-demo {
+      margin-top: 5px;
+    }
+
+    .sc-demo summary {
+      font-size: 11px;
+      color: #667eea;
+      cursor: pointer;
+      user-select: none;
+      padding: 3px 0;
+      font-weight: 500;
+    }
+
+    .sc-demo summary:hover {
+      color: #4a5cc7;
+    }
+
+    .sc-demo-pre {
+      background: #1e1e2e;
+      color: #cdd6f4;
+      border-radius: 7px;
+      padding: 12px 14px;
+      font-size: 11px;
+      line-height: 1.6;
+      overflow-x: auto;
+      margin-top: 6px;
+      white-space: pre;
+      font-family: 'Consolas', 'Monaco', monospace;
+    }
+
+    .sc-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .sc-btn-cancel {
+      flex: 1;
+      padding: 10px;
+      background: #f0f2f8;
+      color: #555;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    .sc-btn-save {
+      flex: 2;
+      padding: 10px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    .sc-btn-save:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
   </style>
 </head>
 
@@ -1495,55 +1679,184 @@
     </div>
   </div>
 
-  <!-- ── SERVER API CONFIG MODAL ─────────────────────────────── -->
+  <!-- ═══ SERVER API CONFIG MODAL ════════════════════════════════════════════ -->
   <div id="server-config-modal" class="modal-overlay">
-    <div class="modal-box"
-      style="max-width:480px;background:#fff;border-radius:14px;padding:32px;box-shadow:0 24px 80px rgba(0,0,0,0.3);position:relative;">
-      <div class="modal-header" style="margin-bottom:20px;">
-        <h2 style="font-size:18px;font-weight:700;color:#1a1a2e;margin-bottom:6px;">⚙ Config Server API</h2>
-        <p style="color:#888;font-size:13px;margin-top:4px;">
-          Configure the ERP endpoint this agent syncs data to.
-        </p>
+    <div class="modal-box sc-modal-box">
+
+      <div class="sc-header">
+        <h2>⚙ Configure Server APIs</h2>
+        <p>Enter the ERP endpoint URL for each data type. Leave blank to skip that type.
+          The server team can use the demo formats below to build compatible endpoints.</p>
       </div>
 
-      <div class="form-group" style="margin-bottom:16px;">
-        <label
-          style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#666;margin-bottom:6px;">Server
-          URL <span style="color:#e74c3c;">*</span></label>
-        <input type="url" id="sc-server-url" placeholder="https://api.example.com/api/pctracking/appuseage"
-          style="width:100%;padding:10px 12px;border:2px solid #e8eaf0;border-radius:7px;font-size:14px;color:#333;background:#fafbff;transition:border-color 0.2s;" />
+      <!-- Global settings row -->
+      <div class="sc-global-row">
+        <div class="sc-field-half">
+          <label class="sc-label">API Key <span class="sc-opt">(optional — all endpoints)</span></label>
+          <input type="password" id="sc-api-key" placeholder="Leave blank if not required" class="sc-input" />
+        </div>
+        <div class="sc-field-half">
+          <label class="sc-label">Sync Interval (seconds)</label>
+          <input type="number" id="sc-sync-interval" value="300" min="30" max="86400" class="sc-input" />
+        </div>
       </div>
 
-      <div class="form-group" style="margin-bottom:16px;">
-        <label
-          style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#666;margin-bottom:6px;">API
-          Key <span style="color:#888;font-size:11px;text-transform:none;">(optional)</span></label>
-        <input type="password" id="sc-api-key" placeholder="Leave blank if not required"
-          style="width:100%;padding:10px 12px;border:2px solid #e8eaf0;border-radius:7px;font-size:14px;color:#333;background:#fafbff;transition:border-color 0.2s;" />
+      <div class="sc-divider"></div>
+
+      <!-- ── 1. App Activity ─────────────────────────────────────────────── -->
+      <div class="sc-type-block">
+        <div class="sc-type-label">
+          <span class="sc-icon">🖥</span>
+          <span>App Activity</span>
+          <span class="sc-badge json-badge">POST JSON</span>
+        </div>
+        <input type="url" id="sc-url-app" placeholder="https://api.example.com/api/pctracking/appuseage"
+          class="sc-input sc-url-input" />
+        <details class="sc-demo">
+          <summary>📋 Demo Format (server must accept this)</summary>
+          <pre class="sc-demo-pre">{
+  "pcName":       "DESKTOP-ABC123",
+  "appName":      "chrome.exe",
+  "windowsTitle": "Google - Chrome",
+  "startTime":    "2026-02-22T08:30:00+00:00",
+  "endTime":      "2026-02-22T08:32:30+00:00",
+  "duration":     150,
+  "syncTime":     "2026-02-22T08:35:01+00:00"
+}</pre>
+        </details>
       </div>
 
-      <div class="form-group" style="margin-bottom:24px;">
-        <label
-          style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:#666;margin-bottom:6px;">Sync
-          Interval (seconds)</label>
-        <input type="number" id="sc-sync-interval" value="300" min="30" max="86400"
-          style="width:100%;padding:10px 12px;border:2px solid #e8eaf0;border-radius:7px;font-size:14px;color:#333;background:#fafbff;transition:border-color 0.2s;" />
+      <!-- ── 2. Browser Activity ─────────────────────────────────────────── -->
+      <div class="sc-type-block">
+        <div class="sc-type-label">
+          <span class="sc-icon">🌐</span>
+          <span>Browser Activity</span>
+          <span class="sc-badge json-badge">POST JSON</span>
+        </div>
+        <input type="url" id="sc-url-browser" placeholder="https://api.example.com/api/pctracking/browser"
+          class="sc-input sc-url-input" />
+        <details class="sc-demo">
+          <summary>📋 Demo Format</summary>
+          <pre class="sc-demo-pre">{
+  "pcName":      "DESKTOP-ABC123",
+  "browserName": "Chrome",
+  "url":         "https://github.com/",
+  "pageTitle":   "GitHub",
+  "timestamp":   "2026-02-22T08:31:00+00:00",
+  "syncTime":    "2026-02-22T08:35:01+00:00"
+}</pre>
+        </details>
       </div>
 
+      <!-- ── 3. Clipboard ────────────────────────────────────────────────── -->
+      <div class="sc-type-block">
+        <div class="sc-type-label">
+          <span class="sc-icon">📋</span>
+          <span>Clipboard Events</span>
+          <span class="sc-badge json-badge">POST JSON</span>
+        </div>
+        <input type="url" id="sc-url-clipboard" placeholder="https://api.example.com/api/pctracking/clipboard"
+          class="sc-input sc-url-input" />
+        <details class="sc-demo">
+          <summary>📋 Demo Format</summary>
+          <pre class="sc-demo-pre">{
+  "pcName":         "DESKTOP-ABC123",
+  "contentType":    "text",
+  "contentPreview": "Copied text preview (truncated)…",
+  "timestamp":      "2026-02-22T08:31:45+00:00",
+  "syncTime":       "2026-02-22T08:35:01+00:00"
+}</pre>
+        </details>
+      </div>
+
+      <!-- ── 4. Keystrokes ───────────────────────────────────────────────── -->
+      <div class="sc-type-block">
+        <div class="sc-type-label">
+          <span class="sc-icon">⌨</span>
+          <span>Keystrokes / Text Logs</span>
+          <span class="sc-badge json-badge">POST JSON</span>
+        </div>
+        <input type="url" id="sc-url-keystrokes" placeholder="https://api.example.com/api/pctracking/keystrokes"
+          class="sc-input sc-url-input" />
+        <details class="sc-demo">
+          <summary>📋 Demo Format</summary>
+          <pre class="sc-demo-pre">{
+  "pcName":      "DESKTOP-ABC123",
+  "application": "notepad.exe",
+  "windowTitle": "Untitled - Notepad",
+  "content":     "buffered keystrokes text…",
+  "timestamp":   "2026-02-22T08:32:00+00:00",
+  "syncTime":    "2026-02-22T08:35:01+00:00"
+}</pre>
+        </details>
+      </div>
+
+      <!-- ── 5. Screenshots ──────────────────────────────────────────────── -->
+      <div class="sc-type-block">
+        <div class="sc-type-label">
+          <span class="sc-icon">📸</span>
+          <span>Screenshots</span>
+          <span class="sc-badge file-badge">POST multipart/form-data</span>
+        </div>
+        <input type="url" id="sc-url-screenshots" placeholder="https://api.example.com/api/pctracking/screenshots"
+          class="sc-input sc-url-input" />
+        <details class="sc-demo">
+          <summary>📋 Demo Format (multipart — NOT JSON)</summary>
+          <pre class="sc-demo-pre">Content-Type: multipart/form-data
+
+Form fields:
+  pcName        = "DESKTOP-ABC123"
+  timestamp     = "2026-02-22T08:30:00+00:00"
+  activeWindow  = "Google - Chrome"
+  activeApp     = "chrome.exe"
+  syncTime      = "2026-02-22T08:35:01+00:00"
+
+File field:
+  file          = &lt;PNG binary&gt;  (field name: "file")
+
+Server must use request.FILES['file'] or equivalent.
+Response: HTTP 200/201 with any body.</pre>
+        </details>
+      </div>
+
+      <!-- ── 6. Videos ───────────────────────────────────────────────────── -->
+      <div class="sc-type-block">
+        <div class="sc-type-label">
+          <span class="sc-icon">🎥</span>
+          <span>Screen Recordings</span>
+          <span class="sc-badge file-badge">POST multipart/form-data</span>
+        </div>
+        <input type="url" id="sc-url-videos" placeholder="https://api.example.com/api/pctracking/videos"
+          class="sc-input sc-url-input" />
+        <details class="sc-demo">
+          <summary>📋 Demo Format (multipart — NOT JSON)</summary>
+          <pre class="sc-demo-pre">Content-Type: multipart/form-data
+
+Form fields:
+  pcName          = "DESKTOP-ABC123"
+  timestamp       = "2026-02-22T08:00:00+00:00"
+  durationSeconds = "300"
+  syncTime        = "2026-02-22T08:35:01+00:00"
+
+File field:
+  file            = &lt;MP4 binary&gt;  (field name: "file")
+
+Note: MP4 chunks are ~5 minutes / ~50-150 MB each.
+      Set server upload limit accordingly (e.g. client_max_body_size 200m in nginx).
+Response: HTTP 200/201 with any body.</pre>
+        </details>
+      </div>
+
+      <!-- Feedback -->
       <div id="server-config-error"
-        style="display:none;color:#e74c3c;font-size:13px;margin-bottom:16px;text-align:center;"></div>
+        style="display:none;color:#e74c3c;font-size:13px;margin-top:12px;text-align:center;"></div>
       <div id="server-config-success"
-        style="display:none;color:#1a8a52;font-size:13px;margin-bottom:16px;text-align:center;"></div>
+        style="display:none;color:#1a8a52;font-size:13px;margin-top:12px;text-align:center;"></div>
 
-      <div style="display:flex;gap:10px;margin-top:24px;">
-        <button id="sc-cancel-btn"
-          style="flex:1;padding:11px;background:#f0f2f8;color:#555;border:none;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;">
-          Cancel
-        </button>
-        <button id="sc-save-btn"
-          style="flex:2;padding:11px;background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);color:white;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:opacity 0.2s;">
-          💾 Save
-        </button>
+      <!-- Actions -->
+      <div class="sc-actions">
+        <button id="sc-cancel-btn" class="sc-btn-cancel">Cancel</button>
+        <button id="sc-save-btn" class="sc-btn-save">💾 Save All</button>
       </div>
     </div>
   </div>

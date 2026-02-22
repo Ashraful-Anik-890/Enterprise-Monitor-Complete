@@ -93,9 +93,20 @@ class ScreenshotInfo(BaseModel):
     active_app: str
 
 class ConfigRequest(BaseModel):
-    server_url: Optional[str] = None
-    api_key: Optional[str] = None
+    # Global settings
+    api_key:               Optional[str] = None
     sync_interval_seconds: Optional[int] = None
+
+    # Per-type ERP endpoint URLs (all optional — blank = that type is skipped)
+    url_app_activity: Optional[str] = None
+    url_browser:      Optional[str] = None
+    url_clipboard:    Optional[str] = None
+    url_keystrokes:   Optional[str] = None
+    url_screenshots:  Optional[str] = None
+    url_videos:       Optional[str] = None
+
+    # Legacy — kept for backward compatibility with old installs
+    server_url: Optional[str] = None
 
 class IdentityResponse(BaseModel):
     machine_id:   str
@@ -513,22 +524,36 @@ async def resume_monitoring(user=Depends(verify_token)):
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 @app.get("/api/config")
 async def get_config(user=Depends(verify_token)):
-    """Return the current sync configuration for the GUI modal."""
     return {
-        "server_url":            config_manager.get("server_url", ""),
         "api_key":               config_manager.get("api_key", ""),
         "sync_interval_seconds": config_manager.get("sync_interval_seconds", 300),
+        "url_app_activity":      config_manager.get("url_app_activity", ""),
+        "url_browser":           config_manager.get("url_browser", ""),
+        "url_clipboard":         config_manager.get("url_clipboard", ""),
+        "url_keystrokes":        config_manager.get("url_keystrokes", ""),
+        "url_screenshots":       config_manager.get("url_screenshots", ""),
+        "url_videos":            config_manager.get("url_videos", ""),
+        # legacy
+        "server_url":            config_manager.get("server_url", ""),
     }
 
 @app.post("/api/config")
 async def update_config(config: ConfigRequest, user=Depends(verify_token)):
-    if config.server_url is not None:
-        config_manager.set("server_url", config.server_url)
-    if config.api_key is not None:
-        config_manager.set("api_key", config.api_key)
-    if config.sync_interval_seconds is not None:
-        config_manager.set("sync_interval_seconds", config.sync_interval_seconds)
-    return {"success": True, "config": config_manager.config}
+    _fields = [
+        ("api_key",               config.api_key),
+        ("sync_interval_seconds", config.sync_interval_seconds),
+        ("url_app_activity",      config.url_app_activity),
+        ("url_browser",           config.url_browser),
+        ("url_clipboard",         config.url_clipboard),
+        ("url_keystrokes",        config.url_keystrokes),
+        ("url_screenshots",       config.url_screenshots),
+        ("url_videos",            config.url_videos),
+        ("server_url",            config.server_url),   # legacy
+    ]
+    for key, value in _fields:
+        if value is not None:
+            config_manager.set(key, value)
+    return {"success": True}
 
 
 # ─── SYNC ────────────────────────────────────────────────────────────────────

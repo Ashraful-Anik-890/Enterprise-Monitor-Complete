@@ -254,16 +254,22 @@ function showModalError(msg) {
 
 // ─── SERVER API CONFIG MODAL ─────────────────────────────────
 function openServerConfigModal() {
+  const modal = document.getElementById('server-config-modal');
   document.getElementById('server-config-error').style.display = 'none';
   document.getElementById('server-config-success').style.display = 'none';
-  document.getElementById('server-config-modal').classList.add('open');
+  modal.classList.add('open');
 
-  // Pre-populate with current values
+  // Pre-populate all 6 URL fields + global settings from backend config
   window.electronAPI.getConfig().then(cfg => {
-    document.getElementById('sc-server-url').value = cfg.server_url || '';
     document.getElementById('sc-api-key').value = cfg.api_key || '';
     document.getElementById('sc-sync-interval').value = cfg.sync_interval_seconds ?? 300;
-  }).catch(() => { });
+    document.getElementById('sc-url-app').value = cfg.url_app_activity || '';
+    document.getElementById('sc-url-browser').value = cfg.url_browser || '';
+    document.getElementById('sc-url-clipboard').value = cfg.url_clipboard || '';
+    document.getElementById('sc-url-keystrokes').value = cfg.url_keystrokes || '';
+    document.getElementById('sc-url-screenshots').value = cfg.url_screenshots || '';
+    document.getElementById('sc-url-videos').value = cfg.url_videos || '';
+  }).catch(() => { /* backend not ready yet — fields stay blank */ });
 }
 
 function closeServerConfigModal() {
@@ -271,9 +277,6 @@ function closeServerConfigModal() {
 }
 
 async function handleSaveServerConfig() {
-  const serverUrl = document.getElementById('sc-server-url').value.trim();
-  const apiKey = document.getElementById('sc-api-key').value.trim();
-  const syncInterval = parseInt(document.getElementById('sc-sync-interval').value, 10) || 300;
   const errorEl = document.getElementById('server-config-error');
   const successEl = document.getElementById('server-config-success');
   const saveBtn = document.getElementById('sc-save-btn');
@@ -281,40 +284,53 @@ async function handleSaveServerConfig() {
   errorEl.style.display = 'none';
   successEl.style.display = 'none';
 
-  if (!serverUrl) {
-    errorEl.textContent = 'Server URL is required.';
-    errorEl.style.display = 'block';
-    return;
-  }
-  try { new URL(serverUrl); } catch {
-    errorEl.textContent = 'Invalid URL format. Must start with https://';
-    errorEl.style.display = 'block';
-    return;
+  // Collect all 6 URLs — validate any that are non-empty
+  const urlFields = [
+    { id: 'sc-url-app', key: 'url_app_activity', label: 'App Activity' },
+    { id: 'sc-url-browser', key: 'url_browser', label: 'Browser Activity' },
+    { id: 'sc-url-clipboard', key: 'url_clipboard', label: 'Clipboard Events' },
+    { id: 'sc-url-keystrokes', key: 'url_keystrokes', label: 'Keystrokes' },
+    { id: 'sc-url-screenshots', key: 'url_screenshots', label: 'Screenshots' },
+    { id: 'sc-url-videos', key: 'url_videos', label: 'Screen Recordings' },
+  ];
+
+  const payload = {
+    api_key: document.getElementById('sc-api-key').value.trim(),
+    sync_interval_seconds: parseInt(document.getElementById('sc-sync-interval').value, 10) || 300,
+  };
+
+  for (const f of urlFields) {
+    const val = document.getElementById(f.id).value.trim();
+    if (val) {
+      try { new URL(val); }
+      catch {
+        errorEl.textContent = `${f.label}: invalid URL — must start with https://`;
+        errorEl.style.display = 'block';
+        return;
+      }
+    }
+    payload[f.key] = val;  // empty string = disabled for this type
   }
 
   saveBtn.disabled = true;
   saveBtn.textContent = 'Saving…';
 
   try {
-    const result = await window.electronAPI.setConfig({
-      server_url: serverUrl,
-      api_key: apiKey,
-      sync_interval_seconds: syncInterval,
-    });
-    if (result.success) {
-      successEl.textContent = 'Configuration saved. Next sync will use the new endpoint.';
+    const result = await window.electronAPI.setConfig(payload);
+    if (result && result.success) {
+      successEl.textContent = 'All API endpoints saved. Next sync will use the new configuration.';
       successEl.style.display = 'block';
-      setTimeout(closeServerConfigModal, 2000);
+      setTimeout(closeServerConfigModal, 2200);
     } else {
-      errorEl.textContent = result.error || 'Failed to save configuration.';
+      errorEl.textContent = (result && result.error) || 'Failed to save configuration.';
       errorEl.style.display = 'block';
     }
   } catch (err) {
-    errorEl.textContent = 'Request failed. Is the backend running?';
+    errorEl.textContent = 'Request failed. Is the backend service running?';
     errorEl.style.display = 'block';
   } finally {
     saveBtn.disabled = false;
-    saveBtn.textContent = '💾 Save';
+    saveBtn.textContent = '💾 Save All';
   }
 }
 

