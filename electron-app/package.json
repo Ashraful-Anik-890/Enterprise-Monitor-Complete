@@ -40,13 +40,11 @@
       "target": [
         {
           "target": "nsis",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
         }
       ],
       "icon": "resources/icon.ico",
-      "requestedExecutionLevel": "requireAdministrator"
+      "requestedExecutionLevel": "asInvoker"
     },
     "nsis": {
       "oneClick": false,
@@ -59,10 +57,7 @@
       {
         "from": "resources/",
         "to": "resources/",
-        "filter": [
-          "**/*",
-          "!*.md"
-        ]
+        "filter": ["**/*", "!*.md"]
       }
     ]
   }

@@ -1,269 +1,284 @@
 @echo off
 SETLOCAL ENABLEDELAYEDEXPANSION
 
-:: ============================================================
-:: Enterprise Monitor — Windows Setup & Service Installer
-:: Developed by Ashraful Anik
-:: ============================================================
-
 echo.
 echo ========================================================
-echo   Enterprise Monitor — Backend Service Installer
+echo   Enterprise Monitor -- Backend Builder
 echo ========================================================
 echo.
 
+:: ── Elevation check ──────────────────────────────────────────────────────────
 net session >nul 2>&1
 IF %ERRORLEVEL% NEQ 0 (
     echo [ERROR] This script must be run as Administrator.
+    echo         Right-click the .bat file and choose "Run as administrator".
     pause
     EXIT /B 1
 )
 
 SET "PROJECT_ROOT=%~dp0.."
 SET "BACKEND_DIR=%PROJECT_ROOT%\backend-windows"
-SET "RESOURCES_DIR=%PROJECT_ROOT%\resources"
-SET "NSSM=%RESOURCES_DIR%\nssm.exe"
-SET "SERVICE_NAME=EnterpriseMonitorBackend"
+SET "TASK_NAME=EnterpriseMonitorBackend"
 SET "INSTALL_DIR=C:\ProgramData\EnterpriseMonitor"
+SET "EXE_SRC=%BACKEND_DIR%\dist\enterprise_monitor_backend.exe"
 SET "EXE_DEST=%INSTALL_DIR%\backend\enterprise_monitor_backend.exe"
-SET "LOG_DIR=%INSTALL_DIR%\logs"
-SET "VIDEO_DIR=%INSTALL_DIR%\videos"
+SET "PYTHON_EXE="
 
-echo [Step 1/7] Verifying prerequisites...
-echo.
+:: ─────────────────────────────────────────────────────────────────────────────
+:: STEP 1 — FIND PYTHON
+:: Priority order:
+::   1. System-wide install in Program Files (correct, works under admin)
+::   2. py.exe launcher (resolves to whichever Python it knows)
+::   3. PATH lookup
+::   4. Fail with clear instructions
+:: ─────────────────────────────────────────────────────────────────────────────
+echo [1/5] Locating Python...
 
-IF EXIST "%BACKEND_DIR%\venv\Scripts\activate.bat" (
-    echo   [INFO] Activating virtual environment in backend-windows\venv...
-    CALL "%BACKEND_DIR%\venv\Scripts\activate.bat"
-) ELSE IF EXIST "%PROJECT_ROOT%\venv\Scripts\activate.bat" (
-    echo   [INFO] Activating virtual environment in project root...
-    CALL "%PROJECT_ROOT%\venv\Scripts\activate.bat"
+:: Check all common system-wide Python versions (Program Files = admin-visible)
+FOR %%V IN (314 313 312 311 310 39) DO (
+    IF NOT DEFINED PYTHON_EXE (
+        IF EXIST "C:\Program Files\Python%%V\python.exe" (
+            SET "PYTHON_EXE=C:\Program Files\Python%%V\python.exe"
+        )
+    )
 )
 
+:: Also check Program Files (x86) for 32-bit installs
+FOR %%V IN (314 313 312 311 310 39) DO (
+    IF NOT DEFINED PYTHON_EXE (
+        IF EXIST "C:\Program Files (x86)\Python%%V\python.exe" (
+            SET "PYTHON_EXE=C:\Program Files (x86)\Python%%V\python.exe"
+        )
+    )
+)
 
-python --version >nul 2>&1
-IF %ERRORLEVEL% NEQ 0 (
-    echo [ERROR] Python not found in PATH.
+:: Try py launcher — it knows all installs including system-wide ones
+IF NOT DEFINED PYTHON_EXE (
+    where py >nul 2>&1
+    IF %ERRORLEVEL% EQU 0 (
+        FOR /F "delims=" %%i IN ('py -c "import sys; print(sys.executable)" 2^>nul') DO (
+            IF NOT DEFINED PYTHON_EXE SET "PYTHON_EXE=%%i"
+        )
+    )
+)
+
+:: Last resort: whatever "python" resolves to in admin PATH
+IF NOT DEFINED PYTHON_EXE (
+    FOR /F "delims=" %%i IN ('where python 2^>nul') DO (
+        IF NOT DEFINED PYTHON_EXE SET "PYTHON_EXE=%%i"
+    )
+)
+
+IF NOT DEFINED PYTHON_EXE (
+    echo.
+    echo [ERROR] Python not found.
+    echo.
+    echo   Your Python is installed USER-ONLY and is invisible to admin context.
+    echo   FIX: Reinstall Python and check "Install for all users":
+    echo     1. Download from https://python.org/downloads
+    echo     2. Run installer
+    echo     3. Click "Customize installation"
+    echo     4. CHECK "Install for all users"  ^<--- THIS IS THE FIX
+    echo     5. Finish install
+    echo     6. Then run: pip install pyinstaller ^(in admin cmd^)
+    echo.
     pause
     EXIT /B 1
 )
-echo   [OK] Python found.
 
-python -m PyInstaller --version >nul 2>&1
+echo   [OK] Python: !PYTHON_EXE!
+
+:: Confirm PyInstaller is visible to THIS python
+"!PYTHON_EXE!" -m PyInstaller --version >nul 2>&1
 IF %ERRORLEVEL% NEQ 0 (
-    echo [ERROR] PyInstaller not found. Run: pip install pyinstaller
+    echo.
+    echo [ERROR] PyInstaller not found for: !PYTHON_EXE!
+    echo.
+    echo   Python was found but PyInstaller is not installed for it.
+    echo   Run this command in an ADMIN cmd window:
+    echo.
+    echo     "!PYTHON_EXE!" -m pip install pyinstaller
+    echo.
+    echo   If you want ALL packages installed system-wide run:
+    echo     "!PYTHON_EXE!" -m pip install pyinstaller fastapi uvicorn[standard] ^
+    echo       python-jose[cryptography] passlib[bcrypt] mss Pillow pywin32 ^
+    echo       psutil pyperclip requests tzdata uiautomation pynput opencv-python ^
+    echo       numpy python-multipart
+    echo.
     pause
     EXIT /B 1
 )
-echo   [OK] PyInstaller found.
 
-IF NOT EXIST "%NSSM%" (
-    echo [ERROR] nssm.exe not found at: %NSSM%
-    pause
-    EXIT /B 1
-)
-echo   [OK] nssm.exe found.
+FOR /F "delims=" %%v IN ('"!PYTHON_EXE!" -m PyInstaller --version 2^>nul') DO SET "PYI_VER=%%v"
+echo   [OK] PyInstaller !PYI_VER! confirmed.
 
+:: ─────────────────────────────────────────────────────────────────────────────
+:: STEP 2 — BUILD EXE
+:: ─────────────────────────────────────────────────────────────────────────────
 echo.
-echo [Step 2/7] Creating install directories and locking permissions...
-echo.
-
-IF NOT EXIST "%INSTALL_DIR%"         MKDIR "%INSTALL_DIR%"
-IF NOT EXIST "%INSTALL_DIR%\backend" MKDIR "%INSTALL_DIR%\backend"
-IF NOT EXIST "%LOG_DIR%"             MKDIR "%LOG_DIR%"
-IF NOT EXIST "%VIDEO_DIR%"           MKDIR "%VIDEO_DIR%"
-
-:: ── LOCK LOG DIRECTORY ────────────────────────────────────────────────────
-:: Reason: The monitored user must not discover they are being tracked.
-:: If they can read backend.log, they see exactly what data is collected.
-::
-:: /inheritance:r          Remove all inherited ACEs — start from clean slate.
-:: SYSTEM:(OI)(CI)F        Service account: Full Control + inheritable.
-:: Administrators:(OI)(CI)F Local admins: Full Control + inheritable.
-:: "Users":(OI)(CI)(RX)   Standard user group: explicitly DENIED read+execute.
-::                         (OI)(CI) propagates the denial to subfolders and files.
-::
-:: After this: a standard user opening C:\ProgramData\EnterpriseMonitor\logs
-:: gets "Access Denied" immediately. They cannot even see file names.
-icacls "%LOG_DIR%" /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" /grant:r "Administrators:(OI)(CI)F" /deny "Users:(OI)(CI)(RX)" >nul 2>&1
-IF %ERRORLEVEL% NEQ 0 (
-    echo   [WARN] Failed to set ACL on log dir. Run manually:
-    echo          icacls "%LOG_DIR%" /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" /grant:r "Administrators:(OI)(CI)F" /deny "Users:(OI)(CI)(RX)"
-) ELSE (
-    echo   [OK] Log directory locked — Users denied read access.
-)
-
-:: ── LOCK VIDEO DIRECTORY ──────────────────────────────────────────────────
-:: Reason: Screen recording files must not be viewable by the monitored user.
-icacls "%VIDEO_DIR%" /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" /grant:r "Administrators:(OI)(CI)F" /deny "Users:(OI)(CI)(RX)" >nul 2>&1
-IF %ERRORLEVEL% NEQ 0 (
-    echo   [WARN] Failed to set ACL on video dir.
-) ELSE (
-    echo   [OK] Video directory locked — Users denied read access.
-)
-
-:: ── LOCK ENTIRE EnterpriseMonitor ROOT ────────────────────────────────────
-:: Deny listing the root dir so users cannot even enumerate subfolders.
-icacls "%INSTALL_DIR%" /deny "Users:(RX)" >nul 2>&1
-echo   [OK] Install root access restricted.
-
-echo   [OK] Directories created: %INSTALL_DIR%
-
-echo.
-echo [Step 3/7] Building backend executable with PyInstaller...
-echo   This may take 3-8 minutes on first run.
+echo [2/5] Building backend EXE...
+echo   Source : %BACKEND_DIR%\main.py
+echo   Output : %EXE_SRC%
 echo.
 
 CD /D "%BACKEND_DIR%"
 
-"%NSSM%" status "%SERVICE_NAME%" >nul 2>&1
+:: Kill running backend so the EXE file isn't locked
+taskkill /F /IM enterprise_monitor_backend.exe >nul 2>&1
+
+:: Stop existing task so it doesn't hold file locks
+schtasks /query /tn "%TASK_NAME%" >nul 2>&1
 IF %ERRORLEVEL% EQU 0 (
-    echo   Stopping existing service for rebuild...
-    "%NSSM%" stop "%SERVICE_NAME%" confirm >nul 2>&1
+    echo   Stopping existing task for rebuild...
+    schtasks /end /tn "%TASK_NAME%" >nul 2>&1
     TIMEOUT /T 3 /NOBREAK >nul
 )
 
-:: Clean stale PyInstaller cache — avoids "Unable to commit changes" style errors
+:: Clean stale PyInstaller cache (prevents "unable to commit changes" errors)
 IF EXIST "%BACKEND_DIR%\build" (
-    echo   Cleaning previous build cache...
+    echo   Cleaning build cache...
     RMDIR /S /Q "%BACKEND_DIR%\build"
 )
 IF EXIST "%BACKEND_DIR%\dist" RMDIR /S /Q "%BACKEND_DIR%\dist"
 
-:: ─── PyInstaller — ALL hidden imports documented ──────────────────────────
-:: uvicorn.*          : loads loops/protocols via importlib string calls at runtime
-:: anyio.*            : fastapi starlette async backend selected dynamically
-:: multipart          : fastapi form/file upload (python-multipart)
-:: pynput.*_win32     : pynput selects Windows platform backend at import time
-:: win32*             : pywin32 COM/Win32 modules (app_tracker, screen_recorder)
-:: cv2                : OpenCV (screen_recorder.py)
-:: mss + mss.windows  : screen capture + Windows backend
-:: numpy.*            : screen_recorder uses numpy BGRA→BGR array ops
-:: passlib.handlers.* : passlib discovers bcrypt handler via plugin registry
-:: jose.*             : python-jose JWT; backend selected dynamically
-:: uiautomation       : browser_tracker — ships DLLs + XML config, collect-all needed
-python -m PyInstaller ^
-    --onefile ^
-    --noconsole ^
-    --name enterprise_monitor_backend ^
-    --hidden-import=uvicorn.logging ^
-    --hidden-import=uvicorn.loops ^
-    --hidden-import=uvicorn.loops.auto ^
-    --hidden-import=uvicorn.protocols ^
-    --hidden-import=uvicorn.protocols.http ^
-    --hidden-import=uvicorn.protocols.http.auto ^
-    --hidden-import=uvicorn.protocols.websockets ^
-    --hidden-import=uvicorn.protocols.websockets.auto ^
-    --hidden-import=uvicorn.lifespan ^
-    --hidden-import=uvicorn.lifespan.on ^
-    --hidden-import=anyio ^
-    --hidden-import=anyio.backends.asyncio ^
-    --hidden-import=anyio._backends._asyncio ^
-    --hidden-import=multipart ^
-    --hidden-import=pynput.keyboard._win32 ^
-    --hidden-import=pynput.mouse._win32 ^
-    --hidden-import=win32api ^
-    --hidden-import=win32con ^
-    --hidden-import=win32gui ^
-    --hidden-import=win32process ^
-    --hidden-import=cv2 ^
-    --hidden-import=mss ^
-    --hidden-import=mss.windows ^
-    --hidden-import=numpy ^
-    --hidden-import=numpy.core._methods ^
-    --hidden-import=numpy.lib.format ^
-    --hidden-import=passlib ^
-    --hidden-import=passlib.handlers.bcrypt ^
-    --hidden-import=passlib.handlers.sha2_crypt ^
-    --hidden-import=jose ^
-    --hidden-import=jose.jwt ^
-    --hidden-import=jose.backends ^
-    --collect-all=cv2 ^
-    --collect-all=mss ^
-    --collect-all=uiautomation ^
-    main.py
+:: Use .spec file if present, otherwise inline flags
+IF EXIST "%BACKEND_DIR%\enterprise_monitor_backend.spec" (
+    echo   [INFO] Using enterprise_monitor_backend.spec
+    "!PYTHON_EXE!" -m PyInstaller enterprise_monitor_backend.spec
+) ELSE (
+    echo   [INFO] No .spec found, using inline flags
+    "!PYTHON_EXE!" -m PyInstaller ^
+        --onefile ^
+        --console ^
+        --name enterprise_monitor_backend ^
+        --hidden-import=uvicorn.logging ^
+        --hidden-import=uvicorn.loops ^
+        --hidden-import=uvicorn.loops.auto ^
+        --hidden-import=uvicorn.protocols ^
+        --hidden-import=uvicorn.protocols.http ^
+        --hidden-import=uvicorn.protocols.http.auto ^
+        --hidden-import=uvicorn.protocols.websockets ^
+        --hidden-import=uvicorn.protocols.websockets.auto ^
+        --hidden-import=uvicorn.lifespan ^
+        --hidden-import=uvicorn.lifespan.on ^
+        --hidden-import=anyio ^
+        --hidden-import=anyio.backends.asyncio ^
+        --hidden-import=anyio._backends._asyncio ^
+        --hidden-import=multipart ^
+        --hidden-import=pynput.keyboard._win32 ^
+        --hidden-import=pynput.mouse._win32 ^
+        --hidden-import=win32api ^
+        --hidden-import=win32con ^
+        --hidden-import=win32gui ^
+        --hidden-import=win32process ^
+        --hidden-import=cv2 ^
+        --hidden-import=mss ^
+        --hidden-import=mss.windows ^
+        --hidden-import=numpy ^
+        --hidden-import=numpy.core._methods ^
+        --hidden-import=numpy.lib.format ^
+        --hidden-import=passlib ^
+        --hidden-import=passlib.handlers.bcrypt ^
+        --hidden-import=passlib.handlers.sha2_crypt ^
+        --hidden-import=jose ^
+        --hidden-import=jose.jwt ^
+        --hidden-import=jose.backends ^
+        --collect-all=cv2 ^
+        --collect-all=mss ^
+        --collect-all=uiautomation ^
+        main.py
+)
 
 IF %ERRORLEVEL% NEQ 0 (
     echo.
-    echo [ERROR] PyInstaller build FAILED. Check output above.
-    echo         Common fixes:
-    echo           - Missing package: pip install ^<package^>
-    echo           - Delete backend-windows\build\ and retry
+    echo [ERROR] PyInstaller build FAILED. Read the output above carefully.
+    echo   Common fixes:
+    echo     Missing package : "!PYTHON_EXE!" -m pip install ^<package-name^>
+    echo     Stale cache     : delete backend-windows\build\ and retry
     pause
     EXIT /B 1
 )
-echo   [OK] PyInstaller build succeeded.
 
+IF NOT EXIST "%EXE_SRC%" (
+    echo [ERROR] Build claimed success but EXE missing: %EXE_SRC%
+    pause
+    EXIT /B 1
+)
+echo   [OK] EXE built: %EXE_SRC%
+
+:: ─────────────────────────────────────────────────────────────────────────────
+:: STEP 3 — DEPLOY EXE TO PROGRAMDATA
+:: ─────────────────────────────────────────────────────────────────────────────
 echo.
-echo [Step 4/7] Copying executable to install directory...
-COPY /Y "%BACKEND_DIR%\dist\enterprise_monitor_backend.exe" "%EXE_DEST%"
+echo [3/5] Deploying EXE...
+
+IF NOT EXIST "%INSTALL_DIR%"         MKDIR "%INSTALL_DIR%"
+IF NOT EXIST "%INSTALL_DIR%\backend" MKDIR "%INSTALL_DIR%\backend"
+
+:: Correct ACL: no /deny flag. Absence of Allow = implicit Deny.
+:: /deny "Users" would also deny Administrators (they are in Users group).
+icacls "%INSTALL_DIR%\backend" /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" /grant:r "Administrators:(OI)(CI)F" >nul 2>&1
+
+COPY /Y "%EXE_SRC%" "%EXE_DEST%"
 IF %ERRORLEVEL% NEQ 0 (
-    echo [ERROR] Failed to copy EXE. Run: nssm stop %SERVICE_NAME%  then retry.
+    echo [ERROR] Failed to copy EXE. It may be locked by a running process.
+    echo         Run: taskkill /F /IM enterprise_monitor_backend.exe
     pause
     EXIT /B 1
 )
-echo   [OK] EXE copied to %EXE_DEST%
+echo   [OK] Deployed to %EXE_DEST%
 
+:: ─────────────────────────────────────────────────────────────────────────────
+:: STEP 4 — REGISTER TASK SCHEDULER
+:: Runs in the USER session (not Session 0) — this is why monitoring works.
+:: ─────────────────────────────────────────────────────────────────────────────
 echo.
-echo [Step 5/7] Removing old service (if exists)...
-"%NSSM%" status "%SERVICE_NAME%" >nul 2>&1
+echo [4/5] Registering Task Scheduler (ONLOGON, user session)...
+
+schtasks /query /tn "%TASK_NAME%" >nul 2>&1
 IF %ERRORLEVEL% EQU 0 (
-    "%NSSM%" remove "%SERVICE_NAME%" confirm
-    TIMEOUT /T 2 /NOBREAK >nul
-    echo   [OK] Old service removed.
-) ELSE (
-    echo   [INFO] No existing service found.
+    schtasks /delete /tn "%TASK_NAME%" /f >nul 2>&1
+    echo   [OK] Removed old task.
 )
 
-echo.
-echo [Step 6/7] Installing Windows Service via NSSM...
-"%NSSM%" install "%SERVICE_NAME%" "%EXE_DEST%"
+schtasks /create /tn "%TASK_NAME%" /tr "\"%EXE_DEST%\"" /sc ONLOGON /rl HIGHEST /delay 0000:30 /f
+
 IF %ERRORLEVEL% NEQ 0 (
-    echo [ERROR] NSSM service installation failed.
+    echo [ERROR] Task Scheduler registration failed.
     pause
     EXIT /B 1
 )
+echo   [OK] Task registered: %TASK_NAME%
 
-"%NSSM%" set "%SERVICE_NAME%" DisplayName    "Enterprise Monitor Backend"
-"%NSSM%" set "%SERVICE_NAME%" Description    "Enterprise Monitor background agent — tracking and ERP sync."
-"%NSSM%" set "%SERVICE_NAME%" Start          SERVICE_AUTO_START
-"%NSSM%" set "%SERVICE_NAME%" ObjectName     LocalSystem
-"%NSSM%" set "%SERVICE_NAME%" AppDirectory   "%INSTALL_DIR%\backend"
-"%NSSM%" set "%SERVICE_NAME%" AppStdout      "%LOG_DIR%\backend_stdout.log"
-"%NSSM%" set "%SERVICE_NAME%" AppStderr      "%LOG_DIR%\backend_stderr.log"
-"%NSSM%" set "%SERVICE_NAME%" AppRotateFiles 1
-"%NSSM%" set "%SERVICE_NAME%" AppRotateBytes 5242880
-echo   [OK] Service installed and configured.
-
+:: ─────────────────────────────────────────────────────────────────────────────
+:: STEP 5 — START NOW
+:: ─────────────────────────────────────────────────────────────────────────────
 echo.
-echo [Step 7/7] Starting the service...
-"%NSSM%" start "%SERVICE_NAME%"
-IF %ERRORLEVEL% NEQ 0 (
-    echo [WARNING] Service did not start immediately. Check: %LOG_DIR%\
-    echo           Manual start: nssm start %SERVICE_NAME%
+echo [5/5] Starting backend for this session...
+schtasks /run /tn "%TASK_NAME%"
+TIMEOUT /T 8 /NOBREAK >nul
+
+curl -s --max-time 5 http://127.0.0.1:51235/health >nul 2>&1
+IF %ERRORLEVEL% EQU 0 (
+    echo   [OK] API healthy: http://127.0.0.1:51235/health
 ) ELSE (
-    echo   [OK] Service started successfully.
+    echo   [WARN] API not yet responding. Wait 30s then check:
+    echo          curl http://127.0.0.1:51235/health
 )
 
-TIMEOUT /T 3 /NOBREAK >nul
-"%NSSM%" status "%SERVICE_NAME%"
-
 echo.
 echo ========================================================
-echo   INSTALLATION COMPLETE
+echo   DONE
 echo ========================================================
+echo   Task  : %TASK_NAME%
+echo   EXE   : %EXE_DEST%
+echo   API   : http://127.0.0.1:51235
+echo   Data  : %%LOCALAPPDATA%%\EnterpriseMonitor\
 echo.
-echo   Service : %SERVICE_NAME%
-echo   EXE     : %EXE_DEST%
-echo   Logs    : %LOG_DIR%\  [Users: ACCESS DENIED]
-echo   Videos  : %VIDEO_DIR%\  [Users: ACCESS DENIED]
-echo   API     : http://127.0.0.1:51235
-echo.
-echo   Manage:
-echo     nssm start   %SERVICE_NAME%
-echo     nssm stop    %SERVICE_NAME%
-echo     nssm restart %SERVICE_NAME%
-echo     nssm remove  %SERVICE_NAME% confirm
+echo   IMPORTANT: Open Task Manager ^> Details tab
+echo   enterprise_monitor_backend.exe must show YOUR username
+echo   NOT "SYSTEM". If it shows SYSTEM, the old NSSM service
+echo   is still alive. Run: sc delete EnterpriseMonitorBackend
 echo.
 pause
 ENDLOCAL

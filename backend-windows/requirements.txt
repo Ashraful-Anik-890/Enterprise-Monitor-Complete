@@ -28,3 +28,4 @@ uiautomation
 # ── NEW: Keystroke / Text Logging ────────────────────────────────────────────
 # pynput hooks into the OS keyboard event stream without suppression.
 pynput
+pyinstaller

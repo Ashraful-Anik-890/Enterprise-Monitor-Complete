@@ -11,8 +11,11 @@ Design:
   - On chunk close: inserts a record into video_recordings table via db_manager
   - start() / stop() are thread-safe; may be called multiple times
 
-Directory: C:/ProgramData/EnterpriseMonitor/videos
-  (created on first start if it does not exist)
+FIX: Video directory moved from PROGRAMDATA to LOCALAPPDATA.
+     Reason: The backend now runs as a Task Scheduler task in the user's
+     session (not as a SYSTEM service). PROGRAMDATA is locked to
+     SYSTEM+Admins only, so a user-session process would get PermissionError.
+     LOCALAPPDATA is always writable by the current user.
 
 Requires: pip install mss opencv-python numpy
 """
@@ -33,23 +36,33 @@ CHUNK_SECONDS  = 300          # 5-minute rolling files
 TARGET_FPS     = 10
 TARGET_W       = 1280
 TARGET_H       = 720
-FOURCC         = "mp4v"      #
+FOURCC         = "mp4v"
 FILE_EXT       = ".mp4"
-# VIDEO_DIR is now resolved dynamically per-user in _resolve_video_dir()
 
 
 def _resolve_video_dir() -> Path:
     """
     Resolve the video storage directory at runtime.
-    Uses PROGRAMDATA env var when available (standard Windows),
-    falls back to C:/ProgramData for portable builds.
+
+    IMPORTANT: This backend runs as the logged-in user (Task Scheduler ONLOGON).
+    Use LOCALAPPDATA — always writable by the current user, consistent with
+    all other modules (db_manager, config_manager, screenshot, main.py).
+
+    Fallback chain:
+      1. %LOCALAPPDATA%  (set by Windows in every user session)
+      2. %APPDATA%       (roaming, less ideal)
+      3. Path.home() / AppData / Local  (constructed path)
     """
-    program_data = os.environ.get("PROGRAMDATA")
-    if program_data:
-        base = Path(program_data)
-    else:
-        base = Path(os.environ.get("SystemDrive", "C:")) / "ProgramData"
-    return base / "EnterpriseMonitor" / "videos"
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    if local_appdata:
+        return Path(local_appdata) / "EnterpriseMonitor" / "videos"
+
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        return Path(appdata).parent / "Local" / "EnterpriseMonitor" / "videos"
+
+    # Last resort — always correct in a real user session
+    return Path.home() / "AppData" / "Local" / "EnterpriseMonitor" / "videos"
 
 
 class ScreenRecorder:
@@ -76,9 +89,9 @@ class ScreenRecorder:
             logger.info("Video directory ready: %s", self.video_dir)
         except PermissionError:
             logger.error(
-                "PERMISSION DENIED creating video dir: %s — "
-                "ensure the process runs as the logged-in user, not SYSTEM.",
-                self.video_dir
+                "PERMISSION DENIED creating video dir: %s  "
+                "Ensure the process runs as the logged-in user, not SYSTEM.",
+                self.video_dir,
             )
         except Exception as e:
             logger.error("Failed to create video directory %s: %s", self.video_dir, e)
@@ -100,7 +113,10 @@ class ScreenRecorder:
             )
             self._is_running = True
             self._thread.start()
-            logger.info("ScreenRecorder started (XVID @ %d fps, %d-second chunks)", TARGET_FPS, CHUNK_SECONDS)
+            logger.info(
+                "ScreenRecorder started (XVID @ %d fps, %d-second chunks)",
+                TARGET_FPS, CHUNK_SECONDS,
+            )
 
     def stop(self):
         with self._lock:
@@ -118,8 +134,8 @@ class ScreenRecorder:
     def _record_loop(self):
         """
         Main capture loop.
-        Each iteration of the outer while writes one CHUNK_SECONDS chunk.
-        Each iteration of the inner while captures one frame.
+        Each outer iteration writes one CHUNK_SECONDS chunk.
+        Each inner iteration captures one frame.
         """
         try:
             import mss
@@ -135,105 +151,71 @@ class ScreenRecorder:
             self._is_running = False
             return
 
-        while not self._stop_event.is_set():
-            chunk_start  = datetime.utcnow()
-            filepath = self._build_filepath(chunk_start)
-            writer       = None
-            frames_written = 0
+        logger.info("ScreenRecorder loop started (video dir: %s)", self.video_dir)
 
-            try:
-                with mss.mss() as sct:
-                    monitor = sct.monitors[1]   # primary monitor (index 0 = all screens)
-                    fourcc  = cv2.VideoWriter_fourcc(*FOURCC)
-                    writer  = cv2.VideoWriter(
-                        str(filepath), fourcc, TARGET_FPS, (TARGET_W, TARGET_H)
-                    )
+        with mss.mss() as sct:
+            monitor = sct.monitors[1]   # primary monitor
+            native_w = monitor["width"]
+            native_h = monitor["height"]
 
-                    if not writer.isOpened():
-                        logger.error("VideoWriter failed to open: %s", filepath)
-                        break
-
-                    chunk_deadline = time.monotonic() + CHUNK_SECONDS
-                    frame_interval = 1.0 / TARGET_FPS
-
-                    while not self._stop_event.is_set() and time.monotonic() < chunk_deadline:
-                        t0 = time.monotonic()
-
-                        try:
-                            img  = sct.grab(monitor)                           # BGRA numpy-compatible
-                            arr  = np.frombuffer(img.raw, dtype=np.uint8)
-                            arr  = arr.reshape((img.height, img.width, 4))
-                            bgr  = arr[:, :, :3]                               # drop alpha
-                            frame = cv2.resize(bgr, (TARGET_W, TARGET_H),
-                                               interpolation=cv2.INTER_LINEAR)
-
-                            # ── Draw hardware cursor onto the frame ───────────
-                            # mss does not capture the OS cursor layer;
-                            # we must composite it manually per-frame.
-                            try:
-                                cx, cy = win32api.GetCursorPos()
-                                # Scale cursor coords from native resolution → 720p
-                                scale_x = TARGET_W / monitor["width"]
-                                scale_y = TARGET_H / monitor["height"]
-                                # Offset by monitor origin (multi-monitor support)
-                                rel_x = int((cx - monitor["left"]) * scale_x)
-                                rel_y = int((cy - monitor["top"])  * scale_y)
-                                if 0 <= rel_x < TARGET_W and 0 <= rel_y < TARGET_H:
-                                    # White filled circle with black outline — visible on any background
-                                    cv2.circle(frame, (rel_x, rel_y), 7,  (0, 0, 0),   -1)
-                                    cv2.circle(frame, (rel_x, rel_y), 5,  (255, 255, 255), -1)
-                                    cv2.circle(frame, (rel_x, rel_y), 2,  (0, 0, 0),   -1)
-                            except Exception:
-                                pass  # cursor read failure must never drop a frame
-                            # ─────────────────────────────────────────────────
-
-                            writer.write(frame)
-                            frames_written += 1
-                        except Exception as frame_err:
-                            logger.warning("Frame capture error: %s", frame_err)
-
-                        elapsed = time.monotonic() - t0
-                        sleep_t = max(0.0, frame_interval - elapsed)
-                        time.sleep(sleep_t)
-
-            except Exception as exc:
-                logger.error("ScreenRecorder chunk error: %s", exc, exc_info=True)
-            finally:
-                if writer:
-                    writer.release()
-
-            # ── persist completed chunk ──────────────────────────────────────
-            if frames_written > 0 and filepath.exists():
-                duration_secs = max(1, round(frames_written / TARGET_FPS))
-                self._save_recording_to_db(
-                    filepath=str(filepath),
-                    timestamp=chunk_start.isoformat(),
-                    duration_seconds=duration_secs,
+            while not self._stop_event.is_set():
+                chunk_path = self._new_chunk_path()
+                fourcc     = cv2.VideoWriter_fourcc(*FOURCC)
+                writer     = cv2.VideoWriter(
+                    str(chunk_path), fourcc, TARGET_FPS, (TARGET_W, TARGET_H)
                 )
-            else:
-                # Empty file from a failed chunk — remove it
-                try:
-                    filepath.unlink(missing_ok=True)
-                except Exception:
-                    pass
 
-        self._is_running = False
+                if not writer.isOpened():
+                    logger.error("cv2.VideoWriter failed to open: %s", chunk_path)
+                    self._stop_event.wait(5)
+                    continue
 
-    # ─── HELPERS ─────────────────────────────────────────────────────────────
+                chunk_start = time.monotonic()
+                frame_count = 0
 
-    def _build_filepath(self, dt: datetime) -> Path:
-        """Build a timestamped filename for a recording chunk."""
-        filename = dt.strftime("rec_%Y%m%d_%H%M%S") + FILE_EXT
-        return self.video_dir / filename
+                while (
+                    not self._stop_event.is_set()
+                    and (time.monotonic() - chunk_start) < CHUNK_SECONDS
+                ):
+                    frame_start = time.monotonic()
+                    try:
+                        raw = sct.grab(monitor)
+                        # mss gives BGRA; cv2 needs BGR
+                        frame = np.array(raw)[:, :, :3]
+                        if (native_w, native_h) != (TARGET_W, TARGET_H):
+                            frame = cv2.resize(
+                                frame, (TARGET_W, TARGET_H),
+                                interpolation=cv2.INTER_LINEAR,
+                            )
+                        writer.write(frame)
+                        frame_count += 1
+                    except Exception as exc:
+                        logger.warning("Frame capture error: %s", exc)
 
-    def _save_recording_to_db(self, filepath: str, timestamp: str, duration_seconds: int):
-        """Persist finished chunk metadata into video_recordings table."""
-        try:
-            self.db_manager.save_video_recording(
-                timestamp=timestamp,
-                file_path=filepath,
-                duration_seconds=duration_seconds,
-            )
-            logger.info("Saved recording: %s (%ds)", filepath, duration_seconds)
-        except Exception as e:
-            logger.error("Failed to save recording to DB: %s", e)
+                    elapsed = time.monotonic() - frame_start
+                    sleep_for = max(0.0, (1.0 / TARGET_FPS) - elapsed)
+                    if sleep_for > 0:
+                        self._stop_event.wait(sleep_for)
+
+                writer.release()
+                duration = int(time.monotonic() - chunk_start)
+                logger.debug(
+                    "Chunk saved: %s (%d frames, %ds)",
+                    chunk_path.name, frame_count, duration,
+                )
+
+                if frame_count > 0 and chunk_path.exists():
+                    try:
+                        self.db_manager.insert_video_recording(
+                            str(chunk_path), duration
+                        )
+                    except Exception as e:
+                        logger.error("DB insert for video chunk failed: %s", e)
+                elif chunk_path.exists():
+                    chunk_path.unlink(missing_ok=True)   # empty chunk, clean up
+
+        logger.info("ScreenRecorder loop ended")
+
+    def _new_chunk_path(self) -> Path:
+        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        return self.video_dir / f"recording_{ts}{FILE_EXT}"
