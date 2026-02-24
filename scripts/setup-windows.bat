@@ -20,21 +20,21 @@ SET "PROJECT_ROOT=%~dp0.."
 SET "BACKEND_DIR=%PROJECT_ROOT%\backend-windows"
 SET "TASK_NAME=EnterpriseMonitorBackend"
 SET "INSTALL_DIR=C:\ProgramData\EnterpriseMonitor"
-SET "EXE_SRC=%BACKEND_DIR%\dist\enterprise_monitor_backend.exe"
-SET "EXE_DEST=%INSTALL_DIR%\backend\enterprise_monitor_backend.exe"
+
+:: ONEDIR: PyInstaller outputs a folder, not a single EXE.
+:: Source is the entire dist\enterprise_monitor_backend\ folder.
+:: The EXE inside it is the entry point for Task Scheduler.
+SET "DIST_DIR=%BACKEND_DIR%\dist\enterprise_monitor_backend"
+SET "EXE_SRC=%DIST_DIR%\enterprise_monitor_backend.exe"
+SET "BACKEND_DEST=%INSTALL_DIR%\backend"
+SET "EXE_DEST=%BACKEND_DEST%\enterprise_monitor_backend.exe"
 SET "PYTHON_EXE="
 
 :: ─────────────────────────────────────────────────────────────────────────────
 :: STEP 1 — FIND PYTHON
-:: Priority order:
-::   1. System-wide install in Program Files (correct, works under admin)
-::   2. py.exe launcher (resolves to whichever Python it knows)
-::   3. PATH lookup
-::   4. Fail with clear instructions
 :: ─────────────────────────────────────────────────────────────────────────────
 echo [1/5] Locating Python...
 
-:: Check all common system-wide Python versions (Program Files = admin-visible)
 FOR %%V IN (314 313 312 311 310 39) DO (
     IF NOT DEFINED PYTHON_EXE (
         IF EXIST "C:\Program Files\Python%%V\python.exe" (
@@ -43,7 +43,6 @@ FOR %%V IN (314 313 312 311 310 39) DO (
     )
 )
 
-:: Also check Program Files (x86) for 32-bit installs
 FOR %%V IN (314 313 312 311 310 39) DO (
     IF NOT DEFINED PYTHON_EXE (
         IF EXIST "C:\Program Files (x86)\Python%%V\python.exe" (
@@ -52,7 +51,6 @@ FOR %%V IN (314 313 312 311 310 39) DO (
     )
 )
 
-:: Try py launcher — it knows all installs including system-wide ones
 IF NOT DEFINED PYTHON_EXE (
     where py >nul 2>&1
     IF %ERRORLEVEL% EQU 0 (
@@ -62,7 +60,6 @@ IF NOT DEFINED PYTHON_EXE (
     )
 )
 
-:: Last resort: whatever "python" resolves to in admin PATH
 IF NOT DEFINED PYTHON_EXE (
     FOR /F "delims=" %%i IN ('where python 2^>nul') DO (
         IF NOT DEFINED PYTHON_EXE SET "PYTHON_EXE=%%i"
@@ -72,83 +69,28 @@ IF NOT DEFINED PYTHON_EXE (
 IF NOT DEFINED PYTHON_EXE (
     echo.
     echo [ERROR] Python not found.
-    echo.
-    echo   Your Python is installed USER-ONLY and is invisible to admin context.
-    echo   FIX: Reinstall Python and check "Install for all users":
-    echo     1. Download from https://python.org/downloads
-    echo     2. Run installer
-    echo     3. Click "Customize installation"
-    echo     4. CHECK "Install for all users"  ^<--- THIS IS THE FIX
-    echo     5. Finish install
-    echo     6. Then run: pip install pyinstaller ^(in admin cmd^)
-    echo.
+    echo   Reinstall Python with "Install for all users" checked.
     pause
     EXIT /B 1
 )
 
 echo   [OK] Python: !PYTHON_EXE!
 
-:: Confirm PyInstaller is visible to THIS python
-"!PYTHON_EXE!" -m PyInstaller --version >nul 2>&1
-IF %ERRORLEVEL% NEQ 0 (
-    echo.
-    echo [ERROR] PyInstaller not found for: !PYTHON_EXE!
-    echo.
-    echo   Python was found but PyInstaller is not installed for it.
-    echo   Run this command in an ADMIN cmd window:
-    echo.
-    echo     "!PYTHON_EXE!" -m pip install pyinstaller
-    echo.
-    echo   If you want ALL packages installed system-wide run:
-    echo     "!PYTHON_EXE!" -m pip install pyinstaller fastapi uvicorn[standard] ^
-    echo       python-jose[cryptography] passlib[bcrypt] mss Pillow pywin32 ^
-    echo       psutil pyperclip requests tzdata uiautomation pynput opencv-python ^
-    echo       numpy python-multipart
-    echo.
-    pause
-    EXIT /B 1
-)
-
-FOR /F "delims=" %%v IN ('"!PYTHON_EXE!" -m PyInstaller --version 2^>nul') DO SET "PYI_VER=%%v"
-echo   [OK] PyInstaller !PYI_VER! confirmed.
-
 :: ─────────────────────────────────────────────────────────────────────────────
-:: STEP 2 — BUILD EXE
+:: STEP 2 — BUILD WITH PYINSTALLER (ONEDIR)
 :: ─────────────────────────────────────────────────────────────────────────────
 echo.
-echo [2/5] Building backend EXE...
-echo   Source : %BACKEND_DIR%\main.py
-echo   Output : %EXE_SRC%
-echo.
+echo [2/5] Building backend (onedir)...
 
-CD /D "%BACKEND_DIR%"
+cd /d "%BACKEND_DIR%"
 
-:: Kill running backend so the EXE file isn't locked
-taskkill /F /IM enterprise_monitor_backend.exe >nul 2>&1
-
-:: Stop existing task so it doesn't hold file locks
-schtasks /query /tn "%TASK_NAME%" >nul 2>&1
-IF %ERRORLEVEL% EQU 0 (
-    echo   Stopping existing task for rebuild...
-    schtasks /end /tn "%TASK_NAME%" >nul 2>&1
-    TIMEOUT /T 3 /NOBREAK >nul
-)
-
-:: Clean stale PyInstaller cache (prevents "unable to commit changes" errors)
-IF EXIST "%BACKEND_DIR%\build" (
-    echo   Cleaning build cache...
-    RMDIR /S /Q "%BACKEND_DIR%\build"
-)
-IF EXIST "%BACKEND_DIR%\dist" RMDIR /S /Q "%BACKEND_DIR%\dist"
-
-:: Use .spec file if present, otherwise inline flags
-IF EXIST "%BACKEND_DIR%\enterprise_monitor_backend.spec" (
+IF EXIST "enterprise_monitor_backend.spec" (
     echo   [INFO] Using enterprise_monitor_backend.spec
     "!PYTHON_EXE!" -m PyInstaller enterprise_monitor_backend.spec
 ) ELSE (
-    echo   [INFO] No .spec found, using inline flags
+    echo   [INFO] No .spec found, using inline flags (onedir)
     "!PYTHON_EXE!" -m PyInstaller ^
-        --onefile ^
+        --onedir ^
         --console ^
         --name enterprise_monitor_backend ^
         --hidden-import=uvicorn.logging ^
@@ -200,37 +142,56 @@ IF %ERRORLEVEL% NEQ 0 (
 )
 
 IF NOT EXIST "%EXE_SRC%" (
-    echo [ERROR] Build claimed success but EXE missing: %EXE_SRC%
+    echo [ERROR] Build succeeded but EXE missing: %EXE_SRC%
     pause
     EXIT /B 1
 )
-echo   [OK] EXE built: %EXE_SRC%
+echo   [OK] Built: %DIST_DIR%
 
 :: ─────────────────────────────────────────────────────────────────────────────
-:: STEP 3 — DEPLOY EXE TO PROGRAMDATA
+:: STEP 3 — DEPLOY FOLDER TO PROGRAMDATA
+::
+:: ONEDIR: copy the entire dist\enterprise_monitor_backend\ folder.
+:: We clean the destination first so stale DLLs from a previous build
+:: don't accumulate (important when upgrading OpenCV / uiautomation).
 :: ─────────────────────────────────────────────────────────────────────────────
 echo.
-echo [3/5] Deploying EXE...
+echo [3/5] Deploying backend folder...
 
-IF NOT EXIST "%INSTALL_DIR%"         MKDIR "%INSTALL_DIR%"
-IF NOT EXIST "%INSTALL_DIR%\backend" MKDIR "%INSTALL_DIR%\backend"
+IF NOT EXIST "%INSTALL_DIR%" MKDIR "%INSTALL_DIR%"
 
-:: Correct ACL: no /deny flag. Absence of Allow = implicit Deny.
-:: /deny "Users" would also deny Administrators (they are in Users group).
-icacls "%INSTALL_DIR%\backend" /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" /grant:r "Administrators:(OI)(CI)F" >nul 2>&1
+:: Kill any running backend before we try to overwrite its DLLs/EXE.
+taskkill /F /IM enterprise_monitor_backend.exe >nul 2>&1
+TIMEOUT /T 2 /NOBREAK >nul
 
-COPY /Y "%EXE_SRC%" "%EXE_DEST%"
+:: Remove stale destination folder cleanly.
+IF EXIST "%BACKEND_DEST%" (
+    :: Reset ACLs first so our own icacls-locked folder is deletable.
+    icacls "%BACKEND_DEST%" /reset /T /C >nul 2>&1
+    rmdir /S /Q "%BACKEND_DEST%" >nul 2>&1
+)
+
+:: Lock only the backend folder (SYSTEM + Admins only — no /deny needed).
+MKDIR "%BACKEND_DEST%"
+icacls "%BACKEND_DEST%" /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" /grant:r "Administrators:(OI)(CI)F" >nul 2>&1
+
+:: Copy entire dist folder into destination.
+xcopy /E /I /Y /Q "%DIST_DIR%\*" "%BACKEND_DEST%\" >nul
 IF %ERRORLEVEL% NEQ 0 (
-    echo [ERROR] Failed to copy EXE. It may be locked by a running process.
-    echo         Run: taskkill /F /IM enterprise_monitor_backend.exe
+    echo [ERROR] Failed to copy backend folder to %BACKEND_DEST%
     pause
     EXIT /B 1
 )
-echo   [OK] Deployed to %EXE_DEST%
+
+IF NOT EXIST "%EXE_DEST%" (
+    echo [ERROR] Deploy succeeded but EXE missing at: %EXE_DEST%
+    pause
+    EXIT /B 1
+)
+echo   [OK] Deployed to %BACKEND_DEST%
 
 :: ─────────────────────────────────────────────────────────────────────────────
 :: STEP 4 — REGISTER TASK SCHEDULER
-:: Runs in the USER session (not Session 0) — this is why monitoring works.
 :: ─────────────────────────────────────────────────────────────────────────────
 echo.
 echo [4/5] Registering Task Scheduler (ONLOGON, user session)...
@@ -275,10 +236,9 @@ echo   EXE   : %EXE_DEST%
 echo   API   : http://127.0.0.1:51235
 echo   Data  : %%LOCALAPPDATA%%\EnterpriseMonitor\
 echo.
-echo   IMPORTANT: Open Task Manager ^> Details tab
-echo   enterprise_monitor_backend.exe must show YOUR username
-echo   NOT "SYSTEM". If it shows SYSTEM, the old NSSM service
-echo   is still alive. Run: sc delete EnterpriseMonitorBackend
+echo   Task Manager should now show ONE enterprise_monitor_backend.exe
+echo   running under YOUR username. If you still see two, check:
+echo     schtasks /query /tn "%TASK_NAME%" /fo LIST
 echo.
 pause
 ENDLOCAL

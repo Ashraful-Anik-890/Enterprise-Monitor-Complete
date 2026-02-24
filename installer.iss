@@ -121,18 +121,26 @@ begin
 end;
 
 [Dirs]
-; uninsneveruninstall: our Code section handles deletion after ACL reset.
-; Without this flag Inno Setup tries to rmdir BEFORE our code resets ACLs → fails.
-Name: "{commonappdata}\EnterpriseMonitor";          Flags: uninsneveruninstall
-Name: "{commonappdata}\EnterpriseMonitor\backend";  Flags: uninsneveruninstall
+; uninsneveruninstall: Code section handles deletion after ACL reset.
+; Without this flag Inno Setup rmdir's BEFORE our ACL reset → fails silently.
+Name: "{commonappdata}\EnterpriseMonitor";                  Flags: uninsneveruninstall
+Name: "{commonappdata}\EnterpriseMonitor\backend";          Flags: uninsneveruninstall
 
 [Files]
-; Electron App (produced by: cd electron-app && npm run dist:dir)
+; ── Electron App (produced by: cd electron-app && npm run dist:dir) ──────────
 Source: "electron-app\release\win-unpacked\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "electron-app\release\win-unpacked\*";               DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+; ── Backend onedir folder (produced by: scripts\setup-windows.bat or PyInstaller) ──
+; Copy every file from dist\enterprise_monitor_backend\ (the EXE + all DLLs,
+; .pyd extensions, data files, etc.). recursesubdirs handles nested folders
+; that collect_all('cv2'), collect_all('mss'), collect_all('uiautomation') emit.
+Source: "backend-windows\dist\enterprise_monitor_backend\{#BackendExeName}"; DestDir: "{commonappdata}\EnterpriseMonitor\backend"; Flags: ignoreversion
+Source: "backend-windows\dist\enterprise_monitor_backend\*";                 DestDir: "{commonappdata}\EnterpriseMonitor\backend"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+
 ; Backend EXE (produced by: setup-windows.bat or PyInstaller directly)
-Source: "backend-windows\dist\{#BackendExeName}"; DestDir: "{commonappdata}\EnterpriseMonitor\backend"; Flags: ignoreversion
+Source: "backend-windows\dist\enterprise_monitor_backend\{#BackendExeName}"; DestDir: "{commonappdata}\EnterpriseMonitor\backend"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}";                        Filename: "{app}\{#MyAppExeName}"
