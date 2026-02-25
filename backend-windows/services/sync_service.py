@@ -51,6 +51,9 @@ class SyncService:
         self.is_running     = False
         self.thread         = None
         self._fallback_hostname = socket.gethostname()
+        self._last_sync_time: str | None = None
+        self._last_sync_error: str | None = None
+        self._is_syncing: bool = False
 
     # ─── IDENTITY ────────────────────────────────────────────────────────────
 
@@ -78,10 +81,18 @@ class SyncService:
             self.thread.join(timeout=5)
         logger.info("SyncService stopped")
 
+    def get_status(self) -> dict:
+        """Return last sync time, last error, and whether sync is running."""
+        return {
+            "last_sync":  self._last_sync_time,
+            "last_error": self._last_sync_error,
+            "is_syncing": self._is_syncing,
+        }
+
     def trigger_sync_now(self):
-        """Manually trigger a full sync cycle from the API."""
         logger.info("Manual sync triggered")
         try:
+            self._is_syncing = True
             pc_name = self._get_pc_name()
             results = {
                 "app_activity": self._sync_app_activity(pc_name),
@@ -91,17 +102,23 @@ class SyncService:
                 "screenshots":  self._sync_screenshots(pc_name),
                 "videos":       self._sync_videos(pc_name),
             }
+            self._last_sync_time = datetime.now(timezone.utc).isoformat()
+            self._last_sync_error = None
             return {"success": True, "synced": results}
         except Exception as e:
+            self._last_sync_error = str(e)
             logger.error("Manual sync failed: %s", e)
             return {"success": False, "error": str(e)}
+        finally:
+            self._is_syncing = False
 
     # ─── MAIN LOOP ───────────────────────────────────────────────────────────
 
     def _sync_loop(self):
-        time.sleep(30)  # let the rest of the app initialise first
+        time.sleep(30)  # let app initialise
         while self.is_running:
             try:
+                self._is_syncing = True
                 pc_name = self._get_pc_name()
                 self._sync_app_activity(pc_name)
                 self._sync_browser(pc_name)
@@ -109,8 +126,13 @@ class SyncService:
                 self._sync_keystrokes(pc_name)
                 self._sync_screenshots(pc_name)
                 self._sync_videos(pc_name)
+                self._last_sync_time = datetime.now(timezone.utc).isoformat()
+                self._last_sync_error = None
             except Exception as e:
+                self._last_sync_error = str(e)
                 logger.error("Sync loop error: %s", e)
+            finally:
+                self._is_syncing = False
 
             interval = int(self.config_manager.get("sync_interval_seconds", DEFAULT_SYNC_INTERVAL))
             for _ in range(interval):

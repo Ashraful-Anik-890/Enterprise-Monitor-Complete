@@ -91,7 +91,7 @@ IF EXIST "enterprise_monitor_backend.spec" (
     echo   [INFO] No .spec found, using inline flags (onedir)
     "!PYTHON_EXE!" -m PyInstaller ^
         --onedir ^
-        --console ^
+        --noconsole ^
         --name enterprise_monitor_backend ^
         --hidden-import=uvicorn.logging ^
         --hidden-import=uvicorn.loops ^
@@ -202,7 +202,7 @@ IF %ERRORLEVEL% EQU 0 (
     echo   [OK] Removed old task.
 )
 
-schtasks /create /tn "%TASK_NAME%" /tr "\"%EXE_DEST%\"" /sc ONLOGON /rl HIGHEST /delay 0000:30 /f
+schtasks /create /tn "%TASK_NAME%" /tr "\"%EXE_DEST%\"" /sc ONLOGON /rl HIGHEST /delay 0000:05 /f
 
 IF %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Task Scheduler registration failed.

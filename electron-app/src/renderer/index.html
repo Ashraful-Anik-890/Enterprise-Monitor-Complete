@@ -1298,6 +1298,10 @@
             placeholder="Enter password">
         </div>
         <button class="btn" id="login-btn" onclick="handleLoginClick()">Login</button>
+        <a href="#" id="forgot-password-link"
+          style="display:block;text-align:center;margin-top:10px;font-size:13px;color:#e74c3c;text-decoration:none;">
+          Forgot Password?
+        </a>
         <div id="login-error" class="error"></div>
       </div>
 
@@ -1313,7 +1317,6 @@
   ═══════════════════════════════════════════════════════════ -->
   <div id="dashboard-container" class="container dashboard">
 
-    <!-- Header -->
     <div class="header">
       <div class="header-title">
         <h1>🖥️ Enterprise Monitor</h1>
@@ -1325,6 +1328,9 @@
         <button class="btn-danger" id="logout-btn">Logout</button>
       </div>
     </div>
+
+    <div id="sync-status-banner" style="display:none; padding:8px 16px;
+       border-radius:6px; margin:10px 0; font-size:13px;"></div>
 
     <!-- Date & Monitor Controls -->
     <div class="dashboard-controls">
@@ -1857,6 +1863,137 @@ Response: HTTP 200/201 with any body.</pre>
       <div class="sc-actions">
         <button id="sc-cancel-btn" class="sc-btn-cancel">Cancel</button>
         <button id="sc-save-btn" class="sc-btn-save">💾 Save All</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─────────────────────────────────────────────────────────────────────────
+       QUIT AUTHENTICATION OVERLAY
+  ────────────────────────────────────────────────────────────────────────── -->
+  <div id="quit-auth-overlay" style="display:none; position:fixed; inset:0;
+       background:rgba(0,0,0,0.6); z-index:9999; align-items:center; justify-content:center;">
+    <div class="modal" style="max-width:400px; background:#fff; border-radius:12px;
+         padding:32px; box-shadow:0 20px 60px rgba(0,0,0,0.4);">
+      <h2 style="margin-bottom:6px;">🔐 Confirm Quit</h2>
+      <p class="modal-subtitle" style="margin-bottom:20px;">
+        Enter admin credentials to stop Enterprise Monitor.<br>
+        <strong>Monitoring continues if you cancel.</strong>
+      </p>
+      <div class="form-group">
+        <label>Username</label>
+        <input type="text" id="quit-username" placeholder="Admin username" autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="quit-password" placeholder="Admin password" autocomplete="current-password">
+      </div>
+      <div id="quit-auth-error" class="error" style="display:none; margin-bottom:10px;"></div>
+      <div class="modal-actions" style="display:flex; gap:10px; margin-top:16px;">
+        <button id="quit-cancel-btn" class="btn-cancel" style="flex:1;">Cancel (Keep Running)</button>
+        <button id="quit-confirm-btn" class="btn-submit" style="flex:1; background:#e74c3c; color:#fff; border:none; padding:10px;
+                       border-radius:8px; font-weight:600; cursor:pointer;">⏹ Quit</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ─────────────────────────────────────────────────────────────────────────
+       FORGOT PASSWORD MODAL (2-step)
+  ────────────────────────────────────────────────────────────────────────── -->
+  <div id="forgot-password-modal" style="display:none; position:fixed; inset:0;
+       background:rgba(0,0,0,0.6); z-index:9998; align-items:center; justify-content:center;">
+    <div class="modal" style="max-width:460px; background:#fff; border-radius:12px;
+         padding:32px; box-shadow:0 20px 60px rgba(0,0,0,0.4);">
+      <h2>🔑 Reset Password</h2>
+      <p class="modal-subtitle">Answer your security questions to reset your password.</p>
+
+      <!-- Step 1 -->
+      <div id="fp-step1">
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" id="fp-username" placeholder="Your admin username">
+        </div>
+        <div id="fp-step1-error" class="error" style="display:none;"></div>
+        <div class="modal-actions" style="display:flex; gap:10px; margin-top:16px;">
+          <button id="fp-back-btn" class="btn-cancel" style="flex:1;">← Back to Login</button>
+          <button id="fp-next-btn" class="btn-submit" style="flex:1;">Next →</button>
+        </div>
+      </div>
+
+      <!-- Step 2 (hidden until step 1 succeeds) -->
+      <div id="fp-step2" style="display:none;">
+        <div class="form-group">
+          <label id="fp-q1-label">Security Question 1</label>
+          <input type="text" id="fp-a1" placeholder="Your answer">
+        </div>
+        <div class="form-group">
+          <label id="fp-q2-label">Security Question 2</label>
+          <input type="text" id="fp-a2" placeholder="Your answer">
+        </div>
+        <hr class="modal-divider">
+        <div class="form-group">
+          <label>New Password</label>
+          <input type="password" id="fp-new-password" placeholder="New password">
+          <div class="password-hint">8–16 chars · 1 uppercase · 1 lowercase · 1 symbol</div>
+        </div>
+        <div class="form-group">
+          <label>Confirm New Password</label>
+          <input type="password" id="fp-confirm-password" placeholder="Confirm new password">
+        </div>
+        <div id="fp-step2-error" class="error" style="display:none;"></div>
+        <div id="fp-step2-success" style="display:none; color:#27ae60; font-size:13px; margin-bottom:8px;"></div>
+        <div class="modal-actions" style="display:flex; gap:10px; margin-top:16px;">
+          <button id="fp-back2-btn" class="btn-cancel" style="flex:1;">← Back</button>
+          <button id="fp-reset-btn" class="btn-submit" style="flex:1;">Reset Password</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ─────────────────────────────────────────────────────────────────────────
+       FIRST-RUN WELCOME MODAL
+  ────────────────────────────────────────────────────────────────────────── -->
+  <div id="first-run-modal" style="display:none; position:fixed; inset:0;
+       background:rgba(0,0,0,0.55); z-index:9997; align-items:center; justify-content:center;">
+    <div class="modal" style="max-width:480px; background:#fff; border-radius:12px;
+         padding:32px; box-shadow:0 20px 60px rgba(0,0,0,0.4);">
+      <h2>🎉 Welcome to Enterprise Monitor</h2>
+      <p class="modal-subtitle" style="margin-top:8px;">
+        Monitoring is now <strong>active</strong> on this device.<br>
+        Configure server API endpoints to sync data to your ERP.
+      </p>
+      <p style="font-size:12px; color:#999; margin-top:12px;">
+        You can configure APIs anytime later via ⚙ Configure Server APIs in the dashboard.
+      </p>
+      <div class="modal-actions" style="display:flex; gap:10px; margin-top:20px;">
+        <button id="first-run-skip-btn" class="btn-cancel" style="flex:1;">Skip for Now</button>
+        <button id="first-run-configure-btn" class="btn-submit" style="flex:1;">⚙ Configure APIs</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ─────────────────────────────────────────────────────────────────────────
+       POST-API-CONFIG CREDENTIAL PROMPT
+       Shown after API URLs are saved for the first time.
+  ────────────────────────────────────────────────────────────────────────── -->
+  <div id="post-api-cred-modal" style="display:none; position:fixed; inset:0;
+       background:rgba(0,0,0,0.55); z-index:9996; align-items:center; justify-content:center;">
+    <div class="modal" style="max-width:460px; background:#fff; border-radius:12px;
+         padding:32px; box-shadow:0 20px 60px rgba(0,0,0,0.4);">
+      <h2>🔑 Update Admin Credentials?</h2>
+      <p class="modal-subtitle" style="margin-top:8px; line-height:1.6;">
+        API endpoints configured successfully.<br><br>
+        Would you like to change the default admin username and password now?<br>
+        <span style="color:#888; font-size:12px;">
+          Updated credentials will apply to <strong>this device</strong>.<br>
+          For other devices, configure credentials after first login on each PC.
+        </span>
+      </p>
+      <div class="modal-actions" style="display:flex; gap:10px; margin-top:20px;">
+        <button id="post-api-cred-no-btn" class="btn-cancel" style="flex:1;">No, Finish Setup</button>
+        <button id="post-api-cred-yes-btn" class="btn-submit" style="flex:1;">Yes, Update Now</button>
       </div>
     </div>
   </div>

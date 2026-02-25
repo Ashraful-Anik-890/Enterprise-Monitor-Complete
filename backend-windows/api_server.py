@@ -136,6 +136,12 @@ class VideoRecordingInfo(BaseModel):
     duration_seconds: int
     is_synced:        bool
 
+class ResetPasswordRequest(BaseModel):
+    username: str
+    answer1: str
+    answer2: str
+    new_password: str
+
 # ─── AUTH DEPENDENCY ─────────────────────────────────────────────────────────
 async def verify_token(authorization: Optional[str] = Header(None)):
     if not authorization:
@@ -557,6 +563,11 @@ async def update_config(config: ConfigRequest, user=Depends(verify_token)):
 
 
 # ─── SYNC ────────────────────────────────────────────────────────────────────
+@app.get("/api/sync/status")
+async def get_sync_status(user=Depends(verify_token)):
+    """Return last sync time, last error, and is_syncing flag."""
+    return sync_service.get_status()
+
 @app.post("/api/sync/trigger")
 async def trigger_sync(user=Depends(verify_token)):
     try:
@@ -589,6 +600,61 @@ async def update_credentials(request: UpdateCredentialsRequest, user=Depends(ver
         return {"success": True, "force_logout": True,
                 "warning": "Credentials updated but security questions could not be saved."}
     return {"success": True, "force_logout": True}
+
+
+# ── Endpoint: GET /api/auth/security-questions ──────────────────────────────
+# NO auth required — this is the pre-login forgot-password entry point.
+# Returns the two security question prompts for a given username.
+# IMPORTANT: Never return answers. 404 if user not found (no username enumeration
+#            via timing — always return the same generic error).
+@app.get("/api/auth/security-questions")
+async def get_security_questions(username: str):
+    """Return saved security question prompts for a username (no auth needed)."""
+    try:
+        questions = auth_manager.get_security_questions(username)
+        if not questions:
+            # Return 200 with empty list — don't reveal whether username exists
+            return {"success": False, "error": "No security questions found for this username."}
+        return {"success": True, "questions": questions}
+    except Exception as e:
+        logger.error("get_security_questions error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal error")
+
+
+# ── Endpoint: POST /api/auth/reset-password ──────────────────────────────────
+# NO auth required — used when admin is locked out.
+# Verifies both security answers then resets password.
+@app.post("/api/auth/reset-password")
+async def reset_password(request: ResetPasswordRequest):
+    """Verify security answers and reset password. No token needed."""
+    try:
+        # Verify answer 1 (index 0)
+        ok1 = auth_manager.verify_security_answer(request.username, 0, request.answer1)
+        ok2 = auth_manager.verify_security_answer(request.username, 1, request.answer2)
+
+        if not ok1 or not ok2:
+            return {"success": False, "error": "One or more security answers are incorrect."}
+
+        # Validate new password strength
+        valid, err = auth_manager.validate_password(request.new_password)
+        if not valid:
+            return {"success": False, "error": err}
+
+        # Apply the new password (keep same username)
+        success, err = auth_manager.update_credentials(
+            old_username=request.username,
+            new_username=request.username,
+            new_password=request.new_password,
+        )
+        if not success:
+            return {"success": False, "error": err}
+
+        logger.info("Password reset via security questions for user: %s", request.username)
+        return {"success": True, "message": "Password reset successfully. Please log in."}
+
+    except Exception as e:
+        logger.error("reset_password error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal error")
 
 
 @app.post("/api/monitoring/video/toggle")

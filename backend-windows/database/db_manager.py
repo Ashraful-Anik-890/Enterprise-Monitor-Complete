@@ -357,7 +357,7 @@ class DatabaseManager:
         finally:
             conn.close()
     
-    def save_video_recording(self, timestamp: str, file_path: str, duration_seconds: int):
+    def insert_video_recording(self, timestamp: str, file_path: str, duration_seconds: int):
         """Insert a completed recording chunk into video_recordings."""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -369,7 +369,7 @@ class DatabaseManager:
             )
             conn.commit()
         except Exception as e:
-            logger.error("Failed to save video recording: %s", e)
+            logger.error("Failed to insert video recording: %s", e)
             conn.rollback()
         finally:
             conn.close()

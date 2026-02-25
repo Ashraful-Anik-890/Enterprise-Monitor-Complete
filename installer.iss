@@ -96,13 +96,19 @@ var
 begin
   if CurUninstallStep = usUninstall then
   begin
-    // Stop and remove the scheduled task
+    // ── 1. Kill the Electron GUI (removes ghost tray icon) ────────────────────
+    Exec('taskkill.exe', '/F /IM "Enterprise Monitor.exe"',
+         '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+    // ── 2. Kill the backend EXE ───────────────────────────────────────────────
     Exec('taskkill.exe', '/F /IM "' + ExpandConstant('{#BackendExeName}') + '"',
          '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+    // ── 3. Remove the scheduled task ─────────────────────────────────────────
     Exec('schtasks.exe', '/delete /tn "' + ExpandConstant('{#TaskName}') + '" /f',
          '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
-    // Reset ACLs so the folder tree is deletable
+    // ── 4. Reset ACLs so the locked backend folder can be deleted ────────────
     DataPath := ExpandConstant('{commonappdata}\EnterpriseMonitor');
     Exec('takeown.exe', '/F "' + DataPath + '" /R /D Y',
          '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
@@ -148,36 +154,22 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}";  Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}";                  Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-; ── 1. Lock the backend EXE directory (CORRECT ACL — NO /deny) ───────────────
-; Strategy: /inheritance:r removes inherited open ACEs, then we GRANT only what
-; we need. No /deny required — absence of Allow = implicit Deny. Using /deny on
-; "Users" would lock out Administrators (who are also in the Users group).
-;
-; ONLY the backend folder is locked — not the whole EnterpriseMonitor root,
-; because the Task Scheduler task (running as the user) needs to write logs,
-; screenshots, videos, and the database to its own AppData\Local folder.
+; 1. Lock the backend EXE directory (SYSTEM + Admins only)
 Filename: "icacls"; \
   Parameters: """{commonappdata}\EnterpriseMonitor\backend"" /inheritance:r /grant:r ""SYSTEM:(OI)(CI)F"" /grant:r ""Administrators:(OI)(CI)F"""; \
   Flags: runhidden waituntilterminated
 
-; ── 2. Create Task Scheduler entry ───────────────────────────────────────────
-; /sc ONLOGON  — runs when any user logs on (user's own session, not Session 0)
-; /rl HIGHEST  — runs with highest privilege available to the user, no UAC popup
-;                (unlike manifest-based elevation which triggers UAC every time)
-; /f           — force overwrite if task already exists
-; /delay       — 30s delay to let the user session fully initialize first
+; 2. Register Task Scheduler — 5s delay instead of 30s
 Filename: "schtasks.exe"; \
-  Parameters: "/create /tn ""{#TaskName}"" /tr """"""{commonappdata}\EnterpriseMonitor\backend\{#BackendExeName}"""""" /sc ONLOGON /rl HIGHEST /delay 0000:30 /f"; \
+  Parameters: "/create /tn ""{#TaskName}"" /tr """"""{commonappdata}\EnterpriseMonitor\backend\{#BackendExeName}"""""" /sc ONLOGON /rl HIGHEST /delay 0000:05 /f"; \
   Flags: runhidden waituntilterminated
 
-; ── 3. Start the backend task immediately (no reboot required) ───────────────
+; 3. Start the backend immediately
 Filename: "schtasks.exe"; \
   Parameters: "/run /tn ""{#TaskName}"""; \
   Flags: runhidden waituntilterminated
 
-; ── 4. Wait for API to become available, then launch the Electron GUI ─────────
-; Give the backend 8 seconds to start uvicorn before the GUI tries to connect.
-; This prevents the "Backend: Offline" tray state on first launch.
+; 4. Wait 8s for uvicorn to bind, then launch the GUI
 Filename: "{sys}\timeout.exe"; \
   Parameters: "8 /nobreak"; \
   Flags: runhidden waituntilterminated

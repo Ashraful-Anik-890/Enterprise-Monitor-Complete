@@ -23,6 +23,8 @@ let currentTimezone = 'UTC';
 
 // ─── INIT ────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+  window.electronAPI.onQuitRequested(() => showQuitAuthDialog());
+  window.electronAPI.onFirstRunSetup(() => showFirstRunModal());
   document.getElementById('date-picker').value = currentDate;
   setupEventListeners();
   await checkAuthentication();
@@ -129,6 +131,34 @@ function setupEventListeners() {
 
   // Recording toggle
   document.getElementById('recording-toggle').addEventListener('change', handleRecordingToggle);
+
+  // New additions
+  window.electronAPI.onQuitRequested(() => showQuitAuthDialog());
+  window.electronAPI.onFirstRunSetup(() => showFirstRunModal());
+  document.getElementById('forgot-password-link')
+    ?.addEventListener('click', e => { e.preventDefault(); openForgotPassword(); });
+  document.getElementById('quit-cancel-btn')
+    ?.addEventListener('click', hideQuitAuthDialog);
+  document.getElementById('quit-confirm-btn')
+    ?.addEventListener('click', confirmQuit);
+  document.getElementById('quit-password')
+    ?.addEventListener('keydown', e => { if (e.key === 'Enter') confirmQuit(); });
+  document.getElementById('first-run-skip-btn')
+    ?.addEventListener('click', dismissFirstRun);
+  document.getElementById('first-run-configure-btn')
+    ?.addEventListener('click', firstRunConfigure);
+  document.getElementById('fp-back-btn')
+    ?.addEventListener('click', closeForgotPassword);
+  document.getElementById('fp-next-btn')
+    ?.addEventListener('click', fpStep1);
+  document.getElementById('fp-back2-btn')
+    ?.addEventListener('click', fpGoBack);
+  document.getElementById('fp-reset-btn')
+    ?.addEventListener('click', fpResetPassword);
+  document.getElementById('post-api-cred-no-btn')
+    ?.addEventListener('click', dismissPostApiCred);
+  document.getElementById('post-api-cred-yes-btn')
+    ?.addEventListener('click', goToUpdateCredentials);
 }
 
 // ─── LOGIN / LOGOUT ──────────────────────────────────────────
@@ -149,6 +179,7 @@ async function handleLoginClick() {
       showDashboard();
       initializeCharts();
       await loadDashboardData();
+      startSyncStatusPoller();
     } else {
       errorDiv.textContent = result.error || 'Invalid credentials';
     }
@@ -320,7 +351,13 @@ async function handleSaveServerConfig() {
     if (result && result.success) {
       successEl.textContent = 'All API endpoints saved. Next sync will use the new configuration.';
       successEl.style.display = 'block';
-      setTimeout(closeServerConfigModal, 2200);
+      setTimeout(() => {
+        closeServerConfigModal();
+        if (window._firstRunApiConfiguring) {
+          window._firstRunApiConfiguring = false;
+          setTimeout(() => showPostApiCredentialPrompt(), 400);
+        }
+      }, 2200);
     } else {
       errorEl.textContent = (result && result.error) || 'Failed to save configuration.';
       errorEl.style.display = 'block';
@@ -955,3 +992,292 @@ async function startTokenCountdown() {
   tick();  // paint immediately; don't wait 1s for first render
   _tokenCountdownInterval = setInterval(tick, 1000);
 }
+
+// ─── STATE ───────────────────────────────────────────────────────────────────
+window._firstRunApiConfiguring = false;
+let _syncPollerInterval = null;
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SYNC STATUS BANNER
+// Shows last sync time + error in the dashboard header area.
+// Polls every 60 seconds while logged in.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function startSyncStatusPoller() {
+  updateSyncStatus();                                // immediate
+  _syncPollerInterval = setInterval(updateSyncStatus, 60_000);
+}
+
+function stopSyncStatusPoller() {
+  if (_syncPollerInterval) { clearInterval(_syncPollerInterval); _syncPollerInterval = null; }
+}
+
+async function updateSyncStatus() {
+  try {
+    const status = await window.electronAPI.getSyncStatus();
+    const banner = document.getElementById('sync-status-banner');
+    if (!banner) return;
+
+    if (status.last_error) {
+      banner.textContent = `⚠ Sync error: ${status.last_error}`;
+      banner.style.background = '#fff3cd';
+      banner.style.color = '#856404';
+      banner.style.display = 'block';
+    } else if (status.last_sync) {
+      const t = new Date(status.last_sync).toLocaleTimeString();
+      banner.textContent = `✓ Last synced: ${t}`;
+      banner.style.background = '#d1edff';
+      banner.style.color = '#0c5460';
+      banner.style.display = 'block';
+    } else {
+      banner.style.display = 'none';  // no URLs configured yet
+    }
+  } catch {
+    // backend offline — banner already handled by health check
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// QUIT AUTHENTICATION DIALOG
+// ═══════════════════════════════════════════════════════════════════════════
+
+function showQuitAuthDialog() {
+  const overlay = document.getElementById('quit-auth-overlay');
+  if (!overlay) return;
+  document.getElementById('quit-username').value = '';
+  document.getElementById('quit-password').value = '';
+  document.getElementById('quit-auth-error').style.display = 'none';
+  overlay.style.display = 'flex';
+  setTimeout(() => document.getElementById('quit-username')?.focus(), 50);
+}
+
+function hideQuitAuthDialog() {
+  const overlay = document.getElementById('quit-auth-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+async function confirmQuit() {
+  const username = document.getElementById('quit-username').value.trim();
+  const password = document.getElementById('quit-password').value;
+  const errorEl = document.getElementById('quit-auth-error');
+  const btn = document.getElementById('quit-confirm-btn');
+
+  errorEl.style.display = 'none';
+
+  if (!username || !password) {
+    errorEl.textContent = 'Both fields are required.';
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Verifying…';
+
+  try {
+    const result = await window.electronAPI.login({ username, password });
+    if (result.success) {
+      await window.electronAPI.quitApp();
+    } else {
+      // Wrong credentials — distinguish auth failure from backend offline
+      const isOffline = result.error && (
+        result.error.includes('ECONNREFUSED') ||
+        result.error.includes('Network Error') ||
+        result.error.includes('timeout')
+      );
+
+      if (isOffline) {
+        // Backend is already dead — monitoring isn't running. Safe to allow exit.
+        errorEl.innerHTML =
+          '⚠ Backend is offline — monitoring is <strong>not running</strong>.<br>' +
+          '<a href="#" id="quit-force-link" style="color:#e74c3c">Force quit anyway</a>';
+        errorEl.style.display = 'block';
+        document.getElementById('quit-force-link')?.addEventListener('click', async (e) => {
+          e.preventDefault();
+          await window.electronAPI.quitApp();
+        });
+      } else {
+        errorEl.textContent = 'Incorrect credentials. Quit denied — monitoring continues.';
+        errorEl.style.display = 'block';
+      }
+    }
+  } catch {
+    errorEl.textContent = 'Unexpected error. Try again.';
+    errorEl.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⏹ Quit';
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FORGOT PASSWORD FLOW
+// ═══════════════════════════════════════════════════════════════════════════
+
+let _fpUsername = '';
+
+function openForgotPassword() {
+  _fpUsername = '';
+  document.getElementById('fp-username').value = '';
+  document.getElementById('fp-step1-error').style.display = 'none';
+  document.getElementById('fp-step1').style.display = 'block';
+  document.getElementById('fp-step2').style.display = 'none';
+  document.getElementById('fp-step2-error').style.display = 'none';
+  document.getElementById('fp-step2-success').style.display = 'none';
+  document.getElementById('forgot-password-modal').style.display = 'flex';
+}
+
+function closeForgotPassword() {
+  document.getElementById('forgot-password-modal').style.display = 'none';
+}
+
+function fpGoBack() {
+  document.getElementById('fp-step2').style.display = 'none';
+  document.getElementById('fp-step1').style.display = 'block';
+}
+
+async function fpStep1() {
+  const username = document.getElementById('fp-username').value.trim();
+  const errorEl = document.getElementById('fp-step1-error');
+  const btn = document.getElementById('fp-next-btn');
+
+  errorEl.style.display = 'none';
+  if (!username) { errorEl.textContent = 'Enter your username.'; errorEl.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Looking up…';
+
+  try {
+    const result = await window.electronAPI.getSecurityQuestions(username);
+    if (!result.success || !result.questions || result.questions.length < 2) {
+      errorEl.textContent = result.error || 'No security questions on file for this username.';
+      errorEl.style.display = 'block';
+      return;
+    }
+    _fpUsername = username;
+    document.getElementById('fp-q1-label').textContent = result.questions[0].question;
+    document.getElementById('fp-q2-label').textContent = result.questions[1].question;
+    document.getElementById('fp-a1').value = '';
+    document.getElementById('fp-a2').value = '';
+    document.getElementById('fp-new-password').value = '';
+    document.getElementById('fp-confirm-password').value = '';
+    document.getElementById('fp-step1').style.display = 'none';
+    document.getElementById('fp-step2').style.display = 'block';
+  } catch {
+    errorEl.textContent = 'Backend unreachable.';
+    errorEl.style.display = 'block';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Next →';
+  }
+}
+
+async function fpResetPassword() {
+  const answer1 = document.getElementById('fp-a1').value.trim();
+  const answer2 = document.getElementById('fp-a2').value.trim();
+  const newPass = document.getElementById('fp-new-password').value;
+  const confirm = document.getElementById('fp-confirm-password').value;
+  const errorEl = document.getElementById('fp-step2-error');
+  const successEl = document.getElementById('fp-step2-success');
+  const btn = document.getElementById('fp-reset-btn');
+
+  errorEl.style.display = 'none'; successEl.style.display = 'none';
+
+  if (!answer1 || !answer2) { errorEl.textContent = 'Both answers required.'; errorEl.style.display = 'block'; return; }
+  if (!newPass) { errorEl.textContent = 'New password required.'; errorEl.style.display = 'block'; return; }
+  if (newPass !== confirm) { errorEl.textContent = 'Passwords do not match.'; errorEl.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Resetting…';
+
+  try {
+    const result = await window.electronAPI.resetPassword({
+      username: _fpUsername, answer1, answer2, new_password: newPass,
+    });
+    if (result.success) {
+      successEl.textContent = 'Password reset! Returning to login…';
+      successEl.style.display = 'block';
+      setTimeout(() => {
+        closeForgotPassword();
+        const uField = document.getElementById('username');
+        if (uField) uField.value = _fpUsername;
+        document.getElementById('password').value = '';
+        document.getElementById('login-error').textContent = '';
+      }, 1800);
+    } else {
+      errorEl.textContent = result.error || 'Check your answers and try again.';
+      errorEl.style.display = 'block';
+    }
+  } catch {
+    errorEl.textContent = 'Backend unreachable.';
+    errorEl.style.display = 'block';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Reset Password';
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FIRST-RUN SETUP FLOW
+// Triggered once after first successful login.
+// Step 1: modal offers "Configure APIs" or "Skip"
+// Step 2: after API config saved → prompt to update credentials
+// ═══════════════════════════════════════════════════════════════════════════
+
+function showFirstRunModal() {
+  // Only show if logged in (dashboard visible)
+  const dash = document.getElementById('dashboard-container');
+  if (!dash || !dash.classList.contains('active')) return;
+  document.getElementById('first-run-modal').style.display = 'flex';
+}
+
+function dismissFirstRun() {
+  document.getElementById('first-run-modal').style.display = 'none';
+  window.electronAPI.firstRunComplete();
+  // Explain monitoring is already active even without API config
+  showInfoToast('Monitoring is active. You can configure APIs anytime via ⚙ Configure Server APIs.');
+}
+
+function firstRunConfigure() {
+  document.getElementById('first-run-modal').style.display = 'none';
+  window.electronAPI.firstRunComplete();
+  window._firstRunApiConfiguring = true;    // flag: after save → show cred prompt
+  if (typeof openServerConfigModal === 'function') openServerConfigModal();
+}
+
+// Called from handleSaveServerConfig() success path (see instruction [C] at top)
+function showPostApiCredentialPrompt() {
+  document.getElementById('post-api-cred-modal').style.display = 'flex';
+}
+
+function dismissPostApiCred() {
+  document.getElementById('post-api-cred-modal').style.display = 'none';
+  showInfoToast('Setup complete! Monitoring is active on this device.');
+}
+
+function goToUpdateCredentials() {
+  document.getElementById('post-api-cred-modal').style.display = 'none';
+  if (typeof openCredentialsModal === 'function') openCredentialsModal();
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// UTILITY: Toast notification (non-blocking info message)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function showInfoToast(message) {
+  const existing = document.getElementById('info-toast');
+  if (existing) existing.remove();
+
+  const toast = document.createElement('div');
+  toast.id = 'info-toast';
+  toast.textContent = message;
+  Object.assign(toast.style, {
+    position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
+    background: '#1a1a2e', color: '#fff', padding: '12px 20px', borderRadius: '8px',
+    fontSize: '13px', zIndex: '99999', boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+    maxWidth: '420px', textAlign: 'center', lineHeight: '1.5',
+  });
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 5000);
+}
+

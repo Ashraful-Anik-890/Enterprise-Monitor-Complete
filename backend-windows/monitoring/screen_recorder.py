@@ -198,22 +198,24 @@ class ScreenRecorder:
                         self._stop_event.wait(sleep_for)
 
                 writer.release()
-                duration = int(time.monotonic() - chunk_start)
+                duration_seconds = int(time.monotonic() - chunk_start)
                 logger.debug(
                     "Chunk saved: %s (%d frames, %ds)",
-                    chunk_path.name, frame_count, duration,
+                    chunk_path.name, frame_count, duration_seconds,
                 )
 
                 if frame_count > 0 and chunk_path.exists():
                     try:
+                        timestamp = datetime.utcnow().isoformat()          # ← ADDED
                         self.db_manager.insert_video_recording(
-                            str(chunk_path), duration
+                            timestamp,          # arg 1: timestamp (str)
+                            str(chunk_path),    # arg 2: file_path (str)
+                            duration,           # arg 3: duration_seconds (int)
                         )
                     except Exception as e:
                         logger.error("DB insert for video chunk failed: %s", e)
                 elif chunk_path.exists():
-                    chunk_path.unlink(missing_ok=True)   # empty chunk, clean up
-
+                    chunk_path.unlink(missing_ok=True)
         logger.info("ScreenRecorder loop ended")
 
     def _new_chunk_path(self) -> Path:
