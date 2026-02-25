@@ -1,28 +1,250 @@
-// electron-app/src/main/main.ts  ← REPLACE the entire file with this
-// FIXES vs previous delivery:
-//   - api:getAppLogs      → /api/data/apps       (was wrongly /api/data/app-activity)
-//   - api:getKeyLogs      → /api/data/keylogs     (was wrongly /api/data/keystrokes)
-//   - Added api:getSyncStatus → GET /api/sync/status
-//   - TrayManager now receives getMainWindow() for quit-auth flow
-//   - window-all-closed no longer calls app.quit() (tray keeps app alive)
+/**
+ * electron-app/src/main/main.ts
+ *
+ * MASTER / CHILD PROCESS ARCHITECTURE
+ * ─────────────────────────────────────
+ * Electron is the Master. It owns the full process lifecycle:
+ *
+ *   1. DELETE stale port.info (race-condition fix — see §Port Handshake below)
+ *   2. SPAWN backend.exe as a child process via child_process.spawn
+ *   3. POLL for port.info to appear (backend writes it atomically on startup)
+ *   4. READ the port, construct ApiClient with the dynamic URL
+ *   5. On authenticated QUIT: send SIGTERM to child → child self-cleans → Electron exits
+ *   6. On unexpected Electron exit: before-quit fires kill() — no zombie processes
+ *
+ * §Port Handshake (race-condition hardening):
+ *   Problem:  Old port.info from yesterday → Electron reads it before Python writes
+ *             the new one → connects to wrong port (or a port that is now taken).
+ *   Solution: fs.unlinkSync() on port.info BEFORE spawning the backend.
+ *             We then poll for the file's re-appearance with a 30-second timeout.
+ *             The backend writes port.info atomically (write-to-.tmp, then rename),
+ *             so Electron can never read a partial file.
+ *
+ * §Backend location (packaged):
+ *   PyInstaller onedir output is copied to:
+ *     <app>/resources/backend/enterprise_monitor_backend.exe
+ *   In development (npm run dev), the exe path falls back to the local dist/ folder.
+ */
 
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
+import { spawn, ChildProcess } from 'child_process';
 import { TrayManager } from './tray';
 import { ApiClient } from './api-client';
 import Store from 'electron-store';
 
 const store = new Store();
-const apiClient = new ApiClient('http://127.0.0.1:51235');
 
+// ── Process state ─────────────────────────────────────────────────────────────
 let mainWindow: BrowserWindow | null = null;
 let trayManager: TrayManager | null = null;
+let apiClient: ApiClient;                    // initialised after port handshake
+let backendProcess: ChildProcess | null = null;
 let isQuitting = false;
+let backendKilled = false;
+let backendExited = false;     // set when child exits before port handshake completes
+let backendExitCode: number | null = null;
 
-function getMainWindow() { return mainWindow; }
+// ── Paths ─────────────────────────────────────────────────────────────────────
+const LOCAL_APPDATA = process.env.LOCALAPPDATA
+  ?? path.join(os.homedir(), 'AppData', 'Local');
 
-function createWindow() {
+const EM_DIR = path.join(LOCAL_APPDATA, 'EnterpriseMonitor');
+const PORT_INFO = path.join(EM_DIR, 'port.info');
+
+/** Returns [command, args, isDevMode] to launch the backend. */
+function getBackendLaunchCmd(): [string, string[], boolean] {
+  // 1. Packaged app: exe sits in resources/backend/
+  const packaged = path.join(
+    process.resourcesPath ?? '',
+    'backend',
+    'enterprise_monitor_backend.exe',
+  );
+  if (fs.existsSync(packaged)) return [packaged, [], false];
+
+  // 2. Dev: compiled exe exists
+  const devExe = path.resolve(
+    __dirname,
+    '../../../backend-windows/dist/enterprise_monitor_backend/enterprise_monitor_backend.exe',
+  );
+  if (fs.existsSync(devExe)) return [devExe, [], false];
+
+  // 3. Dev fallback: run Python source directly (no PyInstaller build needed)
+  const devScript = path.resolve(__dirname, '../../../backend-windows/main.py');
+  if (fs.existsSync(devScript)) {
+    console.log('[main] No exe found — launching via python directly (dev mode)');
+    return ['python', [devScript], true];
+  }
+
+  throw new Error(
+    `Backend not found. Tried:\n` +
+    `  ${packaged}\n  ${devExe}\n  ${devScript}`,
+  );
+}
+
+// ─── Port Handshake ───────────────────────────────────────────────────────────
+
+/**
+ * Delete any stale port.info BEFORE spawning the backend.
+ * This is the race-condition fix: ensures Electron never reads yesterday's port.
+ */
+function deleteStalePortInfo(): void {
+  if (fs.existsSync(PORT_INFO)) {
+    try {
+      fs.unlinkSync(PORT_INFO);
+      console.log('[main] Deleted stale port.info');
+    } catch (err) {
+      console.warn('[main] Could not delete stale port.info:', err);
+    }
+  }
+}
+
+/**
+ * Poll for port.info to appear, then read and return the port number.
+ * The backend writes port.info atomically (tmp → rename), so we never
+ * read a partial file.
+ *
+ * @param timeoutMs  Maximum wait in milliseconds (default 30 s)
+ * @param intervalMs Poll interval in milliseconds (default 250 ms)
+ */
+function waitForPortInfo(timeoutMs = 30_000, intervalMs = 250): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + timeoutMs;
+
+    const poll = () => {
+      // ── Early exit: backend already died ──────────────────────────────
+      if (backendExited) {
+        if (backendExitCode === 77) {
+          return reject(new Error(
+            `[main] Another backend is already running (exit code 77). ` +
+            `Kill the other python/backend process first.`,
+          ));
+        }
+        return reject(new Error(
+          `[main] Backend exited early (code=${backendExitCode}) before writing port.info. ` +
+          `Check ${path.join(EM_DIR, 'logs', 'backend.log')} for errors.`,
+        ));
+      }
+
+      if (fs.existsSync(PORT_INFO)) {
+        try {
+          const raw = fs.readFileSync(PORT_INFO, 'utf-8').trim();
+          const port = parseInt(raw, 10);
+          if (!isNaN(port) && port > 0) {
+            console.log(`[main] Backend port acquired from port.info: ${port}`);
+            return resolve(port);
+          }
+        } catch {
+          // File appeared but couldn't be read yet — try again
+        }
+      }
+
+      if (Date.now() >= deadline) {
+        return reject(
+          new Error(
+            `[main] Timed out after ${timeoutMs}ms waiting for backend port.info. ` +
+            `Check ${path.join(EM_DIR, 'logs', 'backend.log')} for errors.`,
+          ),
+        );
+      }
+
+      setTimeout(poll, intervalMs);
+    };
+
+    poll();
+  });
+}
+
+// ─── Backend spawn ────────────────────────────────────────────────────────────
+
+/**
+ * Spawn the Python backend as a child process.
+ * Electron is the Master — the backend is fully subordinate:
+ *   - stdio: 'ignore'  → no pipes; all output goes to backend.log
+ *   - detached: false  → child dies with parent if Electron crashes hard
+ *
+ * Returns the ChildProcess handle so we can kill it cleanly on quit.
+ */
+function spawnBackend(): ChildProcess {
+  const [cmd, args, isDevMode] = getBackendLaunchCmd();
+  console.log(`[main] Spawning backend: ${cmd} ${args.join(' ')}`);
+
+  // Ensure EM_DIR exists (backend also creates it, but we may need it for port.info)
+  fs.mkdirSync(EM_DIR, { recursive: true });
+
+  // In dev mode, pipe stderr so we see Python errors in Electron's console.
+  // In packaged mode, keep stdio:'ignore' — backend logs to file only.
+  const child = spawn(cmd, args, {
+    detached: false,
+    stdio: isDevMode ? ['ignore', 'pipe', 'pipe'] : 'ignore',
+    windowsHide: true,
+  });
+
+  // ── Dev-mode diagnostics: stream backend output to Electron console ──────
+  if (isDevMode && child.stdout) {
+    child.stdout.on('data', (data: Buffer) => {
+      const lines = data.toString().trim();
+      if (lines) console.log(`[backend:stdout] ${lines}`);
+    });
+  }
+  if (isDevMode && child.stderr) {
+    child.stderr.on('data', (data: Buffer) => {
+      const lines = data.toString().trim();
+      if (lines) console.error(`[backend:stderr] ${lines}`);
+    });
+  }
+
+  child.on('error', (err) => {
+    console.error('[main] Backend process error:', err.message);
+    backendExited = true;
+    backendExitCode = -1;
+    trayManager?.setBackendStatus(false);
+  });
+
+  child.on('exit', (code, signal) => {
+    backendExited = true;
+    backendExitCode = code;
+    if (!backendKilled) {
+      // Unexpected exit — log and update tray
+      console.error(`[main] Backend exited unexpectedly: code=${code} signal=${signal}`);
+      trayManager?.setBackendStatus(false);
+    }
+    backendProcess = null;
+  });
+
+  console.log(`[main] Backend spawned (pid=${child.pid})`);
+  return child;
+}
+
+/**
+ * Gracefully terminate the backend child process.
+ * Called from both the authenticated quit flow and the before-quit safety hook.
+ */
+function killBackend(): void {
+  if (!backendProcess || backendKilled) return;
+  backendKilled = true;
+
+  console.log('[main] Sending SIGTERM to backend...');
+  try {
+    // On Windows, SIGTERM is translated to TerminateProcess by Node.js
+    backendProcess.kill('SIGTERM');
+  } catch (err) {
+    console.warn('[main] kill(SIGTERM) failed:', err);
+    // Last resort
+    try { backendProcess.kill('SIGKILL'); } catch { /* already dead */ }
+  }
+
+  // Clean up port.info so the next launch starts fresh
+  if (fs.existsSync(PORT_INFO)) {
+    try { fs.unlinkSync(PORT_INFO); } catch { /* best effort */ }
+  }
+}
+
+// ─── Window ───────────────────────────────────────────────────────────────────
+
+function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1000,
     height: 750,
@@ -40,28 +262,60 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.show();  // Show on first launch (post-install)
-  });
+  mainWindow.once('ready-to-show', () => { mainWindow?.show(); });
 
   mainWindow.on('close', (event) => {
     if (!isQuitting) {
-      // X button → hide to tray. Monitoring continues uninterrupted.
       event.preventDefault();
-      mainWindow?.hide();
+      mainWindow?.hide();  // X button → hide to tray
     }
   });
 
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
+function getMainWindow(): BrowserWindow | null { return mainWindow; }
+
+function showMainWindow(): void {
+  if (!mainWindow) createWindow();
+  mainWindow?.show();
+  mainWindow?.focus();
+}
+
+// ─── App lifecycle ────────────────────────────────────────────────────────────
+
 app.whenReady().then(async () => {
   app.setLoginItemSettings({ openAtLogin: true, path: app.getPath('exe') });
 
+  // ── Step 1: Delete stale port.info (race-condition hardening) ──────────────
+  deleteStalePortInfo();
+
+  // ── Step 2: Spawn backend as child ─────────────────────────────────────────
+  try {
+    backendProcess = spawnBackend();
+  } catch (err: any) {
+    console.error('[main] FATAL: Could not spawn backend:', err.message);
+    // Continue loading UI — it will show "backend offline" state in the tray
+  }
+
+  // ── Step 3: Wait for port.info (backend writes it on startup) ───────────────
+  let port = 51235; // fallback only if port handshake fails (development/debug)
+  try {
+    port = await waitForPortInfo(30_000);
+  } catch (err: any) {
+    console.error('[main] Port handshake failed:', err.message);
+    console.warn('[main] Falling back to port 51235 (for development only)');
+  }
+
+  // ── Step 4: Construct ApiClient with the dynamic port ──────────────────────
+  apiClient = new ApiClient(`http://127.0.0.1:${port}`);
+  console.log(`[main] ApiClient connected to http://127.0.0.1:${port}`);
+
+  // ── Step 5: Boot UI ────────────────────────────────────────────────────────
   trayManager = new TrayManager(
     () => showMainWindow(),
     apiClient,
-    getMainWindow,   // Tray uses this to show window before sending quit-dialog event
+    getMainWindow,
   );
 
   createWindow();
@@ -69,22 +323,21 @@ app.whenReady().then(async () => {
   startBackendHealthCheck();
 });
 
-// Do NOT call app.quit() here. The tray keeps the process alive intentionally.
-// The only exit path is through the authenticated quit-auth flow.
-app.on('window-all-closed', () => { /* intentional no-op on Windows */ });
+// Safety hook: kill backend if Electron quits for ANY reason (crash, force-close, etc.)
+// This prevents zombie backend.exe processes.
+app.on('before-quit', () => {
+  isQuitting = true;
+  killBackend();
+});
 
-app.on('activate', () => { if (mainWindow === null) createWindow(); });
+// Tray keeps the app alive — intentional no-op
+app.on('window-all-closed', () => { /* no-op on Windows */ });
 
-app.on('before-quit', () => { isQuitting = true; });
+app.on('activate', () => { if (!mainWindow) createWindow(); });
 
-function showMainWindow() {
-  if (!mainWindow) createWindow();
-  mainWindow?.show();
-  mainWindow?.focus();
-}
+// ─── Backend health check ─────────────────────────────────────────────────────
 
-// ─── Backend health check (every 10s) ────────────────────────────────────────
-function startBackendHealthCheck() {
+function startBackendHealthCheck(): void {
   const check = async () => {
     try {
       await apiClient.get('/health');
@@ -97,10 +350,11 @@ function startBackendHealthCheck() {
   setInterval(check, 10_000);
 }
 
-// ─── All IPC handlers ────────────────────────────────────────────────────────
-function setupIpcHandlers() {
+// ─── IPC Handlers ─────────────────────────────────────────────────────────────
 
-  // ── Auth ────────────────────────────────────────────────────────────────────
+function setupIpcHandlers(): void {
+
+  // ── Auth ──────────────────────────────────────────────────────────────────
   ipcMain.handle('auth:check', async () => {
     try {
       const token = store.get('authToken') as string | undefined;
@@ -119,14 +373,10 @@ function setupIpcHandlers() {
         store.set('authToken', response.data.token);
         trayManager?.setAuthStatus(true);
 
-        // First-run: if admin hasn't completed setup, nudge them
         const firstRunDone = store.get('firstRunComplete') as boolean | undefined;
         if (!firstRunDone) {
-          setTimeout(() => {
-            mainWindow?.webContents.send('first-run-setup');
-          }, 800);
+          setTimeout(() => mainWindow?.webContents.send('first-run-setup'), 800);
         }
-
         return { success: true, token: response.data.token };
       }
       return { success: false, error: response.data.error || 'Invalid credentials' };
@@ -135,9 +385,7 @@ function setupIpcHandlers() {
     }
   });
 
-  ipcMain.handle('app:firstRunComplete', () => {
-    store.set('firstRunComplete', true);
-  });
+  ipcMain.handle('app:firstRunComplete', () => { store.set('firstRunComplete', true); });
 
   ipcMain.handle('auth:logout', async () => {
     store.delete('authToken');
@@ -151,7 +399,9 @@ function setupIpcHandlers() {
     try {
       const payloadB64 = token.split('.')[1];
       if (!payloadB64) return { remainingMs: 0 };
-      const { exp } = JSON.parse(Buffer.from(payloadB64, 'base64').toString('utf8')) as { exp?: number };
+      const { exp } = JSON.parse(
+        Buffer.from(payloadB64, 'base64').toString('utf-8'),
+      ) as { exp?: number };
       if (!exp) return { remainingMs: 0 };
       return { remainingMs: Math.max(0, exp * 1000 - Date.now()) };
     } catch {
@@ -159,10 +409,11 @@ function setupIpcHandlers() {
     }
   });
 
-  // Forgot password
   ipcMain.handle('auth:getSecurityQuestions', async (_event, username: string) => {
     try {
-      const response = await apiClient.get(`/api/auth/security-questions?username=${encodeURIComponent(username)}`);
+      const response = await apiClient.get(
+        `/api/auth/security-questions?username=${encodeURIComponent(username)}`,
+      );
       return response.data;
     } catch (error: any) {
       return { success: false, error: error.message };
@@ -198,7 +449,7 @@ function setupIpcHandlers() {
     }
   });
 
-  // ── Statistics & Timeline ────────────────────────────────────────────────────
+  // ── Statistics & Timeline ─────────────────────────────────────────────────
   ipcMain.handle('api:getStatistics', async (_event, params: { date?: string } = {}) => {
     try {
       const token = store.get('authToken') as string;
@@ -223,74 +474,94 @@ function setupIpcHandlers() {
     } catch (error: any) { throw new Error(error.message); }
   });
 
-  // ── Screenshots ──────────────────────────────────────────────────────────────
+  // ── Screenshots ───────────────────────────────────────────────────────────
   ipcMain.handle('api:getScreenshots', async (_event, params: { limit?: number; offset?: number } = {}) => {
     try {
       const token = store.get('authToken') as string;
-      const response = await apiClient.get('/api/screenshots', token, params);
+      const response = await apiClient.get('/api/data/screenshots', token, params);
       return response.data;
     } catch (error: any) { throw new Error(error.message); }
   });
 
-  // ── Monitoring controls ──────────────────────────────────────────────────────
-  ipcMain.handle('api:pauseMonitoring', async () => {
+  // ── App logs ──────────────────────────────────────────────────────────────
+  ipcMain.handle('api:getAppLogs', async (_event, params: { limit?: number; offset?: number } = {}) => {
     try {
       const token = store.get('authToken') as string;
-      const response = await apiClient.post('/api/monitoring/pause', {}, token);
+      const response = await apiClient.get('/api/data/apps', token, params);
       return response.data;
     } catch (error: any) { throw new Error(error.message); }
   });
 
-  ipcMain.handle('api:resumeMonitoring', async () => {
+  // ── Key logs ──────────────────────────────────────────────────────────────
+  ipcMain.handle('api:getKeyLogs', async (_event, params: { limit?: number; offset?: number } = {}) => {
     try {
       const token = store.get('authToken') as string;
-      const response = await apiClient.post('/api/monitoring/resume', {}, token);
+      const response = await apiClient.get('/api/data/keylogs', token, params);
       return response.data;
     } catch (error: any) { throw new Error(error.message); }
   });
 
+  // ── Browser logs ──────────────────────────────────────────────────────────
+  ipcMain.handle('api:getBrowserLogs', async (_event, params: { limit?: number; offset?: number } = {}) => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.get('/api/data/browser', token, params);
+      return response.data;
+    } catch (error: any) { throw new Error(error.message); }
+  });
+
+  // ── Clipboard logs ────────────────────────────────────────────────────────
+  ipcMain.handle('api:getClipboardLogs', async (_event, params: { limit?: number; offset?: number } = {}) => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.get('/api/data/clipboard', token, params);
+      return response.data;
+    } catch (error: any) { throw new Error(error.message); }
+  });
+
+  // ── Video recordings ──────────────────────────────────────────────────────
+  ipcMain.handle('api:getVideoRecordings', async (_event, params: { limit?: number } = {}) => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.get('/api/data/videos', token, params);
+      return response.data;
+    } catch (error: any) { throw new Error(error.message); }
+  });
+
+  // ── Monitoring controls ───────────────────────────────────────────────────
   ipcMain.handle('api:getMonitoringStatus', async () => {
     try {
       const token = store.get('authToken') as string;
       const response = await apiClient.get('/api/monitoring/status', token);
       return response.data;
-    } catch (error: any) { throw new Error(error.message); }
+    } catch (error: any) { return { error: error.message }; }
   });
 
-  // ── Data endpoints — EXACT URLs matching api_server.py ──────────────────────
-  ipcMain.handle('api:getAppLogs', async (_event, params: { limit?: number; offset?: number } = {}) => {
+  ipcMain.handle('api:setMonitoringStatus', async (_event, payload: Record<string, boolean>) => {
     try {
       const token = store.get('authToken') as string;
-      const response = await apiClient.get('/api/data/apps', token, params);       // ← CORRECT
+      const response = await apiClient.post('/api/monitoring/status', payload, token);
+      return response.data;
+    } catch (error: any) { return { success: false, error: error.message }; }
+  });
+
+  // ── Config ────────────────────────────────────────────────────────────────
+  ipcMain.handle('api:getConfig', async () => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.get('/api/config', token);
       return response.data;
     } catch (error: any) { throw new Error(error.message); }
   });
 
-  ipcMain.handle('api:getBrowserLogs', async (_event, params: { limit?: number; offset?: number } = {}) => {
+  ipcMain.handle('api:updateConfig', async (_event, payload: Record<string, unknown>) => {
     try {
       const token = store.get('authToken') as string;
-      const response = await apiClient.get('/api/data/browser', token, params);    // ← CORRECT
+      const response = await apiClient.post('/api/config', payload, token);
       return response.data;
     } catch (error: any) { throw new Error(error.message); }
   });
 
-  ipcMain.handle('api:getKeyLogs', async (_event, params: { limit?: number; offset?: number } = {}) => {
-    try {
-      const token = store.get('authToken') as string;
-      const response = await apiClient.get('/api/data/keylogs', token, params);    // ← CORRECT (was wrongly /keystrokes)
-      return response.data;
-    } catch (error: any) { throw new Error(error.message); }
-  });
-
-  ipcMain.handle('api:getClipboardLogs', async (_event, params: { limit?: number; offset?: number } = {}) => {
-    try {
-      const token = store.get('authToken') as string;
-      const response = await apiClient.get('/api/data/clipboard', token, params);  // ← CORRECT
-      return response.data;
-    } catch (error: any) { throw new Error(error.message); }
-  });
-
-  // ── Identity ─────────────────────────────────────────────────────────────────
   ipcMain.handle('api:getIdentity', async () => {
     try {
       const token = store.get('authToken') as string;
@@ -299,58 +570,10 @@ function setupIpcHandlers() {
     } catch (error: any) { throw new Error(error.message); }
   });
 
-  ipcMain.handle('api:updateIdentity', async (_event, payload: { device_alias?: string; user_alias?: string }) => {
+  ipcMain.handle('api:updateIdentity', async (_event, payload: Record<string, string>) => {
     try {
       const token = store.get('authToken') as string;
       const response = await apiClient.post('/api/config/identity', payload, token);
-      return response.data;
-    } catch (error: any) { throw new Error(error.message); }
-  });
-
-  // ── Video recording ──────────────────────────────────────────────────────────
-  ipcMain.handle('api:toggleVideoRecording', async () => {
-    try {
-      const token = store.get('authToken') as string;
-      const response = await apiClient.post('/api/monitoring/video/toggle', {}, token);
-      return response.data;
-    } catch (error: any) { return { success: false, error: error.message }; }
-  });
-
-  ipcMain.handle('api:getVideoStatus', async () => {
-    try {
-      const token = store.get('authToken') as string;
-      const response = await apiClient.get('/api/monitoring/video/status', token);
-      return response.data;
-    } catch { return { recording: false, is_active: false }; }
-  });
-
-  ipcMain.handle('api:getVideos', async (_event, params: { limit?: number } = {}) => {
-    try {
-      const token = store.get('authToken') as string;
-      const response = await apiClient.get('/api/data/videos', token, params);
-      return response.data;
-    } catch { return []; }
-  });
-
-  // ── Config ───────────────────────────────────────────────────────────────────
-  ipcMain.handle('api:getConfig', async () => {
-    try {
-      const token = store.get('authToken') as string;
-      const response = await apiClient.get('/api/config', token);
-      return response.data;
-    } catch (error: any) {
-      return { server_url: '', api_key: '', sync_interval_seconds: 300 };
-    }
-  });
-
-  ipcMain.handle('api:setConfig', async (_event, payload: {
-    server_url: string; api_key: string; sync_interval_seconds?: number;
-    url_app_activity?: string; url_browser?: string; url_clipboard?: string;
-    url_keystrokes?: string; url_screenshots?: string; url_videos?: string;
-  }) => {
-    try {
-      const token = store.get('authToken') as string;
-      const response = await apiClient.post('/api/config', payload, token);
       return response.data;
     } catch (error: any) { throw new Error(error.message); }
   });
@@ -371,7 +594,7 @@ function setupIpcHandlers() {
     } catch (error: any) { return { success: false, error: error.message }; }
   });
 
-  // ── Sync status (NEW) ────────────────────────────────────────────────────────
+  // ── Sync ──────────────────────────────────────────────────────────────────
   ipcMain.handle('api:getSyncStatus', async () => {
     try {
       const token = store.get('authToken') as string;
@@ -390,23 +613,20 @@ function setupIpcHandlers() {
     } catch (error: any) { return { success: false, error: error.message }; }
   });
 
-  // ── File / folder ────────────────────────────────────────────────────────────
+  // ── File / folder ─────────────────────────────────────────────────────────
   ipcMain.handle('app:openFolder', async (_event, filepath: string) => {
     try {
-      const normalizedPath = path.normalize(filepath);
-      if (fs.existsSync(normalizedPath)) {
-        shell.showItemInFolder(normalizedPath);
+      const normalised = path.normalize(filepath);
+      if (fs.existsSync(normalised)) {
+        shell.showItemInFolder(normalised);
       } else {
-        const parentDir = path.dirname(normalizedPath);
-        if (fs.existsSync(parentDir)) {
-          await shell.openPath(parentDir);
+        const parent = path.dirname(normalised);
+        if (fs.existsSync(parent)) {
+          await shell.openPath(parent);
         } else {
-          const recordingsRoot = path.join(
-            process.env.LOCALAPPDATA || path.join(require('os').homedir(), 'AppData', 'Local'),
-            'EnterpriseMonitor', 'Videos'
-          );
-          if (!fs.existsSync(recordingsRoot)) fs.mkdirSync(recordingsRoot, { recursive: true });
-          await shell.openPath(recordingsRoot);
+          const root = path.join(EM_DIR, 'Videos');
+          fs.mkdirSync(root, { recursive: true });
+          await shell.openPath(root);
         }
       }
     } catch (err: any) {
@@ -414,9 +634,64 @@ function setupIpcHandlers() {
     }
   });
 
-  // ── Quit (auth-gated — only called by renderer after credential verification) ─
+  // ── Pause / Resume monitoring ──────────────────────────────────────────────
+  ipcMain.handle('api:pauseMonitoring', async () => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.post('/api/monitoring/pause', {}, token);
+      return response.data;
+    } catch (error: any) { return { success: false, error: error.message }; }
+  });
+
+  ipcMain.handle('api:resumeMonitoring', async () => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.post('/api/monitoring/resume', {}, token);
+      return response.data;
+    } catch (error: any) { return { success: false, error: error.message }; }
+  });
+
+  // ── Video ─────────────────────────────────────────────────────────────────
+  ipcMain.handle('api:getVideoStatus', async () => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.get('/api/monitoring/video/status', token);
+      return response.data;
+    } catch (error: any) { return { recording: false, is_active: false }; }
+  });
+
+  ipcMain.handle('api:getVideos', async (_event, params: { limit?: number } = {}) => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.get('/api/data/videos', token, params);
+      return response.data;
+    } catch (error: any) { throw new Error(error.message); }
+  });
+
+  ipcMain.handle('api:toggleVideoRecording', async () => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.post('/api/monitoring/video/toggle', {}, token);
+      return response.data;
+    } catch (error: any) { return { success: false, error: error.message }; }
+  });
+
+  // ── Config (setConfig alias for updateConfig) ─────────────────────────────
+  ipcMain.handle('api:setConfig', async (_event, payload: Record<string, unknown>) => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.post('/api/config', payload, token);
+      return response.data;
+    } catch (error: any) { throw new Error(error.message); }
+  });
+
+  // ── QUIT — authenticated, Master/Child shutdown ───────────────────────────
+  // This is the ONLY valid exit path (called by renderer after credential check).
+  // It kills the backend child process before Electron exits to prevent zombies.
   ipcMain.handle('app:quit', async () => {
+    console.log('[main] Authenticated quit requested — killing backend child...');
     isQuitting = true;
+    killBackend();           // kill child synchronously before app.quit()
     app.quit();
   });
 }

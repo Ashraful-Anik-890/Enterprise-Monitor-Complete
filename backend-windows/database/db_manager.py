@@ -1,24 +1,38 @@
 """
 Database Manager
-Handles SQLite database operations for storing monitoring data
+Handles SQLite database operations for storing monitoring data.
 
-CHANGES:
-- FIX #2: get_statistics(date=None) — accepts an optional date string (YYYY-MM-DD).
-          Defaults to UTC today if None. This makes the stats cards respect the
-          date picker instead of always showing today's data.
-- NEW: browser_activity table + insert/query methods.
-- NEW: text_logs table + insert/query methods.
-- UPDATED: cleanup_old_data and migrations cover new tables.
-- IDENTITY: device_config table for device_alias / user_alias (KV store).
-- IDENTITY: username column added to all 5 tracking tables via migration.
-- IDENTITY: get_identity_config() / update_identity_config() methods.
-- All insert methods now accept optional username param (default '').
+THREAD-SAFETY REFACTOR (Master/Child Architecture):
+  Problem:  Multiple daemon threads (BrowserTracker, ScreenRecorder, AppTracker,
+            Keylogger, SyncService) all called _get_connection() simultaneously.
+            Each got a brand-new sqlite3.Connection. SQLite's default journal mode
+            (DELETE) only allows one writer at a time. Concurrent writers would hit
+            "database is locked" → OperationalError → silent data loss.
+
+  Solution: ONE persistent connection shared by the entire process lifetime.
+            - check_same_thread=False  → SQLite allows the connection to be used
+                                         from any thread (we take responsibility).
+            - threading.Lock()         → Our Lock serialises every cursor operation
+                                         so SQLite never sees concurrent writes.
+            - WAL mode                 → Allows readers to not block writers and
+                                         vice-versa (one extra layer of safety).
+            - _get_connection()        → Now returns self._conn (the shared handle).
+                                         All callers use "with self._lock:" before
+                                         touching the cursor.
+
+  NOTE ON conn.close():
+    All existing methods call conn.close() in their finally block.
+    That pattern no longer applies to a persistent connection. We therefore
+    remove the close() call — the connection stays open until process exit.
+    The _lock release (via the context manager) acts as the "done" signal.
 """
 
 import sqlite3
+import threading
 import logging
 import socket
 import getpass
+import os
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
@@ -28,755 +42,651 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseManager:
+
     def __init__(self):
-        self.db_dir = Path.home() / "AppData" / "Local" / "EnterpriseMonitor"
+        _local_appdata = os.environ.get("LOCALAPPDATA") or str(
+            Path.home() / "AppData" / "Local"
+        )
+        self.db_dir = Path(_local_appdata) / "EnterpriseMonitor"
         self.db_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = self.db_dir / "monitoring.db"
+
+        # ── Thread safety primitives ──────────────────────────────────────────
+        self._lock = threading.Lock()
+        self._conn: sqlite3.Connection = sqlite3.connect(
+            str(self.db_path),
+            check_same_thread=False,   # We own the synchronisation via _lock
+        )
+        self._conn.row_factory = sqlite3.Row
+
+        # WAL mode: readers never block writers; writers never block readers.
+        # Must be set before any other operations on the connection.
+        with self._lock:
+            self._conn.execute("PRAGMA journal_mode=WAL;")
+            self._conn.execute("PRAGMA synchronous=NORMAL;")  # safe with WAL
+            self._conn.commit()
+
         self._initialize_database()
 
+    # ─── Connection accessor (returns the shared persistent connection) ───────
+
     def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
-        return conn
+        """
+        Returns the single shared connection.
+        ALWAYS call this inside a `with self._lock:` block.
+        """
+        return self._conn
+
+    # ─── Schema setup ─────────────────────────────────────────────────────────
 
     def _initialize_database(self):
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        with self._lock:
+            conn   = self._conn
+            cursor = conn.cursor()
 
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS screenshots (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                file_path TEXT NOT NULL,
-                active_window TEXT,
-                active_app TEXT,
-                username TEXT DEFAULT '',
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                synced INTEGER DEFAULT 0
-            )
-        ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS screenshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    active_window TEXT,
+                    active_app TEXT,
+                    username TEXT DEFAULT '',
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    synced INTEGER DEFAULT 0
+                )
+            ''')
 
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS app_activity (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                app_name TEXT NOT NULL,
-                window_title TEXT,
-                duration_seconds INTEGER DEFAULT 0,
-                username TEXT DEFAULT '',
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                synced INTEGER DEFAULT 0
-            )
-        ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS app_activity (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    app_name TEXT NOT NULL,
+                    window_title TEXT,
+                    duration_seconds INTEGER DEFAULT 0,
+                    username TEXT DEFAULT '',
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    synced INTEGER DEFAULT 0
+                )
+            ''')
 
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS clipboard_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                content_type TEXT,
-                content_preview TEXT,
-                username TEXT DEFAULT '',
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                synced INTEGER DEFAULT 0
-            )
-        ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS clipboard_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    content_type TEXT,
+                    content_preview TEXT,
+                    username TEXT DEFAULT '',
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    synced INTEGER DEFAULT 0
+                )
+            ''')
 
-        # ── Browser URL tracking ──────────────────────────────────────────────
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS browser_activity (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                browser_name TEXT NOT NULL,
-                url TEXT NOT NULL,
-                page_title TEXT,
-                username TEXT DEFAULT '',
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS browser_activity (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    browser_name TEXT,
+                    url TEXT,
+                    page_title TEXT,
+                    username TEXT DEFAULT '',
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    synced INTEGER DEFAULT 0
+                )
+            ''')
 
-        # ── Text / Keystroke logging ──────────────────────────────────────────
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS text_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                application TEXT,
-                window_title TEXT,
-                content TEXT NOT NULL,
-                username TEXT DEFAULT '',
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS text_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    application TEXT,
+                    window_title TEXT,
+                    content TEXT,
+                    username TEXT DEFAULT '',
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    synced INTEGER DEFAULT 0
+                )
+            ''')
 
-        # ── Identity / Alias config (KV store) ────────────────────────────────
-        # Keys: "device_alias", "user_alias"
-        # Default fallback: hostname / os_user (resolved at query time, not stored here)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS device_config (
-                key   TEXT PRIMARY KEY NOT NULL,
-                value TEXT NOT NULL
-            )
-        ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS video_recordings (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp       TEXT NOT NULL,
+                    file_path       TEXT NOT NULL,
+                    duration_seconds INTEGER DEFAULT 0,
+                    is_synced       INTEGER DEFAULT 0,
+                    created_at      TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
 
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS video_recordings (
-                id               INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp        TEXT NOT NULL,
-                file_path        TEXT NOT NULL,
-                duration_seconds INTEGER DEFAULT 0,
-                is_synced        INTEGER DEFAULT 0,
-                created_at       TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS device_config (
+                    key   TEXT PRIMARY KEY,
+                    value TEXT
+                )
+            ''')
 
-        conn.commit()
-        conn.close()
+            conn.commit()
+
         self._run_migrations()
-        logger.info("Database initialized successfully")
+        logger.info("Database initialised (WAL mode, shared connection, thread-safe lock).")
 
     def _run_migrations(self):
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            # ── synced column (legacy migration) ─────────────────────────────
-            cursor.execute("PRAGMA table_info(screenshots)")
-            columns = [info[1] for info in cursor.fetchall()]
-            if "synced" not in columns:
-                cursor.execute("ALTER TABLE screenshots ADD COLUMN synced INTEGER DEFAULT 0")
-                cursor.execute("ALTER TABLE app_activity ADD COLUMN synced INTEGER DEFAULT 0")
+        with self._lock:
+            conn   = self._conn
+            cursor = conn.cursor()
+            try:
+                # ── synced column (legacy) ────────────────────────────────────
+                cursor.execute("PRAGMA table_info(screenshots)")
+                if "synced" not in [r[1] for r in cursor.fetchall()]:
+                    cursor.execute("ALTER TABLE screenshots ADD COLUMN synced INTEGER DEFAULT 0")
+                    cursor.execute("ALTER TABLE app_activity ADD COLUMN synced INTEGER DEFAULT 0")
+                    conn.commit()
+                    logger.info("Migration: added synced columns to screenshots/app_activity")
+
+                # ── username column on all tracking tables ────────────────────
+                for table in ("screenshots", "app_activity", "clipboard_events",
+                               "browser_activity", "text_logs"):
+                    cursor.execute(f"PRAGMA table_info({table})")
+                    if "username" not in [r[1] for r in cursor.fetchall()]:
+                        cursor.execute(
+                            f"ALTER TABLE {table} ADD COLUMN username TEXT DEFAULT ''"
+                        )
+                        logger.info("Migration: added username to %s", table)
+
+                # ── synced column on browser_activity + text_logs ─────────────
+                for tbl in ("browser_activity", "text_logs"):
+                    cursor.execute(f"PRAGMA table_info({tbl})")
+                    if "synced" not in [r[1] for r in cursor.fetchall()]:
+                        cursor.execute(
+                            f"ALTER TABLE {tbl} ADD COLUMN synced INTEGER DEFAULT 0"
+                        )
+                        logger.info("Migration: added synced to %s", tbl)
+
                 conn.commit()
-                logger.info("Migration: added synced columns")
+            except Exception as exc:
+                logger.error("Migration error: %s", exc)
 
-            # ── username column on all 5 tracking tables ──────────────────────
-            _tables_needing_username = [
-                "screenshots",
-                "app_activity",
-                "clipboard_events",
-                "browser_activity",
-                "text_logs",
-            ]
-            for table in _tables_needing_username:
-                cursor.execute(f"PRAGMA table_info({table})")
-                existing_cols = [info[1] for info in cursor.fetchall()]
-                if "username" not in existing_cols:
-                    cursor.execute(
-                        f"ALTER TABLE {table} ADD COLUMN username TEXT DEFAULT ''"
-                    )
-                    logger.info("Migration: added username column to %s", table)
-
-            # ── synced column: browser_activity + text_logs ──────────────────
-            # These two tables were created without a synced column.
-            # SyncService v2 needs it to track which rows have been sent to ERP.
-            for _tbl in ("browser_activity", "text_logs"):
-                cursor.execute(f"PRAGMA table_info({_tbl})")
-                _cols = [r[1] for r in cursor.fetchall()]
-                if "synced" not in _cols:
-                    cursor.execute(
-                        f"ALTER TABLE {_tbl} ADD COLUMN synced INTEGER DEFAULT 0"
-                    )
-                    logger.info("Migration: added synced column to %s", _tbl)
-
-            conn.commit()
-        except Exception as e:
-            logger.error(f"Migration failed: {e}")
-        finally:
-            conn.close()
-
-    # ─── IDENTITY CONFIG ─────────────────────────────────────────────────────
+    # ─── IDENTITY CONFIG ──────────────────────────────────────────────────────
 
     def get_identity_config(self) -> Dict[str, str]:
-        """
-        Returns resolved identity info.
-        Falls back to raw hostname / os_user when no alias is stored.
-        """
-        raw_machine_id = socket.gethostname()
-        raw_os_user    = getpass.getuser()
-
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute("SELECT key, value FROM device_config WHERE key IN ('device_alias', 'user_alias')")
-            rows = {row["key"]: row["value"] for row in cursor.fetchall()}
-        except Exception as e:
-            logger.error("Failed to read device_config: %s", e)
-            rows = {}
-        finally:
-            conn.close()
+        with self._lock:
+            cursor = self._conn.cursor()
+            cursor.execute("SELECT key, value FROM device_config")
+            rows = {r["key"]: r["value"] for r in cursor.fetchall()}
 
         return {
-            "machine_id":    raw_machine_id,
-            "os_user":       raw_os_user,
-            "device_alias":  rows.get("device_alias") or raw_machine_id,
-            "user_alias":    rows.get("user_alias")   or raw_os_user,
+            "machine_id":    socket.gethostname(),
+            "os_user":       getpass.getuser(),
+            "device_alias":  rows.get("device_alias", ""),
+            "user_alias":    rows.get("user_alias", ""),
         }
 
-    def update_identity_config(self, device_alias: str = None, user_alias: str = None) -> bool:
-        """
-        Upsert device_alias and/or user_alias into device_config.
-        Passing None for either field leaves it unchanged.
-        """
+    def update_identity_config(
+        self,
+        device_alias: Optional[str] = None,
+        user_alias:   Optional[str] = None,
+    ) -> bool:
         if not device_alias and not user_alias:
             return False
+        with self._lock:
+            cursor = self._conn.cursor()
+            try:
+                if device_alias is not None:
+                    cursor.execute(
+                        "INSERT INTO device_config (key, value) VALUES ('device_alias', ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        (device_alias,),
+                    )
+                if user_alias is not None:
+                    cursor.execute(
+                        "INSERT INTO device_config (key, value) VALUES ('user_alias', ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        (user_alias,),
+                    )
+                self._conn.commit()
+                return True
+            except Exception as exc:
+                logger.error("update_identity_config: %s", exc)
+                self._conn.rollback()
+                return False
 
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            if device_alias is not None:
-                cursor.execute(
-                    "INSERT INTO device_config (key, value) VALUES ('device_alias', ?) "
-                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                    (device_alias,)
-                )
-            if user_alias is not None:
-                cursor.execute(
-                    "INSERT INTO device_config (key, value) VALUES ('user_alias', ?) "
-                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                    (user_alias,)
-                )
-            conn.commit()
-            return True
-        except Exception as e:
-            logger.error("Failed to update identity config: %s", e)
-            conn.rollback()
-            return False
-        finally:
-            conn.close()
-
-    # ─── INSERTS ─────────────────────────────────────────────────────────────
+    # ─── INSERTS ──────────────────────────────────────────────────────────────
 
     def insert_screenshot(self, file_path: str, active_window: str, active_app: str,
-                          username: str = ''):
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute('''
-                INSERT INTO screenshots (timestamp, file_path, active_window, active_app, username, synced)
-                VALUES (?, ?, ?, ?, ?, 0)
-            ''', (datetime.utcnow().isoformat(), file_path, active_window, active_app, username))
-            conn.commit()
-        except Exception as e:
-            logger.error(f"Failed to insert screenshot: {e}")
-            conn.rollback()
-        finally:
-            conn.close()
+                          username: str = '') -> None:
+        with self._lock:
+            try:
+                self._conn.execute(
+                    "INSERT INTO screenshots "
+                    "(timestamp, file_path, active_window, active_app, username, synced) "
+                    "VALUES (?, ?, ?, ?, ?, 0)",
+                    (datetime.utcnow().isoformat(), file_path, active_window, active_app, username),
+                )
+                self._conn.commit()
+            except Exception as exc:
+                logger.error("insert_screenshot: %s", exc)
+                self._conn.rollback()
 
     def insert_app_activity(self, app_name: str, window_title: str, duration_seconds: int,
-                            username: str = ''):
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute('''
-                INSERT INTO app_activity (timestamp, app_name, window_title, duration_seconds, username, synced)
-                VALUES (?, ?, ?, ?, ?, 0)
-            ''', (datetime.utcnow().isoformat(), app_name, window_title, duration_seconds, username))
-            conn.commit()
-        except Exception as e:
-            logger.error(f"Failed to insert app activity: {e}")
-            conn.rollback()
-        finally:
-            conn.close()
+                            username: str = '') -> None:
+        with self._lock:
+            try:
+                self._conn.execute(
+                    "INSERT INTO app_activity "
+                    "(timestamp, app_name, window_title, duration_seconds, username, synced) "
+                    "VALUES (?, ?, ?, ?, ?, 0)",
+                    (datetime.utcnow().isoformat(), app_name, window_title, duration_seconds, username),
+                )
+                self._conn.commit()
+            except Exception as exc:
+                logger.error("insert_app_activity: %s", exc)
+                self._conn.rollback()
 
     def insert_clipboard_event(self, content_type: str, content_preview: str,
-                               username: str = ''):
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute('''
-                INSERT INTO clipboard_events (timestamp, content_type, content_preview, username, synced)
-                VALUES (?, ?, ?, ?, 0)
-            ''', (datetime.utcnow().isoformat(), content_type, content_preview, username))
-            conn.commit()
-        except Exception as e:
-            logger.error(f"Failed to insert clipboard event: {e}")
-            conn.rollback()
-        finally:
-            conn.close()
+                               username: str = '') -> None:
+        with self._lock:
+            try:
+                self._conn.execute(
+                    "INSERT INTO clipboard_events "
+                    "(timestamp, content_type, content_preview, username, synced) "
+                    "VALUES (?, ?, ?, ?, 0)",
+                    (datetime.utcnow().isoformat(), content_type, content_preview, username),
+                )
+                self._conn.commit()
+            except Exception as exc:
+                logger.error("insert_clipboard_event: %s", exc)
+                self._conn.rollback()
 
     def insert_browser_activity(self, browser_name: str, url: str, page_title: str,
-                                username: str = ''):
-        """Record a browser URL visit."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute('''
-                INSERT INTO browser_activity (timestamp, browser_name, url, page_title, username)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (datetime.utcnow().isoformat(), browser_name, url, page_title, username))
-            conn.commit()
-        except Exception as e:
-            logger.error(f"Failed to insert browser activity: {e}")
-            conn.rollback()
-        finally:
-            conn.close()
+                                username: str = '') -> None:
+        with self._lock:
+            try:
+                self._conn.execute(
+                    "INSERT INTO browser_activity "
+                    "(timestamp, browser_name, url, page_title, username, synced) "
+                    "VALUES (?, ?, ?, ?, ?, 0)",
+                    (datetime.utcnow().isoformat(), browser_name, url, page_title, username),
+                )
+                self._conn.commit()
+            except Exception as exc:
+                logger.error("insert_browser_activity: %s", exc)
+                self._conn.rollback()
 
     def insert_text_log(self, application: str, window_title: str, content: str,
-                        username: str = ''):
-        """Record a buffered keystroke/text entry."""
+                        username: str = '') -> None:
         if not content or not content.strip():
             return
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute('''
-                INSERT INTO text_logs (timestamp, application, window_title, content, username)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (datetime.utcnow().isoformat(), application, window_title, content, username))
-            conn.commit()
-        except Exception as e:
-            logger.error(f"Failed to insert text log: {e}")
-            conn.rollback()
-        finally:
-            conn.close()
+        with self._lock:
+            try:
+                self._conn.execute(
+                    "INSERT INTO text_logs "
+                    "(timestamp, application, window_title, content, username, synced) "
+                    "VALUES (?, ?, ?, ?, ?, 0)",
+                    (datetime.utcnow().isoformat(), application, window_title, content, username),
+                )
+                self._conn.commit()
+            except Exception as exc:
+                logger.error("insert_text_log: %s", exc)
+                self._conn.rollback()
 
-    # ─── QUERIES ─────────────────────────────────────────────────────────────
+    def insert_video_recording(self, timestamp: str, file_path: str,
+                                duration_seconds: int) -> None:
+        """Insert a completed recording chunk into video_recordings."""
+        with self._lock:
+            try:
+                self._conn.execute(
+                    "INSERT INTO video_recordings (timestamp, file_path, duration_seconds) "
+                    "VALUES (?, ?, ?)",
+                    (timestamp, file_path, duration_seconds),
+                )
+                self._conn.commit()
+            except Exception as exc:
+                logger.error("insert_video_recording: %s", exc)
+                self._conn.rollback()
+
+    # ─── QUERIES ──────────────────────────────────────────────────────────────
 
     def get_screenshots(self, limit: int = 20, offset: int = 0) -> List[Dict]:
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute('''
-                SELECT id, timestamp, file_path, active_window, active_app, username
-                FROM screenshots
-                ORDER BY timestamp DESC
-                LIMIT ? OFFSET ?
-            ''', (limit, offset))
-            rows = cursor.fetchall()
-            return [
-                {
-                    "id": row[0],
-                    "timestamp": row[1],
-                    "file_path": row[2],
-                    "active_window": row[3],
-                    "active_app": row[4],
-                    "username": row[5],
-                }
-                for row in rows
-            ]
-        except Exception as e:
-            logger.error(f"Failed to get screenshots: {e}")
-            return []
-        finally:
-            conn.close()
-    
-    def insert_video_recording(self, timestamp: str, file_path: str, duration_seconds: int):
-        """Insert a completed recording chunk into video_recordings."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                """INSERT INTO video_recordings (timestamp, file_path, duration_seconds)
-                   VALUES (?, ?, ?)""",
-                (timestamp, file_path, duration_seconds)
-            )
-            conn.commit()
-        except Exception as e:
-            logger.error("Failed to insert video recording: %s", e)
-            conn.rollback()
-        finally:
-            conn.close()
-
-    def get_video_recordings(self, limit: int = 50) -> list:
-        """Return the most recent recording chunks, newest first."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                """SELECT id, timestamp, file_path, duration_seconds, is_synced
-                   FROM video_recordings
-                   ORDER BY timestamp DESC
-                   LIMIT ?""",
-                (limit,)
-            )
-            rows = cursor.fetchall()
-            return [
-                {
-                    "id":               row[0],
-                    "timestamp":        row[1],
-                    "file_path":        row[2],
-                    "duration_seconds": row[3],
-                    "is_synced":        bool(row[4]),
-                }
-                for row in rows
-            ]
-        except Exception as e:
-            logger.error("Failed to get video recordings: %s", e)
-            return []
-        finally:
-            conn.close()
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT id, timestamp, file_path, active_window, active_app, username "
+                    "FROM screenshots ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+                    (limit, offset),
+                )
+                return [
+                    {
+                        "id": r[0], "timestamp": r[1], "file_path": r[2],
+                        "active_window": r[3], "active_app": r[4], "username": r[5],
+                    }
+                    for r in cursor.fetchall()
+                ]
+            except Exception as exc:
+                logger.error("get_screenshots: %s", exc)
+                return []
 
     def get_app_activity_logs(self, limit: int = 50, offset: int = 0) -> List[Dict]:
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute('''
-                SELECT id, timestamp, app_name, window_title, duration_seconds, username
-                FROM app_activity
-                ORDER BY timestamp DESC
-                LIMIT ? OFFSET ?
-            ''', (limit, offset))
-            rows = cursor.fetchall()
-            return [
-                {
-                    "id": row[0],
-                    "timestamp": row[1],
-                    "app_name": row[2],
-                    "window_title": row[3],
-                    "duration_seconds": row[4],
-                    "username": row[5],
-                }
-                for row in rows
-            ]
-        except Exception as e:
-            logger.error(f"Failed to get app activity logs: {e}")
-            return []
-        finally:
-            conn.close()
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT id, timestamp, app_name, window_title, duration_seconds, username "
+                    "FROM app_activity ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+                    (limit, offset),
+                )
+                return [
+                    {
+                        "id": r[0], "timestamp": r[1], "app_name": r[2],
+                        "window_title": r[3], "duration_seconds": r[4], "username": r[5],
+                    }
+                    for r in cursor.fetchall()
+                ]
+            except Exception as exc:
+                logger.error("get_app_activity_logs: %s", exc)
+                return []
 
     def get_clipboard_logs(self, limit: int = 50, offset: int = 0) -> List[Dict]:
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute('''
-                SELECT id, timestamp, content_type, content_preview, username
-                FROM clipboard_events
-                ORDER BY timestamp DESC
-                LIMIT ? OFFSET ?
-            ''', (limit, offset))
-            rows = cursor.fetchall()
-            return [
-                {
-                    "id": row[0],
-                    "timestamp": row[1],
-                    "content_type": row[2],
-                    "content_preview": row[3],
-                    "username": row[4],
-                }
-                for row in rows
-            ]
-        except Exception as e:
-            logger.error(f"Failed to get clipboard logs: {e}")
-            return []
-        finally:
-            conn.close()
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT id, timestamp, content_type, content_preview, username "
+                    "FROM clipboard_events ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+                    (limit, offset),
+                )
+                return [
+                    {
+                        "id": r[0], "timestamp": r[1], "content_type": r[2],
+                        "content_preview": r[3], "username": r[4],
+                    }
+                    for r in cursor.fetchall()
+                ]
+            except Exception as exc:
+                logger.error("get_clipboard_logs: %s", exc)
+                return []
 
-    def get_browser_activity_logs(self, limit: int = 100, offset: int = 0) -> List[Dict]:
-        """Return browser URL history, newest first."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute('''
-                SELECT id, timestamp, browser_name, url, page_title, username
-                FROM browser_activity
-                ORDER BY timestamp DESC
-                LIMIT ? OFFSET ?
-            ''', (limit, offset))
-            rows = cursor.fetchall()
-            return [
-                {
-                    "id": row[0],
-                    "timestamp": row[1],
-                    "browser_name": row[2],
-                    "url": row[3],
-                    "page_title": row[4],
-                    "username": row[5],
-                }
-                for row in rows
-            ]
-        except Exception as e:
-            logger.error(f"Failed to get browser activity logs: {e}")
-            return []
-        finally:
-            conn.close()
+    def get_browser_activity(self, limit: int = 50, offset: int = 0) -> List[Dict]:
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT id, timestamp, browser_name, url, page_title, username "
+                    "FROM browser_activity ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+                    (limit, offset),
+                )
+                return [
+                    {
+                        "id": r[0], "timestamp": r[1], "browser_name": r[2],
+                        "url": r[3], "page_title": r[4], "username": r[5],
+                    }
+                    for r in cursor.fetchall()
+                ]
+            except Exception as exc:
+                logger.error("get_browser_activity: %s", exc)
+                return []
 
-    def get_text_logs(self, limit: int = 100, offset: int = 0) -> List[Dict]:
-        """Return keystroke/text logs, newest first."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute('''
-                SELECT id, timestamp, application, window_title, content, username
-                FROM text_logs
-                ORDER BY timestamp DESC
-                LIMIT ? OFFSET ?
-            ''', (limit, offset))
-            rows = cursor.fetchall()
-            return [
-                {
-                    "id": row[0],
-                    "timestamp": row[1],
-                    "application": row[2],
-                    "window_title": row[3],
-                    "content": row[4],
-                    "username": row[5],
-                }
-                for row in rows
-            ]
-        except Exception as e:
-            logger.error(f"Failed to get text logs: {e}")
-            return []
-        finally:
-            conn.close()
+    def get_text_logs(self, limit: int = 50, offset: int = 0) -> List[Dict]:
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT id, timestamp, application, window_title, content, username "
+                    "FROM text_logs ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+                    (limit, offset),
+                )
+                return [
+                    {
+                        "id": r[0], "timestamp": r[1], "application": r[2],
+                        "window_title": r[3], "content": r[4], "username": r[5],
+                    }
+                    for r in cursor.fetchall()
+                ]
+            except Exception as exc:
+                logger.error("get_text_logs: %s", exc)
+                return []
 
-    # ─── STATISTICS ──────────────────────────────────────────────────────────
+    def get_video_recordings(self, limit: int = 50) -> List[Dict]:
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT id, timestamp, file_path, duration_seconds, is_synced "
+                    "FROM video_recordings ORDER BY timestamp DESC LIMIT ?",
+                    (limit,),
+                )
+                return [
+                    {
+                        "id": r[0], "timestamp": r[1], "file_path": r[2],
+                        "duration_seconds": r[3], "is_synced": bool(r[4]),
+                    }
+                    for r in cursor.fetchall()
+                ]
+            except Exception as exc:
+                logger.error("get_video_recordings: %s", exc)
+                return []
 
     def get_statistics(self, date: Optional[str] = None) -> Dict:
-        """
-        Return summary stats for a given date (YYYY-MM-DD).
-        Defaults to UTC today if date is None.
-        """
-        if date is None:
-            date = datetime.utcnow().strftime("%Y-%m-%d")
+        target_date = date or datetime.utcnow().strftime("%Y-%m-%d")
+        start_ts = f"{target_date}T00:00:00"
+        end_ts   = f"{target_date}T23:59:59"
 
-        start_ts = f"{date}T00:00:00"
-        end_ts   = f"{date}T23:59:59"
+        with self._lock:
+            try:
+                c = self._conn
+                screenshots = c.execute(
+                    "SELECT COUNT(*) FROM screenshots WHERE timestamp BETWEEN ? AND ?",
+                    (start_ts, end_ts),
+                ).fetchone()[0]
 
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                "SELECT COUNT(*) FROM screenshots WHERE timestamp BETWEEN ? AND ?",
-                (start_ts, end_ts)
-            )
-            screenshots_today = cursor.fetchone()[0]
+                app_sessions = c.execute(
+                    "SELECT COUNT(*) FROM app_activity WHERE timestamp BETWEEN ? AND ?",
+                    (start_ts, end_ts),
+                ).fetchone()[0]
 
-            cursor.execute(
-                "SELECT COALESCE(SUM(duration_seconds), 0) FROM app_activity WHERE timestamp BETWEEN ? AND ?",
-                (start_ts, end_ts)
-            )
-            total_seconds = cursor.fetchone()[0]
-            active_hours  = round(total_seconds / 3600, 2)
+                active_time = c.execute(
+                    "SELECT COALESCE(SUM(duration_seconds), 0) FROM app_activity "
+                    "WHERE timestamp BETWEEN ? AND ?",
+                    (start_ts, end_ts),
+                ).fetchone()[0]
 
-            cursor.execute(
-                "SELECT COUNT(DISTINCT app_name) FROM app_activity WHERE timestamp BETWEEN ? AND ?",
-                (start_ts, end_ts)
-            )
-            apps_tracked = cursor.fetchone()[0]
+                clipboard_events = c.execute(
+                    "SELECT COUNT(*) FROM clipboard_events WHERE timestamp BETWEEN ? AND ?",
+                    (start_ts, end_ts),
+                ).fetchone()[0]
 
-            cursor.execute(
-                "SELECT COUNT(*) FROM clipboard_events WHERE timestamp BETWEEN ? AND ?",
-                (start_ts, end_ts)
-            )
-            clipboard_events = cursor.fetchone()[0]
+                browser_visits = c.execute(
+                    "SELECT COUNT(*) FROM browser_activity WHERE timestamp BETWEEN ? AND ?",
+                    (start_ts, end_ts),
+                ).fetchone()[0]
 
-            return {
-                "screenshots_today":  screenshots_today,
-                "active_hours_today": active_hours,
-                "apps_tracked":       apps_tracked,
-                "clipboard_events":   clipboard_events,
-            }
-        except Exception as e:
-            logger.error(f"Failed to get statistics: {e}")
-            return {
-                "screenshots_today":  0,
-                "active_hours_today": 0.0,
-                "apps_tracked":       0,
-                "clipboard_events":   0,
-            }
-        finally:
-            conn.close()
+                keystrokes = c.execute(
+                    "SELECT COUNT(*) FROM text_logs WHERE timestamp BETWEEN ? AND ?",
+                    (start_ts, end_ts),
+                ).fetchone()[0]
+
+                return {
+                    "date":             target_date,
+                    "screenshots":      screenshots,
+                    "app_sessions":     app_sessions,
+                    "active_time":      active_time,
+                    "clipboard_events": clipboard_events,
+                    "browser_visits":   browser_visits,
+                    "keystrokes":       keystrokes,
+                }
+            except Exception as exc:
+                logger.error("get_statistics: %s", exc)
+                return {}
 
     def get_activity_stats(self, start: str, end: str) -> List[Dict]:
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            start_ts = f"{start}T00:00:00"
-            end_ts   = f"{end}T23:59:59"
-            cursor.execute('''
-                SELECT app_name, SUM(duration_seconds) as total_duration
-                FROM app_activity
-                WHERE timestamp BETWEEN ? AND ?
-                GROUP BY app_name
-                ORDER BY total_duration DESC
-            ''', (start_ts, end_ts))
-            rows = cursor.fetchall()
-            return [{"app_name": row[0], "total_seconds": row[1]} for row in rows]
-        except Exception as e:
-            logger.error(f"Failed to get activity stats: {e}")
-            return []
-        finally:
-            conn.close()
+        # Ensure start/end cover the full day range for ISO timestamps
+        start_ts = f"{start}T00:00:00" if "T" not in start else start
+        end_ts   = f"{end}T23:59:59"   if "T" not in end   else end
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT app_name, SUM(duration_seconds) as total_duration "
+                    "FROM app_activity WHERE timestamp BETWEEN ? AND ? "
+                    "GROUP BY app_name ORDER BY total_duration DESC",
+                    (start_ts, end_ts),
+                )
+                return [{"app_name": r[0], "total_seconds": r[1]} for r in cursor.fetchall()]
+            except Exception as exc:
+                logger.error("get_activity_stats: %s", exc)
+                return []
 
     def get_timeline_data(self, date: str) -> List[Dict]:
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            start_ts = f"{date}T00:00:00"
-            end_ts   = f"{date}T23:59:59"
-            cursor.execute('''
-                SELECT timestamp, app_name, window_title, duration_seconds
-                FROM app_activity
-                WHERE timestamp BETWEEN ? AND ?
-                ORDER BY timestamp ASC
-            ''', (start_ts, end_ts))
-            rows = cursor.fetchall()
-            return [
-                {
-                    "timestamp":        row[0],
-                    "app_name":         row[1],
-                    "window_title":     row[2],
-                    "duration_seconds": row[3],
-                }
-                for row in rows
-            ]
-        except Exception as e:
-            logger.error(f"Failed to get timeline data: {e}")
-            return []
-        finally:
-            conn.close()
+        start_ts = f"{date}T00:00:00"
+        end_ts   = f"{date}T23:59:59"
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT timestamp, app_name, window_title, duration_seconds "
+                    "FROM app_activity WHERE timestamp BETWEEN ? AND ? "
+                    "ORDER BY timestamp ASC",
+                    (start_ts, end_ts),
+                )
+                return [
+                    {
+                        "timestamp": r[0], "app_name": r[1],
+                        "window_title": r[2], "duration_seconds": r[3],
+                    }
+                    for r in cursor.fetchall()
+                ]
+            except Exception as exc:
+                logger.error("get_timeline_data: %s", exc)
+                return []
 
-    # ─── SYNC HELPERS ────────────────────────────────────────────────────────
+    # ─── SYNC HELPERS ─────────────────────────────────────────────────────────
+
+    def get_unsynced_screenshots(self, limit: int = 20) -> List[Dict]:
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT * FROM screenshots WHERE synced = 0 ORDER BY timestamp ASC LIMIT ?",
+                    (limit,),
+                )
+                return [dict(r) for r in cursor.fetchall()]
+            except Exception as exc:
+                logger.error("get_unsynced_screenshots: %s", exc)
+                return []
+
+    def get_unsynced_app_activity(self, limit: int = 50) -> List[Dict]:
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT * FROM app_activity WHERE synced = 0 ORDER BY timestamp ASC LIMIT ?",
+                    (limit,),
+                )
+                return [dict(r) for r in cursor.fetchall()]
+            except Exception as exc:
+                logger.error("get_unsynced_app_activity: %s", exc)
+                return []
+
+    def get_unsynced_browser(self, limit: int = 50) -> List[Dict]:
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT * FROM browser_activity WHERE synced = 0 ORDER BY timestamp ASC LIMIT ?",
+                    (limit,),
+                )
+                return [dict(r) for r in cursor.fetchall()]
+            except Exception as exc:
+                logger.error("get_unsynced_browser: %s", exc)
+                return []
+
+    def get_unsynced_clipboard(self, limit: int = 50) -> List[Dict]:
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT * FROM clipboard_events WHERE synced = 0 ORDER BY timestamp ASC LIMIT ?",
+                    (limit,),
+                )
+                return [dict(r) for r in cursor.fetchall()]
+            except Exception as exc:
+                logger.error("get_unsynced_clipboard: %s", exc)
+                return []
+
+    def get_unsynced_keystrokes(self, limit: int = 50) -> List[Dict]:
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT * FROM text_logs WHERE synced = 0 ORDER BY timestamp ASC LIMIT ?",
+                    (limit,),
+                )
+                return [dict(r) for r in cursor.fetchall()]
+            except Exception as exc:
+                logger.error("get_unsynced_keystrokes: %s", exc)
+                return []
+
+    def get_unsynced_videos(self, limit: int = 5) -> List[Dict]:
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT * FROM video_recordings WHERE is_synced = 0 "
+                    "ORDER BY timestamp ASC LIMIT ?",
+                    (limit,),
+                )
+                return [dict(r) for r in cursor.fetchall()]
+            except Exception as exc:
+                logger.error("get_unsynced_videos: %s", exc)
+                return []
 
     def get_unsynced_data(self, limit: int = 10) -> Dict:
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        data: Dict = {}
-        try:
-            cursor.execute('SELECT * FROM screenshots WHERE synced = 0 LIMIT ?', (limit,))
-            data["screenshots"] = [dict(row) for row in cursor.fetchall()]
+        """Legacy method — kept for backward compat with SyncService v1."""
+        return {
+            "screenshots":    self.get_unsynced_screenshots(limit),
+            "app_activity":   self.get_unsynced_app_activity(limit),
+            "clipboard_events": self.get_unsynced_clipboard(limit),
+        }
 
-            cursor.execute('SELECT * FROM app_activity WHERE synced = 0 LIMIT ?', (limit,))
-            data["app_activity"] = [dict(row) for row in cursor.fetchall()]
-
-            cursor.execute('SELECT * FROM clipboard_events WHERE synced = 0 LIMIT ?', (limit,))
-            data["clipboard_events"] = [dict(row) for row in cursor.fetchall()]
-
-            return data
-        except Exception as e:
-            logger.error(f"Failed to get unsynced data: {e}")
-            return data
-        finally:
-            conn.close()
-
-    def mark_as_synced(self, table: str, ids: List[int]):
+    def mark_as_synced(self, table: str, ids: List[int]) -> None:
         if not ids:
             return
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            placeholders = ','.join(['?'] * len(ids))
-            cursor.execute(
-                f"UPDATE {table} SET synced = 1 WHERE id IN ({placeholders})",
-                ids
-            )
-            conn.commit()
-        except Exception as e:
-            logger.error(f"Failed to mark data as synced: {e}")
-            conn.rollback()
-        finally:
-            conn.close()
+        with self._lock:
+            try:
+                placeholders = ",".join(["?"] * len(ids))
+                self._conn.execute(
+                    f"UPDATE {table} SET synced = 1 WHERE id IN ({placeholders})", ids
+                )
+                self._conn.commit()
+            except Exception as exc:
+                logger.error("mark_as_synced(%s): %s", table, exc)
+                self._conn.rollback()
 
-    def get_unsynced_browser(self, limit: int = 50) -> list:
-        """Return browser_activity rows pending ERP sync."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                "SELECT * FROM browser_activity WHERE synced = 0 ORDER BY timestamp ASC LIMIT ?",
-                (limit,)
-            )
-            return [dict(r) for r in cursor.fetchall()]
-        except Exception as e:
-            logger.error("get_unsynced_browser: %s", e)
-            return []
-        finally:
-            conn.close()
-
-    def get_unsynced_clipboard(self, limit: int = 50) -> list:
-        """Return clipboard_events rows pending ERP sync."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                "SELECT * FROM clipboard_events WHERE synced = 0 ORDER BY timestamp ASC LIMIT ?",
-                (limit,)
-            )
-            return [dict(r) for r in cursor.fetchall()]
-        except Exception as e:
-            logger.error("get_unsynced_clipboard: %s", e)
-            return []
-        finally:
-            conn.close()
-
-    def get_unsynced_keystrokes(self, limit: int = 50) -> list:
-        """Return text_logs rows pending ERP sync."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                "SELECT * FROM text_logs WHERE synced = 0 ORDER BY timestamp ASC LIMIT ?",
-                (limit,)
-            )
-            return [dict(r) for r in cursor.fetchall()]
-        except Exception as e:
-            logger.error("get_unsynced_keystrokes: %s", e)
-            return []
-        finally:
-            conn.close()
-
-    def get_unsynced_screenshots(self, limit: int = 20) -> list:
-        """Return screenshots rows pending ERP sync (smaller batch — these are files)."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                "SELECT * FROM screenshots WHERE synced = 0 ORDER BY timestamp ASC LIMIT ?",
-                (limit,)
-            )
-            return [dict(r) for r in cursor.fetchall()]
-        except Exception as e:
-            logger.error("get_unsynced_screenshots: %s", e)
-            return []
-        finally:
-            conn.close()
-
-    def get_unsynced_videos(self, limit: int = 5) -> list:
-        """Return video_recordings rows pending ERP sync (tiny batch — large files)."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(
-                "SELECT * FROM video_recordings WHERE is_synced = 0 ORDER BY timestamp ASC LIMIT ?",
-                (limit,)
-            )
-            return [dict(r) for r in cursor.fetchall()]
-        except Exception as e:
-            logger.error("get_unsynced_videos: %s", e)
-            return []
-        finally:
-            conn.close()
-
-    def mark_videos_synced(self, ids: list):
-        """video_recordings uses is_synced (not synced) — needs its own method."""
+    def mark_videos_synced(self, ids: List[int]) -> None:
         if not ids:
             return
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        try:
-            placeholders = ','.join(['?'] * len(ids))
-            cursor.execute(
-                f"UPDATE video_recordings SET is_synced = 1 WHERE id IN ({placeholders})",
-                ids
-            )
-            conn.commit()
-        except Exception as e:
-            logger.error("mark_videos_synced: %s", e)
-            conn.rollback()
-        finally:
-            conn.close()
+        with self._lock:
+            try:
+                placeholders = ",".join(["?"] * len(ids))
+                self._conn.execute(
+                    f"UPDATE video_recordings SET is_synced = 1 WHERE id IN ({placeholders})", ids
+                )
+                self._conn.commit()
+            except Exception as exc:
+                logger.error("mark_videos_synced: %s", exc)
+                self._conn.rollback()
 
-    def cleanup_old_data(self, days: int = 7):
-        conn = self._get_connection()
-        cursor = conn.cursor()
+    # ─── MAINTENANCE ──────────────────────────────────────────────────────────
+
+    def cleanup_old_data(self, days: int = 7) -> None:
         cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
-        try:
-            cursor.execute("DELETE FROM screenshots       WHERE timestamp < ?", (cutoff,))
-            cursor.execute("DELETE FROM app_activity      WHERE timestamp < ?", (cutoff,))
-            cursor.execute("DELETE FROM clipboard_events  WHERE timestamp < ?", (cutoff,))
-            cursor.execute("DELETE FROM browser_activity  WHERE timestamp < ?", (cutoff,))
-            cursor.execute("DELETE FROM text_logs         WHERE timestamp < ?", (cutoff,))
-            conn.commit()
-            logger.info(f"Cleanup: removed records older than {days} days")
-        except Exception as e:
-            logger.error(f"Cleanup failed: {e}")
-            conn.rollback()
-        finally:
-            conn.close()
+        with self._lock:
+            try:
+                for table in (
+                    "screenshots", "app_activity", "clipboard_events",
+                    "browser_activity", "text_logs",
+                ):
+                    self._conn.execute(
+                        f"DELETE FROM {table} WHERE timestamp < ?", (cutoff,)
+                    )
+                self._conn.commit()
+                logger.info("Cleanup: removed records older than %d days", days)
+            except Exception as exc:
+                logger.error("cleanup_old_data: %s", exc)
+                self._conn.rollback()
+
+    def close(self) -> None:
+        """Explicitly close the persistent connection (call on process shutdown)."""
+        with self._lock:
+            try:
+                self._conn.close()
+                logger.info("Database connection closed.")
+            except Exception:
+                pass

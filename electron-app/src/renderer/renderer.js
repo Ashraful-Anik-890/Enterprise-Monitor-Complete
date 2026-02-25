@@ -499,6 +499,11 @@ function updateTzBadge() {
 async function loadIdentity() {
   try {
     const identity = await window.electronAPI.getIdentity();
+    // Show alias (or raw name) as the prominent label
+    const deviceLabel = document.querySelector('#identity-section .identity-card:first-child .identity-label');
+    const userLabel = document.querySelector('#identity-section .identity-card:nth-child(2) .identity-label');
+    if (deviceLabel) deviceLabel.textContent = identity.device_alias || identity.machine_id;
+    if (userLabel) userLabel.textContent = identity.user_alias || identity.os_user;
     const mid = document.getElementById('identity-machine-id');
     const osu = document.getElementById('identity-os-user');
     if (mid) mid.textContent = `Raw: ${identity.machine_id}`;
@@ -507,6 +512,8 @@ async function loadIdentity() {
     const ui = document.getElementById('user-alias-input');
     if (di) di.value = identity.device_alias || '';
     if (ui) ui.value = identity.user_alias || '';
+    if (di) di.placeholder = identity.machine_id;
+    if (ui) ui.placeholder = identity.os_user;
   } catch (err) {
     console.error('Failed to load identity:', err);
   }

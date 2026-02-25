@@ -127,38 +127,53 @@ class BrowserTracker:
 
     def _run_loop(self):
         # Lazy import: uiautomation initialises COM on first use (~0.5s)
+        # FIX: CoInitialize is required in every thread that uses COM objects.
+        # Without it, uiautomation raises "CoInitialize has not been called".
         try:
-            # FIX: Redirect comtypes cache before importing uiautomation
-            import os
-            import comtypes.client
-            cache_dir = os.path.join(os.environ.get("LOCALAPPDATA", ""), "EnterpriseMonitor", "comtypes_cache")
-            os.makedirs(cache_dir, exist_ok=True)
-            comtypes.client.gen_dir = cache_dir
-            import uiautomation as uia
-            self._uia = uia
-        except ImportError:
-            logger.error(
-                "uiautomation not installed. Run: pip install uiautomation -- "
-                "BrowserTracker will not function."
-            )
-            self._is_running = False
-            return
+            import pythoncom
+            pythoncom.CoInitialize()
+        except Exception as e:
+            logger.warning("pythoncom.CoInitialize() failed: %s — continuing anyway", e)
 
-        logger.info("BrowserTracker loop running")
-        while self._is_running:
+        try:
             try:
-                if not self._is_paused:
-                    self._poll()
-            except Exception as e:
-                logger.error(f"BrowserTracker poll error: {e}")
+                # FIX: Redirect comtypes cache before importing uiautomation
+                import os
+                import comtypes.client
+                cache_dir = os.path.join(os.environ.get("LOCALAPPDATA", ""), "EnterpriseMonitor", "comtypes_cache")
+                os.makedirs(cache_dir, exist_ok=True)
+                comtypes.client.gen_dir = cache_dir
+                import uiautomation as uia
+                self._uia = uia
+            except ImportError:
+                logger.error(
+                    "uiautomation not installed. Run: pip install uiautomation -- "
+                    "BrowserTracker will not function."
+                )
+                self._is_running = False
+                return
 
-            # Interruptible sleep
-            for _ in range(self.POLL_INTERVAL):
-                if not self._is_running:
-                    return
-                time.sleep(1)
+            logger.info("BrowserTracker loop running")
+            while self._is_running:
+                try:
+                    if not self._is_paused:
+                        self._poll()
+                except Exception as e:
+                    logger.error(f"BrowserTracker poll error: {e}")
 
-        logger.info("BrowserTracker loop ended")
+                # Interruptible sleep
+                for _ in range(self.POLL_INTERVAL):
+                    if not self._is_running:
+                        return
+                    time.sleep(1)
+
+            logger.info("BrowserTracker loop ended")
+        finally:
+            try:
+                import pythoncom
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
 
     # ─── POLL ────────────────────────────────────────────────────────────────
 

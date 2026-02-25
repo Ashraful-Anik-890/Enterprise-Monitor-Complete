@@ -413,9 +413,9 @@ async def get_statistics(date: Optional[str] = None, user=Depends(verify_token))
     try:
         stats = db_manager.get_statistics(date=date)
         return StatisticsResponse(
-            total_screenshots=stats.get("screenshots_today", 0),
-            active_hours_today=stats.get("active_hours_today", 0.0),
-            apps_tracked=stats.get("apps_tracked", 0),
+            total_screenshots=stats.get("screenshots", 0),
+            active_hours_today=round(stats.get("active_time", 0) / 3600, 1),
+            apps_tracked=stats.get("app_sessions", 0),
             clipboard_events=stats.get("clipboard_events", 0),
         )
     except Exception as e:
@@ -440,7 +440,7 @@ async def get_timeline_data(date: str, user=Depends(verify_token)):
 
 
 # ─── SCREENSHOTS ─────────────────────────────────────────────────────────────
-@app.get("/api/screenshots", response_model=List[ScreenshotInfo])
+@app.get("/api/data/screenshots", response_model=List[ScreenshotInfo])
 async def get_screenshots(limit: int = 20, offset: int = 0, user=Depends(verify_token)):
     try:
         screenshots = db_manager.get_screenshots(limit=limit, offset=offset)
@@ -471,7 +471,7 @@ async def get_app_logs(limit: int = 50, offset: int = 0, user=Depends(verify_tok
 @app.get("/api/data/browser")
 async def get_browser_logs(limit: int = 50, offset: int = 0, user=Depends(verify_token)):
     try:
-        return db_manager.get_browser_activity_logs(limit, offset)
+        return db_manager.get_browser_activity(limit, offset)
     except Exception as e:
         logger.error(f"Error getting browser logs: {e}")
         raise HTTPException(status_code=500, detail="Failed to get browser logs")

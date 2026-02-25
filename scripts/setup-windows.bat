@@ -219,12 +219,21 @@ echo [5/5] Starting backend for this session...
 schtasks /run /tn "%TASK_NAME%"
 TIMEOUT /T 8 /NOBREAK >nul
 
-curl -s --max-time 5 http://127.0.0.1:51235/health >nul 2>&1
+:: Read dynamic port from port.info (backend writes it on startup)
+SET "PORT_FILE=%LOCALAPPDATA%\EnterpriseMonitor\port.info"
+SET "BACKEND_PORT="
+IF EXIST "%PORT_FILE%" (
+    FOR /F "usebackq delims=" %%P IN ("%PORT_FILE%") DO SET "BACKEND_PORT=%%P"
+)
+IF NOT DEFINED BACKEND_PORT SET "BACKEND_PORT=51235"
+
+curl -s --max-time 5 http://127.0.0.1:!BACKEND_PORT!/health >nul 2>&1
 IF %ERRORLEVEL% EQU 0 (
-    echo   [OK] API healthy: http://127.0.0.1:51235/health
+    echo   [OK] API healthy: http://127.0.0.1:!BACKEND_PORT!/health
 ) ELSE (
     echo   [WARN] API not yet responding. Wait 30s then check:
-    echo          curl http://127.0.0.1:51235/health
+    echo          Check port in: %PORT_FILE%
+    echo          curl http://127.0.0.1:^<port^>/health
 )
 
 echo.
@@ -233,7 +242,7 @@ echo   DONE
 echo ========================================================
 echo   Task  : %TASK_NAME%
 echo   EXE   : %EXE_DEST%
-echo   API   : http://127.0.0.1:51235
+echo   Port  : !BACKEND_PORT! (dynamic — see %PORT_FILE%)
 echo   Data  : %%LOCALAPPDATA%%\EnterpriseMonitor\
 echo.
 echo   Task Manager should now show ONE enterprise_monitor_backend.exe

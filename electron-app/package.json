@@ -58,6 +58,11 @@
         "from": "resources/",
         "to": "resources/",
         "filter": ["**/*", "!*.md"]
+      },
+      {
+        "from": "../backend-windows/dist/enterprise_monitor_backend/",
+        "to": "backend/",
+        "filter": ["**/*"]
       }
     ]
   }
