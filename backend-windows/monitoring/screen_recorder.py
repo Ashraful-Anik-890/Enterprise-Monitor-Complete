@@ -210,7 +210,7 @@ class ScreenRecorder:
                         self.db_manager.insert_video_recording(
                             timestamp,          # arg 1: timestamp (str)
                             str(chunk_path),    # arg 2: file_path (str)
-                            duration,           # arg 3: duration_seconds (int)
+                            duration_seconds,           # arg 3: duration_seconds (int)
                         )
                     except Exception as e:
                         logger.error("DB insert for video chunk failed: %s", e)

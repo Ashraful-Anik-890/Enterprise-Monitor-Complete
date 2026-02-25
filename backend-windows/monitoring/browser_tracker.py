@@ -128,6 +128,12 @@ class BrowserTracker:
     def _run_loop(self):
         # Lazy import: uiautomation initialises COM on first use (~0.5s)
         try:
+            # FIX: Redirect comtypes cache before importing uiautomation
+            import os
+            import comtypes.client
+            cache_dir = os.path.join(os.environ.get("LOCALAPPDATA", ""), "EnterpriseMonitor", "comtypes_cache")
+            os.makedirs(cache_dir, exist_ok=True)
+            comtypes.client.gen_dir = cache_dir
             import uiautomation as uia
             self._uia = uia
         except ImportError:
