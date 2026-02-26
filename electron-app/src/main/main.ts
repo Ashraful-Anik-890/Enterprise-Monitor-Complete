@@ -314,6 +314,21 @@ function showMainWindow(): void {
 app.whenReady().then(async () => {
   app.setLoginItemSettings({ openAtLogin: true, path: app.getPath('exe') });
 
+  // ── Self-heal: remove stale Task Scheduler entry from old installs ─────────
+  // Previous setup-windows.bat or Inno Setup may have created a scheduled task
+  // that starts the backend independently. That conflicts with Electron's
+  // Master/Child model — delete it silently (best-effort, needs admin).
+  try {
+    const { execSync } = require('child_process');
+    execSync('schtasks /delete /tn "EnterpriseMonitorBackend" /f', {
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    console.log('[main] Removed stale Task Scheduler entry "EnterpriseMonitorBackend"');
+  } catch {
+    // Not found or no admin rights — that's fine
+  }
+
   // ── Step 1: Delete stale port.info (race-condition hardening) ──────────────
   deleteStalePortInfo();
 
@@ -326,12 +341,50 @@ app.whenReady().then(async () => {
   }
 
   // ── Step 3: Wait for port.info (backend writes it on startup) ───────────────
-  let port = 51235; // fallback only if port handshake fails (development/debug)
+  let port = 51235; // fallback only if everything else fails
   try {
     port = await waitForPortInfo(30_000);
   } catch (err: any) {
     console.error('[main] Port handshake failed:', err.message);
-    console.warn('[main] Falling back to port 51235 (for development only)');
+
+    // ── Fallback: another backend is running (exit code 77) ──────────────────
+    // The other backend wrote port.info, but we deleted it in Step 1.
+    // Try to connect by re-reading whatever port.info the other backend has,
+    // or if it doesn't exist, kill the orphan and retry.
+    if (backendExitCode === 77) {
+      console.log('[main] Another backend instance detected. Attempting to adopt it...');
+
+      // Kill the orphan process so we can start fresh
+      try {
+        const { execSync } = require('child_process');
+        execSync('taskkill /F /IM "enterprise_monitor_backend.exe"', {
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+        console.log('[main] Killed orphan backend. Retrying spawn...');
+      } catch {
+        // May fail if already dead — that's OK
+      }
+
+      // Wait briefly for the orphan to release the mutex
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Reset state and retry
+      backendExited = false;
+      backendExitCode = null;
+      backendKilled = false;
+      backendProcess = null;
+
+      try {
+        backendProcess = spawnBackend();
+        port = await waitForPortInfo(30_000);
+      } catch (retryErr: any) {
+        console.error('[main] Retry also failed:', retryErr.message);
+        console.warn('[main] Falling back to port 51235 (for development only)');
+      }
+    } else {
+      console.warn('[main] Falling back to port 51235 (for development only)');
+    }
   }
 
   // ── Step 4: Construct ApiClient with the dynamic port ──────────────────────

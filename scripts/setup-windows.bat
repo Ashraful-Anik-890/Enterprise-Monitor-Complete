@@ -149,105 +149,42 @@ IF NOT EXIST "%EXE_SRC%" (
 echo   [OK] Built: %DIST_DIR%
 
 :: ─────────────────────────────────────────────────────────────────────────────
-:: STEP 3 — DEPLOY FOLDER TO PROGRAMDATA
+:: STEP 3 — CLEANUP STALE TASK SCHEDULER (from previous script versions)
 ::
-:: ONEDIR: copy the entire dist\enterprise_monitor_backend\ folder.
-:: We clean the destination first so stale DLLs from a previous build
-:: don't accumulate (important when upgrading OpenCV / uiautomation).
+:: Previous versions of this script registered a Task Scheduler job.
+:: That conflicts with electron-builder's model where Electron spawns the
+:: backend as a child process. Delete any stale task to prevent duplicates.
 :: ─────────────────────────────────────────────────────────────────────────────
 echo.
-echo [3/5] Deploying backend folder...
-
-IF NOT EXIST "%INSTALL_DIR%" MKDIR "%INSTALL_DIR%"
-
-:: Kill any running backend before we try to overwrite its DLLs/EXE.
-taskkill /F /IM enterprise_monitor_backend.exe >nul 2>&1
-TIMEOUT /T 2 /NOBREAK >nul
-
-:: Remove stale destination folder cleanly.
-IF EXIST "%BACKEND_DEST%" (
-    :: Reset ACLs first so our own icacls-locked folder is deletable.
-    icacls "%BACKEND_DEST%" /reset /T /C >nul 2>&1
-    rmdir /S /Q "%BACKEND_DEST%" >nul 2>&1
-)
-
-:: Lock only the backend folder (SYSTEM + Admins only — no /deny needed).
-MKDIR "%BACKEND_DEST%"
-icacls "%BACKEND_DEST%" /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" /grant:r "Administrators:(OI)(CI)F" >nul 2>&1
-
-:: Copy entire dist folder into destination.
-xcopy /E /I /Y /Q "%DIST_DIR%\*" "%BACKEND_DEST%\" >nul
-IF %ERRORLEVEL% NEQ 0 (
-    echo [ERROR] Failed to copy backend folder to %BACKEND_DEST%
-    pause
-    EXIT /B 1
-)
-
-IF NOT EXIST "%EXE_DEST%" (
-    echo [ERROR] Deploy succeeded but EXE missing at: %EXE_DEST%
-    pause
-    EXIT /B 1
-)
-echo   [OK] Deployed to %BACKEND_DEST%
-
-:: ─────────────────────────────────────────────────────────────────────────────
-:: STEP 4 — REGISTER TASK SCHEDULER
-:: ─────────────────────────────────────────────────────────────────────────────
-echo.
-echo [4/5] Registering Task Scheduler (ONLOGON, user session)...
+echo [3/3] Cleaning up stale Task Scheduler entry (if any)...
 
 schtasks /query /tn "%TASK_NAME%" >nul 2>&1
 IF %ERRORLEVEL% EQU 0 (
     schtasks /delete /tn "%TASK_NAME%" /f >nul 2>&1
-    echo   [OK] Removed old task.
-)
-
-schtasks /create /tn "%TASK_NAME%" /tr "\"%EXE_DEST%\"" /sc ONLOGON /rl HIGHEST /delay 0000:05 /f
-
-IF %ERRORLEVEL% NEQ 0 (
-    echo [ERROR] Task Scheduler registration failed.
-    pause
-    EXIT /B 1
-)
-echo   [OK] Task registered: %TASK_NAME%
-
-:: ─────────────────────────────────────────────────────────────────────────────
-:: STEP 5 — START NOW
-:: ─────────────────────────────────────────────────────────────────────────────
-echo.
-echo [5/5] Starting backend for this session...
-schtasks /run /tn "%TASK_NAME%"
-TIMEOUT /T 8 /NOBREAK >nul
-
-:: Read dynamic port from port.info (backend writes it on startup)
-SET "PORT_FILE=%LOCALAPPDATA%\EnterpriseMonitor\port.info"
-SET "BACKEND_PORT="
-IF EXIST "%PORT_FILE%" (
-    FOR /F "usebackq delims=" %%P IN ("%PORT_FILE%") DO SET "BACKEND_PORT=%%P"
-)
-IF NOT DEFINED BACKEND_PORT SET "BACKEND_PORT=51235"
-
-curl -s --max-time 5 http://127.0.0.1:!BACKEND_PORT!/health >nul 2>&1
-IF %ERRORLEVEL% EQU 0 (
-    echo   [OK] API healthy: http://127.0.0.1:!BACKEND_PORT!/health
+    echo   [OK] Removed stale scheduled task "%TASK_NAME%".
 ) ELSE (
-    echo   [WARN] API not yet responding. Wait 30s then check:
-    echo          Check port in: %PORT_FILE%
-    echo          curl http://127.0.0.1:^<port^>/health
+    echo   [OK] No stale task found — nothing to clean.
 )
+
+:: Also kill any orphan backend that may be running from the old task
+taskkill /F /IM enterprise_monitor_backend.exe >nul 2>&1
 
 echo.
 echo ========================================================
-echo   DONE
+echo   DONE — Backend built successfully!
 echo ========================================================
-echo   Task  : %TASK_NAME%
-echo   EXE   : %EXE_DEST%
-echo   Port  : !BACKEND_PORT! (dynamic — see %PORT_FILE%)
-echo   Data  : %%LOCALAPPDATA%%\EnterpriseMonitor\
+echo   Output : %DIST_DIR%
 echo.
-echo   Task Manager should now show ONE enterprise_monitor_backend.exe
-echo   running under YOUR username. If you still see two, check:
-echo     schtasks /query /tn "%TASK_NAME%" /fo LIST
+echo   Next step:
+echo     cd ..\electron-app
+echo     npm run dist
+echo.
+echo   electron-builder will bundle the backend from:
+echo     %DIST_DIR%
+echo   into the installer via extraResources.
+echo.
+echo   Electron manages the backend lifecycle (spawn/kill).
+echo   NO Task Scheduler or manual start needed.
 echo.
 pause
 ENDLOCAL
