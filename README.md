@@ -8,9 +8,56 @@
 
 # 🖥️ Enterprise Monitor
 
-**A production-grade, enterprise-level employee activity monitoring system for Windows** — built with a **Master/Child process architecture** that pairs an **Electron desktop UI** with a **Python FastAPI backend**, all packaged into a single-click installer.
+**A production-grade, enterprise-level employee activity monitoring system for Windows** — built with a **Master/Child process architecture** that pairs an **Electron desktop UI** with a **Python FastAPI backend**, all packaged into a single-click NSIS installer via `electron-builder`.
 
-This project demonstrates deep expertise in **systems programming**, **desktop application architecture**, **real-time monitoring**, **secure authentication**, **multi-threaded data pipelines**, and **enterprise deployment** (Task Scheduler, Inno Setup, ACL-locked directories).
+This project demonstrates deep expertise in **systems programming**, **desktop application architecture**, **real-time monitoring**, **secure authentication**, **multi-threaded data pipelines**, and **enterprise deployment** (Registry auto-start, graceful shutdown, NSIS cleanup hooks).
+
+---
+
+## 🖼️ Screenshots
+
+### Login Page
+> Gradient background with animated floating circles, credential-protected access, and a forgot password flow via security Q&A.
+
+<p align="center">
+  <img src="resources/Login_page.png" alt="Login Page" width="700" />
+</p>
+
+### Admin Dashboard
+> Real-time statistics with Chart.js visualizations — active hours, apps tracked, screenshots, clipboard events. Timezone-aware display with selector.
+
+<p align="center">
+  <img src="resources/Dashboard.png" alt="Dashboard Overview" width="700" />
+</p>
+
+<p align="center">
+  <img src="resources/Dashboard2.png" alt="Dashboard Charts" width="700" />
+</p>
+
+### Monitoring Data
+> Tabbed interface for App Activity, Browser logs, Clipboard events, Keystrokes, and Screen Recordings.
+
+<p align="center">
+  <img src="resources/Monitor data app.png" alt="Monitor Data - Apps" width="700" />
+</p>
+
+<p align="center">
+  <img src="resources/monitor data video4.png" alt="Monitor Data - Videos" width="700" />
+</p>
+
+### Server & API Configuration
+> 6 configurable ERP endpoint URLs with live payload preview and API key setup.
+
+<p align="center">
+  <img src="resources/apiconfig.png" alt="API Configuration" width="700" />
+</p>
+
+### Credential Management
+> Username/password change with mandatory security Q&A setup for password recovery.
+
+<p align="center">
+  <img src="resources/change credeintial.png" alt="Credential Management" width="700" />
+</p>
 
 ---
 
@@ -24,8 +71,7 @@ This project demonstrates deep expertise in **systems programming**, **desktop a
 - [Monitoring Capabilities](#-monitoring-capabilities)
 - [ERP Sync Engine](#-erp-sync-engine)
 - [Installation & Development](#-installation--development)
-- [Build Pipeline](#-build-pipeline)
-- [Screenshots](#-screenshots)
+- [Build & Distribution](#-build--distribution)
 
 ---
 
@@ -53,6 +99,7 @@ This project demonstrates deep expertise in **systems programming**, **desktop a
 │  ┌──────────────────────────────────────────────────────────────┐│
 │  │  FastAPI + Uvicorn (dynamic port, 127.0.0.1 only)           ││
 │  │  • JWT Auth  • REST API  • CORS  • Lifecycle Hooks          ││
+│  │  • Graceful Shutdown Endpoint (/api/shutdown)                ││
 │  └──────────────────────────────────────────────────────────────┘│
 │                                                                  │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────────────────┐  │
@@ -82,7 +129,8 @@ This project demonstrates deep expertise in **systems programming**, **desktop a
 | **Port** | Polls `port.info` | Writes atomically (tmp → rename) |
 | **Communication** | HTTP via `ApiClient` | FastAPI REST API |
 | **Startup Guard** | Deletes stale `port.info` | Named Windows Mutex (single-instance) |
-| **Shutdown** | SIGTERM → child cleanup | `port.info` cleanup on exit |
+| **Shutdown** | Graceful HTTP → force-kill fallback | `/api/shutdown` → stops all services |
+| **Auto-start** | Registry `Run` key (like Slack, Teams) | Spawned by Electron on startup |
 
 ---
 
@@ -98,10 +146,10 @@ This project demonstrates deep expertise in **systems programming**, **desktop a
 | 📋 **Clipboard Monitoring** | Copy event tracking | `pyperclip` — content type + preview |
 | 🔄 **ERP Sync** | 6-type data sync engine | JSON POST + multipart file upload to configurable endpoints |
 | 🔐 **Authentication** | JWT + bcrypt + security Q&A | Token expiry, credential update, password reset flow |
-| 🖥️ **System Tray** | Background operation | Minimize to tray, backend health indicator |
+| 🖥️ **System Tray** | Background operation | Minimize to tray, credential-protected quit |
 | 📊 **Dashboard** | Real-time analytics | Chart.js visualizations, timezone-aware display |
-| 🛡️ **Security** | ACL-locked directories | `icacls` — SYSTEM + Administrators only |
-| 📦 **Installer** | One-click deployment | Inno Setup — Task Scheduler registration, auto-start |
+| 🛡️ **Anti-Tamper** | Credential-gated exit | Users cannot quit without admin password |
+| 📦 **Installer** | One-click deployment | electron-builder NSIS with custom cleanup hooks |
 
 ---
 
@@ -128,14 +176,16 @@ This project demonstrates deep expertise in **systems programming**, **desktop a
 | IPC | **ipcMain** / **ipcRenderer** | Type-safe preload bridge |
 | State | **electron-store** | Persistent token/config storage |
 | Charting | **Chart.js** (CDN) | Dashboard visualizations |
-| Build | **electron-builder** | Windows executable packaging |
+| Build | **electron-builder** (NSIS) | Windows installer with custom uninstall hooks |
 
-### Deployment
+### Deployment & Process Lifecycle
 | Component | Technology | Purpose |
 |---|---|---|
-| Installer | **Inno Setup** | Professional Windows installer |
-| Auto-start | **Task Scheduler** (ONLOGON) | User-session execution |
-| Security | **icacls** | File-system ACL hardening |
+| Installer | **electron-builder** (NSIS) | Professional Windows installer/uninstaller |
+| Auto-start | **Windows Registry** (`Run` key) | Industry-standard auto-launch (like Slack, Teams) |
+| Graceful Shutdown | **HTTP endpoint** (`/api/shutdown`) | Clean service stop before process exit |
+| Zombie Prevention | **Custom NSIS hooks** (`installer.nsh`) | Kills backend + cleans data on uninstall |
+| Single Instance | **Named Windows Mutex** | Prevents duplicate backend processes |
 
 ---
 
@@ -150,13 +200,23 @@ Bearer token ──→ verify_token() ──→ Protected endpoints
                                               │
 Forgot Password ──→ Security Q&A verify ──→ Password reset
 
+Process Lifecycle
+─────────────────
+Login → Auto-start on login via Registry Run key
+      → Electron spawns backend (child_process.spawn)
+      → Backend writes port.info atomically
+      → Electron polls, connects via dynamic port
+
+Quit  → Credential-gated (anti-tamper)
+      → POST /api/shutdown (graceful stop)
+      → Force-kill fallback after 3s timeout
+
+Uninstall → NSIS hooks kill processes
+          → Registry auto-start entry removed
+          → %LOCALAPPDATA%\EnterpriseMonitor cleaned up
+
 File System Security
 ────────────────────
-C:\ProgramData\EnterpriseMonitor\
-  └── backend\           ← icacls: SYSTEM + Admins ONLY
-       ├── *.exe
-       └── *.dll
-
 %LOCALAPPDATA%\EnterpriseMonitor\
   ├── monitoring.db      ← SQLite (WAL mode)
   ├── config.json        ← Server endpoints + API keys
@@ -171,8 +231,9 @@ C:\ProgramData\EnterpriseMonitor\
 - **JWT** with short expiry (5 minutes) — stateless, no session DB needed
 - **Context Isolation** in Electron — no `nodeIntegration`, secure preload bridge
 - **Named Windows Mutex** — prevents duplicate backend processes
-- **ACL-locked directories** — monitored users cannot read/delete backend files
+- **Credential-protected quit** — prevents unauthorized app termination
 - **Atomic port handshake** — prevents race conditions on startup
+- **Graceful shutdown** — HTTP-first → force-kill fallback (no zombie processes)
 
 ---
 
@@ -213,14 +274,25 @@ enterprise-monitor-complete/
 │   │   └── renderer/
 │   │       ├── index.html              # Dashboard UI (2000+ lines)
 │   │       └── renderer.js             # Dashboard logic (1200+ lines)
+│   ├── build/
+│   │   └── installer.nsh               # Custom NSIS uninstall hooks
 │   ├── package.json
 │   └── tsconfig.json
+│
+├── resources/                          # App icons + screenshots
+│   ├── Login_page.png
+│   ├── Dashboard.png
+│   ├── Dashboard2.png
+│   ├── Monitor data app.png
+│   ├── monitor data video4.png
+│   ├── apiconfig.png
+│   ├── change credeintial.png
+│   ├── icon.ico / icon.icns
+│   └── icon-source.png
 │
 ├── scripts/
 │   └── setup-windows.bat               # Backend builder (PyInstaller + deploy)
 │
-├── installer.iss                       # Inno Setup script (full installer)
-├── BUILD_GUIDE.md                      # Step-by-step build instructions
 └── README.md                           # This file
 ```
 
@@ -306,26 +378,35 @@ npm start
 
 ---
 
-## 📦 Build Pipeline
+## 📦 Build & Distribution
 
-See **[BUILD_GUIDE.md](BUILD_GUIDE.md)** for detailed step-by-step instructions.
+### Step 1: Build the Python Backend
 
-**Quick summary:**
-1. `cd backend-windows && python -m PyInstaller enterprise_monitor_backend.spec` — builds backend EXE
-2. `cd electron-app && npm run dist:dir` — packages Electron app
-3. Compile `installer.iss` with Inno Setup — creates `Enterprise_Monitor_Setup.exe`
+```bash
+cd backend-windows
+python -m PyInstaller enterprise_monitor_backend.spec
+```
 
----
+This produces `dist/enterprise_monitor_backend/` — a folder containing the EXE and all dependencies.
 
-## 🖼️ Screenshots
+### Step 2: Build the Electron Installer
 
-> The application features a modern, professional dashboard with:
-> - **Login page** — gradient background with animated circles, forgot password flow
-> - **Admin dashboard** — real-time statistics, Chart.js visualizations, timezone selector
-> - **Monitor data tabs** — App Activity, Browser, Clipboard, Keystrokes, Screen Recording
-> - **Identity section** — Device name + user display with custom alias support
-> - **Server config modal** — 6 configurable ERP endpoint URLs with payload preview
-> - **Credential management** — Username/password change with security Q&A setup
+```bash
+cd electron-app
+npm run dist
+```
+
+This packages everything into a Windows NSIS installer at `electron-app/release/`. The backend is automatically bundled from `backend-windows/dist/` via the `extraResources` config in `package.json`.
+
+> ⚠️ **Important:** Always build the backend **first** — `npm run dist` copies from `backend-windows/dist/`, so that folder must exist and be up-to-date.
+
+### What the Installer Handles
+
+| Phase | Action |
+|---|---|
+| **Install** | Kills any old backend → deploys app + backend |
+| **Auto-start** | Electron registers in Windows Registry `Run` key |
+| **Uninstall** | Kills backend + Electron → removes registry entry → deletes `%LOCALAPPDATA%\EnterpriseMonitor` |
 
 ---
 

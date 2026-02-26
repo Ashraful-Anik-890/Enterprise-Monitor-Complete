@@ -15,6 +15,9 @@ FIX (v2): Restored @app.on_event("startup") and @app.on_event("shutdown") lifecy
 
 import socket
 import getpass
+import os
+import sys
+import asyncio
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -306,6 +309,42 @@ async def root():
         "status":   "running",
         "docs_url": "/docs"
     }
+
+
+# ─── GRACEFUL SHUTDOWN (called by Electron before force-kill) ────────────────
+@app.post("/api/shutdown")
+async def graceful_shutdown(user=Depends(verify_token)):
+    """
+    Electron calls this endpoint before falling back to TerminateProcess.
+    Stops all monitoring services cleanly, flushes data, then exits.
+    """
+    logger.info("Graceful shutdown requested via /api/shutdown")
+    try:
+        await shutdown_event()          # stop all monitoring threads
+    except Exception as exc:
+        logger.error("Error during shutdown_event: %s", exc)
+
+    # Clean up port.info so next launch starts fresh
+    _local_appdata = os.environ.get("LOCALAPPDATA") or os.path.join(
+        os.path.expanduser("~"), "AppData", "Local"
+    )
+    _port_file = os.path.join(_local_appdata, "EnterpriseMonitor", "port.info")
+    try:
+        if os.path.exists(_port_file):
+            os.unlink(_port_file)
+            logger.info("port.info cleaned up during graceful shutdown")
+    except OSError:
+        pass
+
+    # Schedule process exit after response is sent (give 0.5s for response flush)
+    async def _delayed_exit():
+        await asyncio.sleep(0.5)
+        logger.info("Exiting process after graceful shutdown")
+        os._exit(0)
+
+    asyncio.get_event_loop().create_task(_delayed_exit())
+
+    return {"success": True, "message": "Shutting down"}
 
 
 # ─── AUTH ENDPOINTS ──────────────────────────────────────────────────────────

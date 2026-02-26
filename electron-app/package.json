@@ -40,7 +40,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "resources/icon.ico",
@@ -51,18 +53,24 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Enterprise Monitor"
+      "shortcutName": "Enterprise Monitor",
+      "include": "build/installer.nsh"
     },
     "extraResources": [
       {
         "from": "resources/",
         "to": "resources/",
-        "filter": ["**/*", "!*.md"]
+        "filter": [
+          "**/*",
+          "!*.md"
+        ]
       },
       {
         "from": "../backend-windows/dist/enterprise_monitor_backend/",
         "to": "backend/",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ]
   }

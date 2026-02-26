@@ -220,20 +220,47 @@ function spawnBackend(): ChildProcess {
 
 /**
  * Gracefully terminate the backend child process.
- * Called from both the authenticated quit flow and the before-quit safety hook.
+ * Strategy:
+ *   1. Try POST /api/shutdown — backend stops services, flushes data, exits.
+ *   2. If that fails or times out (3 s), fall back to TerminateProcess.
+ *
+ * Returns a Promise so callers can await full shutdown before app.quit().
  */
-function killBackend(): void {
+async function killBackend(): Promise<void> {
   if (!backendProcess || backendKilled) return;
   backendKilled = true;
 
-  console.log('[main] Sending SIGTERM to backend...');
-  try {
-    // On Windows, SIGTERM is translated to TerminateProcess by Node.js
-    backendProcess.kill('SIGTERM');
-  } catch (err) {
-    console.warn('[main] kill(SIGTERM) failed:', err);
-    // Last resort
-    try { backendProcess.kill('SIGKILL'); } catch { /* already dead */ }
+  // ── Step 1: Graceful shutdown via HTTP ────────────────────────────────────
+  const token = store.get('authToken') as string | undefined;
+  if (token && apiClient) {
+    console.log('[main] Requesting graceful backend shutdown via /api/shutdown...');
+    try {
+      await Promise.race([
+        apiClient.post('/api/shutdown', {}, token),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+      ]);
+      console.log('[main] Backend acknowledged graceful shutdown');
+      // Give the backend 2 s to actually exit
+      await new Promise<void>((resolve) => {
+        const check = setInterval(() => {
+          if (backendExited) { clearInterval(check); resolve(); }
+        }, 200);
+        setTimeout(() => { clearInterval(check); resolve(); }, 2000);
+      });
+    } catch (err: any) {
+      console.warn('[main] Graceful shutdown failed or timed out:', err.message);
+    }
+  }
+
+  // ── Step 2: Force-kill if still alive ─────────────────────────────────────
+  if (backendProcess && !backendExited) {
+    console.log('[main] Force-killing backend process...');
+    try {
+      backendProcess.kill('SIGTERM');  // = TerminateProcess on Windows
+    } catch (err) {
+      console.warn('[main] kill(SIGTERM) failed:', err);
+      try { backendProcess.kill('SIGKILL'); } catch { /* already dead */ }
+    }
   }
 
   // Clean up port.info so the next launch starts fresh
@@ -325,9 +352,12 @@ app.whenReady().then(async () => {
 
 // Safety hook: kill backend if Electron quits for ANY reason (crash, force-close, etc.)
 // This prevents zombie backend.exe processes.
+// NOTE: before-quit is synchronous — we can't await the graceful shutdown here.
+// The graceful path is handled in the app:quit IPC handler; this is the fallback.
 app.on('before-quit', () => {
   isQuitting = true;
-  killBackend();
+  // Fire-and-forget: attempt graceful, then force-kill
+  killBackend().catch(() => { });
 });
 
 // Tray keeps the app alive — intentional no-op
@@ -689,9 +719,9 @@ function setupIpcHandlers(): void {
   // This is the ONLY valid exit path (called by renderer after credential check).
   // It kills the backend child process before Electron exits to prevent zombies.
   ipcMain.handle('app:quit', async () => {
-    console.log('[main] Authenticated quit requested — killing backend child...');
+    console.log('[main] Authenticated quit requested — graceful backend shutdown...');
     isQuitting = true;
-    killBackend();           // kill child synchronously before app.quit()
+    await killBackend();     // graceful shutdown, then force-kill fallback
     app.quit();
   });
 }

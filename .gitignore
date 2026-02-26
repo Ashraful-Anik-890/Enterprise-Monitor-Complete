@@ -4,6 +4,7 @@ dist/
 out/
 build/
 .env
+release/
 
 # Python
 __pycache__/
