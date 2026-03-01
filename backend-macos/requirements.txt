@@ -1,9 +1,8 @@
 # Enterprise Monitor Backend — macOS Dependencies
-#
 # Install: pip install -r requirements.txt
 #
-# NOTE: pyobjc packages are macOS-only. Do NOT install on Linux/Windows.
-# NOTE: Do NOT include pywin32, comtypes, or uiautomation — those are Windows-only.
+# Versions pinned where temp-src reference confirmed them stable on macOS.
+# DO NOT add: pywin32, uiautomation, comtypes, winreg — Windows-only.
 
 # ── Web framework ────────────────────────────────────────────────────────────
 fastapi
@@ -11,10 +10,6 @@ uvicorn[standard]
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
 python-jose[cryptography]
-passlib
-
-# ── Database ─────────────────────────────────────────────────────────────────
-# SQLite is built-in to Python. No extra package needed.
 
 # ── Screen capture ───────────────────────────────────────────────────────────
 mss
@@ -30,21 +25,21 @@ pynput
 # ── Clipboard ────────────────────────────────────────────────────────────────
 pyperclip
 
-# ── HTTP client (sync service) ───────────────────────────────────────────────
+# ── HTTP client ──────────────────────────────────────────────────────────────
 requests
 
 # ── System utilities ─────────────────────────────────────────────────────────
 psutil
 
-# ── Timezone data (needed on macOS for zoneinfo validation) ──────────────────
+# ── Timezone data ────────────────────────────────────────────────────────────
 tzdata
 
-# ── macOS-specific: TCC permission checks ────────────────────────────────────
+# ── macOS TCC permission checks ──────────────────────────────────────────────
 # CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
 pyobjc-framework-Quartz
 
 # AXIsProcessTrusted
 pyobjc-framework-ApplicationServices
 
-# ── Build tool (not a runtime dependency — install separately for building) ──
-PyInstaller
+# ── Build (not a runtime dep — used only when packaging) ─────────────────────
+pyinstaller

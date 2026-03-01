@@ -1,74 +1,64 @@
 """
 data_cleaner.py
-Background service to automatically clean up old data
+7-day data retention cleanup service.
+
+Pure Python — no platform-specific code. Identical to backend-windows version.
+Runs as a background daemon thread that fires once per hour.
 """
 
 import threading
 import time
 import logging
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
+RETENTION_DAYS = 7
+CLEANUP_INTERVAL_SECONDS = 3600  # run once per hour
+
+
 class CleanupService:
-    def __init__(self, db_manager, interval_hours: int = 24, retention_days: int = 7):
-        """
-        Initialize the cleanup service
-        :param db_manager: DatabaseManager instance
-        :param interval_hours: How often to run cleanup (default 24h)
-        :param retention_days: How many days of data to keep (default 7)
-        """
+    def __init__(self, db_manager):
         self.db_manager = db_manager
-        self.interval_seconds = interval_hours * 3600
-        self.retention_days = retention_days
         self.is_running = False
         self.thread: threading.Thread | None = None
-    
-    def start(self):
-        """Start the cleanup service"""
+
+    def start(self) -> None:
         if self.is_running:
-            logger.warning("Cleanup service already running")
             return
-        
         self.is_running = True
-        self.thread = threading.Thread(target=self._cleanup_loop, daemon=True)
+        self.thread = threading.Thread(target=self._cleanup_loop, daemon=True, name="CleanupService")
         self.thread.start()
-        logger.info(f"Cleanup service started (Retention: {self.retention_days} days)")
-    
-    def stop(self):
-        """Stop the cleanup service"""
+        logger.info("CleanupService started (retention: %d days)", RETENTION_DAYS)
+
+    def stop(self) -> None:
         self.is_running = False
-        if self.thread:
-            self.thread.join(timeout=1)
-        logger.info("Cleanup service stopped")
-    
-    def _cleanup_loop(self):
-        """Main cleanup loop"""
-        logger.info("Cleanup loop started")
-        
-        # Run cleanup immediately on startup
-        self._run_cleanup()
-        
+        logger.info("CleanupService stopped")
+
+    def _cleanup_loop(self) -> None:
         while self.is_running:
             try:
-                # Sleep for interval (checking is_running every second)
-                for _ in range(self.interval_seconds):
-                    if not self.is_running:
-                        break
-                    time.sleep(1)
-                
-                if self.is_running:
-                    self._run_cleanup()
-                    
+                self._run_cleanup()
             except Exception as e:
-                logger.error(f"Error in cleanup loop: {e}")
-                time.sleep(300) # Retry in 5 mins on error
-        
-        logger.info("Cleanup loop ended")
+                logger.error("Cleanup error: %s", e)
+            for _ in range(CLEANUP_INTERVAL_SECONDS):
+                if not self.is_running:
+                    return
+                time.sleep(1)
 
-    def _run_cleanup(self):
-        """Execute the cleanup logic"""
-        try:
-            logger.info("Running scheduled data cleanup...")
-            self.db_manager.cleanup_old_data(days=self.retention_days)
-        except Exception as e:
-            logger.error(f"Failed to run data cleanup: {e}")
+    def _run_cleanup(self) -> None:
+        cutoff = (datetime.utcnow() - timedelta(days=RETENTION_DAYS)).isoformat()
+        tables = [
+            "screenshots",
+            "app_activity",
+            "browser_activity",
+            "clipboard_events",
+            "text_logs",
+        ]
+        for table in tables:
+            try:
+                deleted = self.db_manager.delete_old_records(table, cutoff)
+                if deleted:
+                    logger.info("Cleaned %d records from %s (older than %s)", deleted, table, cutoff[:10])
+            except Exception as e:
+                logger.error("Failed to clean table %s: %s", table, e)

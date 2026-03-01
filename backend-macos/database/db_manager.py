@@ -49,6 +49,12 @@ class DatabaseManager:
 
         self._initialize_database()
 
+    # ─── Public initialization (called by api_server lifespan) ────────────────
+
+    def initialize(self) -> None:
+        """Public wrapper — safe to call multiple times (CREATE IF NOT EXISTS)."""
+        self._initialize_database()
+
     # ─── Connection accessor (returns the shared persistent connection) ───────
 
     def _get_connection(self) -> sqlite3.Connection:
@@ -640,6 +646,51 @@ class DatabaseManager:
                 self._conn.rollback()
 
     # ─── MAINTENANCE ──────────────────────────────────────────────────────────
+
+    def delete_screenshot(self, screenshot_id: int) -> bool:
+        """Delete a screenshot record by ID and remove the file from disk."""
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "SELECT file_path FROM screenshots WHERE id = ?", (screenshot_id,)
+                )
+                row = cursor.fetchone()
+                if not row:
+                    return False
+                file_path = row[0]
+                self._conn.execute("DELETE FROM screenshots WHERE id = ?", (screenshot_id,))
+                self._conn.commit()
+                # Remove the file from disk
+                if file_path:
+                    p = Path(file_path)
+                    if p.exists():
+                        p.unlink()
+                return True
+            except Exception as exc:
+                logger.error("delete_screenshot(%d): %s", screenshot_id, exc)
+                self._conn.rollback()
+                return False
+
+    def delete_old_records(self, table: str, cutoff: str) -> int:
+        """Delete records older than cutoff from the given table. Returns count deleted."""
+        allowed_tables = {
+            "screenshots", "app_activity", "clipboard_events",
+            "browser_activity", "text_logs",
+        }
+        if table not in allowed_tables:
+            logger.error("delete_old_records: unknown table %s", table)
+            return 0
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    f"DELETE FROM {table} WHERE timestamp < ?", (cutoff,)
+                )
+                self._conn.commit()
+                return cursor.rowcount
+            except Exception as exc:
+                logger.error("delete_old_records(%s): %s", table, exc)
+                self._conn.rollback()
+                return 0
 
     def cleanup_old_data(self, days: int = 7) -> None:
         cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()

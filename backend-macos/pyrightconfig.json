@@ -1,0 +1,10 @@
+{
+  "include": [
+    "."
+  ],
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic",
+  "stubPath": "typings",
+  "reportMissingImports": "warning",
+  "reportMissingModuleSource": "none"
+}

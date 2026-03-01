@@ -1,0 +1,3 @@
+"""Type stubs for pyobjc-framework-ApplicationServices (macOS-only)."""
+
+def AXIsProcessTrusted() -> bool: ...

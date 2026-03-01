@@ -1,16 +1,16 @@
 """
-autostart_manager.py
+autostart_manager.py — macOS version
 Manages auto-start on macOS using a LaunchAgent plist.
 
-LaunchAgent equivalent of Windows Registry Run key.
+LaunchAgent is the macOS equivalent of the Windows Registry Run key.
 Placed in ~/Library/LaunchAgents/ — loaded by launchd per-user at login.
 
-The primary auto-start mechanism is Electron's app.setLoginItemSettings().
-This LaunchAgent is a secondary fallback: it starts the backend if the user
-logs in and Electron is not running (e.g., headless monitoring scenario).
+The PRIMARY auto-start mechanism is Electron's app.setLoginItemSettings().
+This LaunchAgent is a SECONDARY fallback: it starts the backend if the user
+logs in and Electron is not running (e.g. headless monitoring scenario).
 
 Note: The plist ProgramArguments path must point to the installed binary,
-not a dev path. The install() method resolves sys.executable at call time.
+not a dev path. Resolved at install() call time via the binary_path argument.
 """
 
 import subprocess
@@ -19,12 +19,13 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-PLIST_LABEL = 'com.enterprisemonitor.backend'
-PLIST_PATH = Path.home() / 'Library' / 'LaunchAgents' / f'{PLIST_LABEL}.plist'
+PLIST_LABEL = "com.enterprisemonitor.backend"
+PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{PLIST_LABEL}.plist"
 
-PLIST_TEMPLATE = """\
+_PLIST_TEMPLATE = """\
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
@@ -38,9 +39,9 @@ PLIST_TEMPLATE = """\
     <key>KeepAlive</key>
     <false/>
     <key>StandardErrorPath</key>
-    <string>{log_dir}/backend.log</string>
+    <string>{log_path}</string>
     <key>StandardOutPath</key>
-    <string>{log_dir}/backend.log</string>
+    <string>{log_path}</string>
 </dict>
 </plist>
 """
@@ -48,78 +49,52 @@ PLIST_TEMPLATE = """\
 
 def install(binary_path: str, log_dir: str) -> bool:
     """
-    Install a LaunchAgent plist to auto-start the backend at login.
-
-    Args:
-        binary_path: Absolute path to the backend binary.
-        log_dir:     Absolute path to the log directory.
-
-    Returns:
-        True if the plist was written and loaded successfully.
+    Write the LaunchAgent plist and load it immediately via launchctl.
+    binary_path: absolute path to the enterprise_monitor_backend binary.
+    log_dir:     directory where backend.log is written.
+    Returns True on success.
     """
     try:
-        # Ensure the LaunchAgents directory exists
         PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-        # Ensure log directory exists
-        Path(log_dir).mkdir(parents=True, exist_ok=True)
-
-        plist_content = PLIST_TEMPLATE.format(
+        log_path = str(Path(log_dir) / "backend.log")
+        content = _PLIST_TEMPLATE.format(
             label=PLIST_LABEL,
             binary_path=binary_path,
-            log_dir=log_dir,
+            log_path=log_path,
         )
-
-        PLIST_PATH.write_text(plist_content, encoding='utf-8')
+        PLIST_PATH.write_text(content, encoding="utf-8")
         logger.info("LaunchAgent plist written: %s", PLIST_PATH)
 
-        # Register immediately with launchctl
         result = subprocess.run(
-            ['launchctl', 'load', str(PLIST_PATH)],
-            capture_output=True, text=True, timeout=10,
+            ["launchctl", "load", str(PLIST_PATH)],
+            capture_output=True, text=True,
         )
         if result.returncode != 0:
             logger.warning("launchctl load returned %d: %s", result.returncode, result.stderr.strip())
         else:
             logger.info("LaunchAgent loaded successfully")
-
         return True
-
     except Exception as e:
         logger.error("Failed to install LaunchAgent: %s", e)
         return False
 
 
 def uninstall() -> bool:
-    """
-    Unload and remove the LaunchAgent plist.
-
-    Returns:
-        True if the plist was unloaded and deleted (or did not exist).
-    """
+    """Unload and remove the LaunchAgent plist. Returns True on success."""
     try:
-        if not PLIST_PATH.exists():
-            logger.info("LaunchAgent plist not found — nothing to uninstall")
-            return True
-
-        # Unload from launchctl
-        result = subprocess.run(
-            ['launchctl', 'unload', str(PLIST_PATH)],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode != 0:
-            logger.warning("launchctl unload returned %d: %s", result.returncode, result.stderr.strip())
-
-        # Remove the plist file
-        PLIST_PATH.unlink(missing_ok=True)
-        logger.info("LaunchAgent uninstalled: %s", PLIST_PATH)
+        if PLIST_PATH.exists():
+            subprocess.run(
+                ["launchctl", "unload", str(PLIST_PATH)],
+                capture_output=True,
+            )
+            PLIST_PATH.unlink()
+            logger.info("LaunchAgent removed: %s", PLIST_PATH)
         return True
-
     except Exception as e:
         logger.error("Failed to uninstall LaunchAgent: %s", e)
         return False
 
 
 def is_installed() -> bool:
-    """Check if the LaunchAgent plist exists on disk."""
+    """Returns True if the LaunchAgent plist exists."""
     return PLIST_PATH.exists()

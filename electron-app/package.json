@@ -44,21 +44,28 @@
       "target": [
         {
           "target": "nsis",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
         }
       ],
       "icon": "resources/icon.ico",
-      "requestedExecutionLevel": "asInvoker"
+      "requestedExecutionLevel": "asInvoker",
+      "extraResources": [
+        {
+          "from": "../backend-windows/dist/enterprise_monitor_backend",
+          "to": "backend"
+        },
+        {
+          "from": "resources/",
+          "to": "resources/",
+          "filter": ["**/*", "!*.md"]
+        }
+      ]
     },
     "mac": {
       "target": [
         {
           "target": "dmg",
-          "arch": [
-            "arm64"
-          ]
+          "arch": ["arm64"]
         }
       ],
       "icon": "resources/icon.icns",
@@ -66,7 +73,18 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "category": "public.app-category.business"
+      "category": "public.app-category.business",
+      "extraResources": [
+        {
+          "from": "../backend-mac/dist/enterprise_monitor_backend",
+          "to": "backend"
+        },
+        {
+          "from": "resources/",
+          "to": "resources/",
+          "filter": ["**/*", "!*.md"]
+        }
+      ]
     },
     "dmg": {
       "contents": [
@@ -81,30 +99,6 @@
       "createStartMenuShortcut": true,
       "shortcutName": "Enterprise Monitor",
       "include": "build/installer.nsh"
-    },
-    "extraResources": [
-      {
-        "from": "resources/",
-        "to": "resources/",
-        "filter": [
-          "**/*",
-          "!*.md"
-        ]
-      },
-      {
-        "from": "../backend-windows/dist/enterprise_monitor_backend/",
-        "to": "backend/",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "../backend-macos/dist/enterprise_monitor_backend/",
-        "to": "backend/",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ]
+    }
   }
 }

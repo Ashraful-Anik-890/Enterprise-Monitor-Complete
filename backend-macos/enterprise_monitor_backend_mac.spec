@@ -1,102 +1,81 @@
-# -*- mode: python ; coding: utf-8 -*-
-"""
-PyInstaller spec file for Enterprise Monitor Backend — macOS
+# enterprise_monitor_backend_mac.spec
+# Build: python -m PyInstaller enterprise_monitor_backend_mac.spec
+# Target: Apple Silicon (arm64). Change target_arch for Intel (x86_64) or both (universal2).
+#
+# RULES:
+#   - onedir mode (NOT onefile — --onefile breaks macOS code signing)
+#   - UPX = False everywhere (UPX breaks Mach-O code signatures)
+#   - No com.apple.security.app-sandbox (blocks osascript and process monitoring)
 
-Build command:
-    pyinstaller enterprise_monitor_backend_mac.spec
-
-Output:
-    dist/enterprise_monitor_backend/enterprise_monitor_backend  (onedir bundle)
-
-Notes:
-  - UPX is disabled (breaks NumPy/OpenCV on macOS with Hardened Runtime)
-  - target_arch='arm64' for Apple Silicon. Change to 'x86_64' for Intel Macs.
-  - Entitlements plist is referenced for codesigning (see resources/)
-  - Hidden imports include pyobjc frameworks that are loaded dynamically
-"""
-import sys
-from pathlib import Path
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 block_cipher = None
 
-# ── Paths ────────────────────────────────────────────────────────────────────
-SPEC_DIR    = Path(SPECPATH)   # directory containing this .spec file
-RESOURCES   = SPEC_DIR / 'resources'
-ENTITLEMENTS = RESOURCES / 'entitlements.plist'
+datas = []
+binaries = []
+hiddenimports = [
+    # uvicorn internals (not auto-discovered by PyInstaller)
+    'uvicorn.logging',
+    'uvicorn.loops',
+    'uvicorn.loops.auto',
+    'uvicorn.protocols',
+    'uvicorn.protocols.http',
+    'uvicorn.protocols.http.auto',
+    'uvicorn.protocols.websockets',
+    'uvicorn.protocols.websockets.auto',
+    'uvicorn.lifespan',
+    'uvicorn.lifespan.on',
+    'anyio',
+    'anyio.backends.asyncio',
+    'anyio._backends._asyncio',
+    'multipart',
+
+    # pynput macOS backend
+    'pynput.keyboard._darwin',
+    'pynput.mouse._darwin',
+
+    # pyobjc frameworks
+    'Quartz',
+    'ApplicationServices',
+
+    # passlib / jose
+    'jose',
+    'jose.jwt',
+    'jose.backends',
+
+    # NumPy / OpenCV internals
+    'numpy.core._methods',
+    'numpy.lib.format',
+    'cv2',
+]
+
+# Collect full packages that PyInstaller misses
+for pkg in ('cv2', 'mss', 'pynput'):
+    tmp = collect_all(pkg)
+    datas    += tmp[0]
+    binaries += tmp[1]
+    hiddenimports += tmp[2]
 
 a = Analysis(
     ['main.py'],
-    pathex=[str(SPEC_DIR)],
-    binaries=[],
-    datas=[
-        # Include entitlements for downstream codesigning scripts
-        (str(ENTITLEMENTS), 'resources'),
+    pathex=['.'],
+    binaries=binaries,
+    datas=datas + [
+        ('resources/entitlements.plist', 'resources'),
     ],
-    hiddenimports=[
-        # ── FastAPI / Uvicorn ────────────────────────────────────────────────
-        'uvicorn.logging',
-        'uvicorn.loops',
-        'uvicorn.loops.auto',
-        'uvicorn.protocols',
-        'uvicorn.protocols.http',
-        'uvicorn.protocols.http.auto',
-        'uvicorn.protocols.websockets',
-        'uvicorn.protocols.websockets.auto',
-        'uvicorn.lifespan',
-        'uvicorn.lifespan.on',
-
-        # ── Auth ─────────────────────────────────────────────────────────────
-        'jose',
-        'jose.jwt',
-        'passlib',
-
-        # ── macOS pyobjc frameworks ──────────────────────────────────────────
-        'Quartz',
-        'Quartz.CoreGraphics',
-        'ApplicationServices',
-
-        # ── pynput backend ───────────────────────────────────────────────────
-        'pynput.keyboard._darwin',
-        'pynput.mouse._darwin',
-
-        # ── Misc ─────────────────────────────────────────────────────────────
-        'pyperclip',
-        'zoneinfo',
-        'tzdata',
-
-        # ── Our own packages ─────────────────────────────────────────────────
-        'auth',
-        'auth.auth_manager',
-        'database',
-        'database.db_manager',
-        'monitoring',
-        'monitoring.permissions',
-        'monitoring.app_tracker',
-        'monitoring.browser_tracker',
-        'monitoring.keylogger',
-        'monitoring.screenshot',
-        'monitoring.screen_recorder',
-        'monitoring.clipboard',
-        'monitoring.data_cleaner',
-        'services',
-        'services.sync_service',
-        'utils',
-        'utils.config_manager',
-        'utils.autostart_manager',
-    ],
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        # Windows-only — must NOT be collected
-        'win32api', 'win32gui', 'win32process', 'win32con',
-        'comtypes', 'uiautomation',
-        'pywin32',
+        # Windows-only — must never be imported on macOS
+        'pywin32', 'win32api', 'win32gui', 'win32process', 'win32con',
+        'uiautomation', 'comtypes', 'winreg',
+        # Unused UI toolkits
+        'tkinter', 'wx', 'PyQt5', 'PyQt6',
     ],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
     noarchive=False,
+    cipher=block_cipher,
 )
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
@@ -105,16 +84,17 @@ exe = EXE(
     pyz,
     a.scripts,
     [],
-    exclude_binaries=True,
+    exclude_binaries=True,          # onedir — required for macOS code signing
     name='enterprise_monitor_backend',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=False,                      # CRITICAL: UPX breaks NumPy/OpenCV on macOS
+    upx=False,                      # NEVER use UPX on macOS — breaks code signing
     console=True,
-    target_arch='arm64',            # Apple Silicon. Change to 'x86_64' for Intel.
-    codesign_identity='',           # Sign with ad-hoc identity (or specify your ID)
-    entitlements_file=str(ENTITLEMENTS),
+    argv_emulation=False,
+    target_arch='arm64',            # Apple Silicon. Change to 'x86_64' for Intel, 'universal2' for both
+    codesign_identity=None,         # Set to Apple Developer ID for notarized builds
+    entitlements_file='resources/entitlements.plist',
 )
 
 coll = COLLECT(
@@ -124,6 +104,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    upx_exclude=[],
     name='enterprise_monitor_backend',
 )
