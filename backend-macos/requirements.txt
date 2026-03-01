@@ -1,0 +1,50 @@
+# Enterprise Monitor Backend — macOS Dependencies
+#
+# Install: pip install -r requirements.txt
+#
+# NOTE: pyobjc packages are macOS-only. Do NOT install on Linux/Windows.
+# NOTE: Do NOT include pywin32, comtypes, or uiautomation — those are Windows-only.
+
+# ── Web framework ────────────────────────────────────────────────────────────
+fastapi
+uvicorn[standard]
+
+# ── Auth ─────────────────────────────────────────────────────────────────────
+python-jose[cryptography]
+passlib
+
+# ── Database ─────────────────────────────────────────────────────────────────
+# SQLite is built-in to Python. No extra package needed.
+
+# ── Screen capture ───────────────────────────────────────────────────────────
+mss
+Pillow
+
+# ── Video recording ──────────────────────────────────────────────────────────
+opencv-python
+numpy
+
+# ── Keyboard monitoring ─────────────────────────────────────────────────────
+pynput
+
+# ── Clipboard ────────────────────────────────────────────────────────────────
+pyperclip
+
+# ── HTTP client (sync service) ───────────────────────────────────────────────
+requests
+
+# ── System utilities ─────────────────────────────────────────────────────────
+psutil
+
+# ── Timezone data (needed on macOS for zoneinfo validation) ──────────────────
+tzdata
+
+# ── macOS-specific: TCC permission checks ────────────────────────────────────
+# CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
+pyobjc-framework-Quartz
+
+# AXIsProcessTrusted
+pyobjc-framework-ApplicationServices
+
+# ── Build tool (not a runtime dependency — install separately for building) ──
+PyInstaller

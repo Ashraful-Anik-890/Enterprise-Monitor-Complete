@@ -9,10 +9,14 @@
     "start": "npm run build && electron .",
     "build": "tsc && npm run copy-assets",
     "copy-assets": "xcopy /Y /I src\\renderer\\index.html dist\\renderer\\ && xcopy /Y src\\renderer\\renderer.js dist\\renderer\\",
+    "copy-assets:mac": "cp src/renderer/index.html dist/renderer/ && cp src/renderer/renderer.js dist/renderer/",
+    "build:mac": "tsc && npm run copy-assets:mac",
     "watch": "tsc --watch",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder --win --x64",
-    "dist:dir": "npm run build && electron-builder --win --x64 --dir"
+    "dist:dir": "npm run build && electron-builder --win --x64 --dir",
+    "dist:mac": "npm run build:mac && electron-builder --mac --arm64",
+    "dist:mac:dir": "npm run build:mac && electron-builder --mac --arm64 --dir"
   },
   "dependencies": {
     "axios": "^1.6.2",
@@ -48,6 +52,28 @@
       "icon": "resources/icon.ico",
       "requestedExecutionLevel": "asInvoker"
     },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "resources/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "category": "public.app-category.business"
+    },
+    "dmg": {
+      "contents": [
+        { "x": 130, "y": 220 },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ]
+    },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
@@ -67,6 +93,13 @@
       },
       {
         "from": "../backend-windows/dist/enterprise_monitor_backend/",
+        "to": "backend/",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../backend-macos/dist/enterprise_monitor_backend/",
         "to": "backend/",
         "filter": [
           "**/*"

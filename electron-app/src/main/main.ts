@@ -48,34 +48,58 @@ let backendExited = false;     // set when child exits before port handshake com
 let backendExitCode: number | null = null;
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
-const LOCAL_APPDATA = process.env.LOCALAPPDATA
-  ?? path.join(os.homedir(), 'AppData', 'Local');
+const IS_MAC = process.platform === 'darwin';
 
-const EM_DIR = path.join(LOCAL_APPDATA, 'EnterpriseMonitor');
+const EM_DIR = IS_MAC
+  ? path.join(os.homedir(), 'Library', 'Application Support', 'EnterpriseMonitor')
+  : path.join(
+      process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
+      'EnterpriseMonitor',
+    );
+
 const PORT_INFO = path.join(EM_DIR, 'port.info');
+
+/** Binary name differs per platform — no .exe on macOS. */
+const BACKEND_BIN = IS_MAC
+  ? 'enterprise_monitor_backend'
+  : 'enterprise_monitor_backend.exe';
 
 /** Returns [command, args, isDevMode] to launch the backend. */
 function getBackendLaunchCmd(): [string, string[], boolean] {
-  // 1. Packaged app: exe sits in resources/backend/
+  // 1. Packaged app: binary sits in resources/backend/
   const packaged = path.join(
     process.resourcesPath ?? '',
     'backend',
-    'enterprise_monitor_backend.exe',
+    BACKEND_BIN,
   );
-  if (fs.existsSync(packaged)) return [packaged, [], false];
+  if (fs.existsSync(packaged)) {
+    // macOS: ensure binary is executable after extraction
+    if (IS_MAC) {
+      try { fs.chmodSync(packaged, 0o755); } catch { /* best effort */ }
+    }
+    return [packaged, [], false];
+  }
 
-  // 2. Dev: compiled exe exists
+  // 2. Dev: compiled binary exists
+  const devBinDir = IS_MAC ? 'backend-macos' : 'backend-windows';
   const devExe = path.resolve(
     __dirname,
-    '../../../backend-windows/dist/enterprise_monitor_backend/enterprise_monitor_backend.exe',
+    `../../../${devBinDir}/dist/enterprise_monitor_backend/${BACKEND_BIN}`,
   );
-  if (fs.existsSync(devExe)) return [devExe, [], false];
+  if (fs.existsSync(devExe)) {
+    if (IS_MAC) {
+      try { fs.chmodSync(devExe, 0o755); } catch { /* best effort */ }
+    }
+    return [devExe, [], false];
+  }
 
   // 3. Dev fallback: run Python source directly (no PyInstaller build needed)
-  const devScript = path.resolve(__dirname, '../../../backend-windows/main.py');
+  const devScriptDir = IS_MAC ? 'backend-macos' : 'backend-windows';
+  const devScript = path.resolve(__dirname, `../../../${devScriptDir}/main.py`);
   if (fs.existsSync(devScript)) {
-    console.log('[main] No exe found — launching via python directly (dev mode)');
-    return ['python', [devScript], true];
+    console.log('[main] No binary found — launching via python directly (dev mode)');
+    const python = IS_MAC ? 'python3' : 'python';
+    return [python, [devScript], true];
   }
 
   throw new Error(
@@ -314,19 +338,18 @@ function showMainWindow(): void {
 app.whenReady().then(async () => {
   app.setLoginItemSettings({ openAtLogin: true, path: app.getPath('exe') });
 
-  // ── Self-heal: remove stale Task Scheduler entry from old installs ─────────
-  // Previous setup-windows.bat or Inno Setup may have created a scheduled task
-  // that starts the backend independently. That conflicts with Electron's
-  // Master/Child model — delete it silently (best-effort, needs admin).
-  try {
-    const { execSync } = require('child_process');
-    execSync('schtasks /delete /tn "EnterpriseMonitorBackend" /f', {
-      stdio: 'ignore',
-      windowsHide: true,
-    });
-    console.log('[main] Removed stale Task Scheduler entry "EnterpriseMonitorBackend"');
-  } catch {
-    // Not found or no admin rights — that's fine
+  // ── Self-heal: remove stale Task Scheduler entry from old installs (Windows only)
+  if (!IS_MAC) {
+    try {
+      const { execSync } = require('child_process');
+      execSync('schtasks /delete /tn "EnterpriseMonitorBackend" /f', {
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      console.log('[main] Removed stale Task Scheduler entry "EnterpriseMonitorBackend"');
+    } catch {
+      // Not found or no admin rights — that's fine
+    }
   }
 
   // ── Step 1: Delete stale port.info (race-condition hardening) ──────────────
@@ -357,10 +380,16 @@ app.whenReady().then(async () => {
       // Kill the orphan process so we can start fresh
       try {
         const { execSync } = require('child_process');
-        execSync('taskkill /F /IM "enterprise_monitor_backend.exe"', {
-          stdio: 'ignore',
-          windowsHide: true,
-        });
+        if (IS_MAC) {
+          execSync('pkill -f enterprise_monitor_backend || true', {
+            stdio: 'ignore',
+          });
+        } else {
+          execSync('taskkill /F /IM "enterprise_monitor_backend.exe"', {
+            stdio: 'ignore',
+            windowsHide: true,
+          });
+        }
         console.log('[main] Killed orphan backend. Retrying spawn...');
       } catch {
         // May fail if already dead — that's OK

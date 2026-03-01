@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+    MANDATORY for PyInstaller + NumPy/OpenCV.
+    Without this, the app crashes at NumPy/OpenCV import inside the PyInstaller
+    bootstrap with a MemoryError. Hardened Runtime blocks JIT/unsigned exec memory.
+    -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!--
+    Required to disable App Sandbox (enterprise apps must NOT be sandboxed —
+    sandboxing blocks osascript, process listing, and cross-app monitoring).
+    Only needed if you accidentally enable sandbox elsewhere.
+    -->
+    <!-- Do NOT add com.apple.security.app-sandbox — it breaks monitoring -->
+</dict>
+</plist>
