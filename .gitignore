@@ -5,6 +5,7 @@ out/
 build/
 .env
 release/
+resources/.py
 
 # Python
 __pycache__/

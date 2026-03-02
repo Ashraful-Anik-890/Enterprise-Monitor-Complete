@@ -7,6 +7,7 @@
   "license": "PROPRIETARY",
   "scripts": {
     "start": "npm run build && electron .",
+    "start:mac": "npm run build:mac && electron .",
     "build": "tsc && npm run copy-assets",
     "copy-assets": "xcopy /Y /I src\\renderer\\index.html dist\\renderer\\ && xcopy /Y src\\renderer\\renderer.js dist\\renderer\\",
     "copy-assets:mac": "cp src/renderer/index.html dist/renderer/ && cp src/renderer/renderer.js dist/renderer/",
@@ -44,7 +45,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "resources/icon.ico",
@@ -57,7 +60,10 @@
         {
           "from": "resources/",
           "to": "resources/",
-          "filter": ["**/*", "!*.md"]
+          "filter": [
+            "**/*",
+            "!*.md"
+          ]
         }
       ]
     },
@@ -65,7 +71,9 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["arm64"]
+          "arch": [
+            "arm64"
+          ]
         }
       ],
       "icon": "resources/icon.icns",
@@ -82,14 +90,25 @@
         {
           "from": "resources/",
           "to": "resources/",
-          "filter": ["**/*", "!*.md"]
+          "filter": [
+            "**/*",
+            "!*.md"
+          ]
         }
       ]
     },
     "dmg": {
       "contents": [
-        { "x": 130, "y": 220 },
-        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
       ]
     },
     "nsis": {
