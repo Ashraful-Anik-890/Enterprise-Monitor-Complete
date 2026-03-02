@@ -18,6 +18,7 @@ import logging
 import getpass
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 import mss
 from PIL import Image
 
@@ -30,8 +31,8 @@ class ScreenshotMonitor:
         self.interval_seconds = interval_seconds
         self.is_running = False
         self.is_paused = False
-        self.thread = None
-        self.start_time = None
+        self.thread: Optional[threading.Thread] = None
+        self.start_time: Optional[datetime] = None
 
         # Screenshot storage directory — macOS path
         self.screenshot_dir = Path.home() / 'Library' / 'Application Support' / 'EnterpriseMonitor' / 'screenshots'
@@ -64,7 +65,7 @@ class ScreenshotMonitor:
     def stop(self):
         """Stop screenshot monitoring"""
         self.is_running = False
-        if self.thread:
+        if self.thread is not None:
             self.thread.join(timeout=5)
         logger.info("Screenshot monitor stopped")
 
@@ -80,7 +81,7 @@ class ScreenshotMonitor:
 
     def get_uptime(self) -> int:
         """Get uptime in seconds"""
-        if self.start_time:
+        if self.start_time is not None:
             return int((datetime.utcnow() - self.start_time).total_seconds())
         return 0
 

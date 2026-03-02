@@ -449,8 +449,9 @@ async def resume_monitoring(user=Depends(verify_token)):
 
 
 # ── Screenshots ───────────────────────────────────────────────────────────────
-@app.get("/api/screenshots")
-async def get_screenshots(limit: int = 50, offset: int = 0, user=Depends(verify_token)):
+@app.get("/api/data/screenshots", response_model=List[ScreenshotInfo])
+async def get_screenshots_data(limit: int = 50, offset: int = 0, user=Depends(verify_token)):
+    """Electron calls /api/data/screenshots — was missing on macOS."""
     try:
         screenshots = db_manager.get_screenshots(limit, offset)
         return [
@@ -467,6 +468,11 @@ async def get_screenshots(limit: int = 50, offset: int = 0, user=Depends(verify_
         logger.error("Error getting screenshots: %s", e)
         raise HTTPException(status_code=500, detail="Failed to get screenshots")
 
+# Keep original /api/screenshots as alias so nothing else breaks
+@app.get("/api/screenshots", response_model=List[ScreenshotInfo])
+async def get_screenshots(limit: int = 50, offset: int = 0, user=Depends(verify_token)):
+    return await get_screenshots_data(limit, offset, user)
+
 @app.delete("/api/screenshots/{screenshot_id}")
 async def delete_screenshot(screenshot_id: int, user=Depends(verify_token)):
     try:
@@ -478,31 +484,51 @@ async def delete_screenshot(screenshot_id: int, user=Depends(verify_token)):
 
 
 # ── Videos ────────────────────────────────────────────────────────────────────
-@app.get("/api/videos")
-async def get_videos(limit: int = 50, user=Depends(verify_token)):
+@app.get("/api/data/videos")
+async def get_videos_data(limit: int = 50, user=Depends(verify_token)):
+    """Electron calls /api/data/videos — was missing on macOS."""
     try:
         return db_manager.get_video_recordings(limit)
     except Exception as e:
         logger.error("Error getting videos: %s", e)
         raise HTTPException(status_code=500, detail="Failed to get videos")
 
-@app.get("/api/video/status")
-async def get_video_status(user=Depends(verify_token)):
+# Keep /api/videos as alias
+@app.get("/api/videos")
+async def get_videos(limit: int = 50, user=Depends(verify_token)):
+    return await get_videos_data(limit, user)
+
+@app.get("/api/monitoring/video/status")
+async def get_video_monitoring_status(user=Depends(verify_token)):
+    """Electron calls /api/monitoring/video/status — was missing on macOS."""
     return {
-        "recording": screen_recorder.is_running,
-        "enabled": config_manager.get("recording_enabled", False),
+        "recording": config_manager.get("recording_enabled", False),
+        "is_active": screen_recorder.is_running,
     }
 
+# Keep /api/video/status as alias
+@app.get("/api/video/status")
+async def get_video_status(user=Depends(verify_token)):
+    return await get_video_monitoring_status(user)
+
+@app.post("/api/monitoring/video/toggle")
+async def toggle_video_monitoring(user=Depends(verify_token)):
+    """Electron calls /api/monitoring/video/toggle — was missing on macOS."""
+    currently_enabled = config_manager.get("recording_enabled", False)
+    new_state = not currently_enabled
+    config_manager.set("recording_enabled", new_state)
+    if new_state:
+        screen_recorder.start()
+        logger.info("Screen recording ENABLED by admin")
+    else:
+        screen_recorder.stop()
+        logger.info("Screen recording DISABLED by admin")
+    return {"success": True, "recording": new_state}
+
+# Keep /api/video/toggle as alias
 @app.post("/api/video/toggle")
 async def toggle_video(user=Depends(verify_token)):
-    if screen_recorder.is_running:
-        screen_recorder.stop()
-        config_manager.set("recording_enabled", False)
-        return {"recording": False, "message": "Screen recording stopped"}
-    else:
-        screen_recorder.start()
-        config_manager.set("recording_enabled", True)
-        return {"recording": True, "message": "Screen recording started"}
+    return await toggle_video_monitoring(user)
 
 
 # ── Data endpoints ────────────────────────────────────────────────────────────
@@ -541,9 +567,10 @@ async def get_clipboard_logs(limit: int = 50, offset: int = 0, user=Depends(veri
 
 # ── Statistics ────────────────────────────────────────────────────────────────
 @app.get("/api/statistics", response_model=StatisticsResponse)
-async def get_statistics(user=Depends(verify_token)):
+async def get_statistics(date: Optional[str] = None, user=Depends(verify_token)):
+    """Fixed: now accepts optional `date` param, matching Windows backend."""
     try:
-        stats = db_manager.get_statistics()
+        stats = db_manager.get_statistics(date=date)
         active_seconds = stats.get("active_time", 0)
         return StatisticsResponse(
             total_screenshots=stats.get("screenshots", 0),
@@ -554,6 +581,26 @@ async def get_statistics(user=Depends(verify_token)):
     except Exception as e:
         logger.error("Error getting statistics: %s", e)
         raise HTTPException(status_code=500, detail="Failed to get statistics")
+
+
+# ── Activity Stats & Timeline ─────────────────────────────────────────────────
+@app.get("/api/stats/activity")
+async def get_activity_stats(start: str, end: str, user=Depends(verify_token)):
+    """Was missing on macOS. db_manager.get_activity_stats() already exists."""
+    try:
+        return db_manager.get_activity_stats(start, end)
+    except Exception as e:
+        logger.error("Error getting activity stats: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to get activity stats")
+
+@app.get("/api/stats/timeline")
+async def get_timeline_data(date: str, user=Depends(verify_token)):
+    """Was missing on macOS. db_manager.get_timeline_data() already exists."""
+    try:
+        return db_manager.get_timeline_data(date)
+    except Exception as e:
+        logger.error("Error getting timeline data: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to get timeline data")
 
 
 # ── Permissions status (macOS-only endpoint) ──────────────────────────────────

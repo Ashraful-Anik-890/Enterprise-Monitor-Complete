@@ -40,7 +40,7 @@ class AuthManager:
                 json.dump({"admin": "Admin@123"}, f)
             logger.info("Initialized default admin user")
 
-    def _load_users(self) -> dict:
+    def _load_users(self) -> dict[str, str]:
         try:
             with open(self.users_file, "r") as f:
                 return json.load(f)
@@ -48,7 +48,7 @@ class AuthManager:
             logger.error("Failed to load users: %s", e)
             return {}
 
-    def _save_users(self, users: dict) -> None:
+    def _save_users(self, users: dict[str, str]) -> None:
         try:
             with open(self.users_file, "w") as f:
                 json.dump(users, f, indent=2)
