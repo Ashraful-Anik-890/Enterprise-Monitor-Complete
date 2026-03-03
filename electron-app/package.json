@@ -76,6 +76,7 @@
           ]
         }
       ],
+      "identity": null,
       "icon": "resources/icon.icns",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
@@ -84,7 +85,7 @@
       "category": "public.app-category.business",
       "extraResources": [
         {
-          "from": "../backend-mac/dist/enterprise_monitor_backend",
+          "from": "../backend-macos/dist/enterprise_monitor_backend",
           "to": "backend"
         },
         {

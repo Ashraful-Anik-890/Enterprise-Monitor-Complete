@@ -166,14 +166,14 @@ def main():
 
     # ── Step 6: Start uvicorn ────────────────────────────────────────────────
     try:
+        from api_server import app as fastapi_app   # direct import — works in PyInstaller
         import uvicorn
         logger.info("Starting uvicorn on 127.0.0.1:%d", port)
         uvicorn.run(
-            "api_server:app",
+            fastapi_app,
             host="127.0.0.1",
             port=port,
             log_level="info",
-            workers=1,          # single process — matches Windows behavior
         )
     except Exception as e:
         logger.critical("Uvicorn failed: %s", e, exc_info=True)

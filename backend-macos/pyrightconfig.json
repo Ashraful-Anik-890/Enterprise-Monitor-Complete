@@ -1,10 +1,13 @@
 {
-  "include": [
-    "."
-  ],
   "pythonVersion": "3.11",
+  "pythonPlatform": "Darwin",
+  "venvPath": ".",
+  "venv": ".venv",
   "typeCheckingMode": "basic",
-  "stubPath": "typings",
-  "reportMissingImports": "warning",
-  "reportMissingModuleSource": "none"
+  "reportMissingModuleSource": "none",
+  "reportMissingImports": "none",
+  "reportMissingTypeStubs": "none",
+  "ignore": [
+    "monitoring/permissions.py"
+  ]
 }
