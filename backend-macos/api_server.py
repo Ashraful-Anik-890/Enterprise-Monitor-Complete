@@ -608,13 +608,26 @@ async def get_timeline_data(date: str, user=Depends(verify_token)):
 async def get_permissions(user=Depends(verify_token)):
     """Returns current TCC permission state. macOS-only."""
     try:
-        from monitoring.permissions import get_permission_state
+        from monitoring.permissions import get_permission_state, check_automation_permission
         state = get_permission_state()
         return {
             "screen_recording": state.screen_recording,
             "accessibility": state.accessibility,
             "input_monitoring": state.input_monitoring,
+            "automation": check_automation_permission(),
         }
     except Exception as e:
         logger.error("Error getting permission state: %s", e)
-        return {"screen_recording": False, "accessibility": False, "input_monitoring": False}
+        return {"screen_recording": False, "accessibility": False, "input_monitoring": False, "automation": False}
+
+
+@app.post("/api/permissions/request")
+async def request_permissions(user=Depends(verify_token)):
+    """Trigger native macOS TCC permission dialogs for first-run onboarding."""
+    try:
+        from monitoring.permissions import request_all_permissions
+        results = request_all_permissions()
+        return {"success": True, **results}
+    except Exception as e:
+        logger.error("Error requesting permissions: %s", e)
+        return {"success": False, "error": str(e)}

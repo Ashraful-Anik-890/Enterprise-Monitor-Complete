@@ -23,8 +23,6 @@ let currentTimezone = 'UTC';
 
 // ─── INIT ────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-  window.electronAPI.onQuitRequested(() => showQuitAuthDialog());
-  window.electronAPI.onFirstRunSetup(() => showFirstRunModal());
   document.getElementById('date-picker').value = currentDate;
   setupEventListeners();
   await checkAuthentication();
@@ -1083,7 +1081,7 @@ async function confirmQuit() {
   btn.textContent = 'Verifying…';
 
   try {
-    const result = await window.electronAPI.login({ username, password });
+    const result = await window.electronAPI.verifyCredentials({ username, password });
     if (result.success) {
       await window.electronAPI.quitApp();
     } else {

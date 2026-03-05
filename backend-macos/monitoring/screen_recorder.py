@@ -70,15 +70,41 @@ class ScreenRecorder:
                 logger.warning("ScreenRecorder already running — ignoring start()")
                 return
 
-            # TCC permission guard
+            # TCC permission guard — PyInstaller child must explicitly request access
             try:
-                from Quartz import CGPreflightScreenCaptureAccess
+                from Quartz import CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
+
                 if not CGPreflightScreenCaptureAccess():
-                    logger.warning(
-                        "ScreenRecorder: Screen Recording permission denied — skipping start. "
-                        "Grant in System Settings → Privacy & Security → Screen Recording."
-                    )
-                    return
+                    # Attempt to request access — triggers system prompt on first call
+                    CGRequestScreenCaptureAccess()
+
+                    # Fallback: 1×1 pixel capture forces TCC to notice this specific
+                    # binary (critical on macOS 14+ for unsigned PyInstaller binaries)
+                    try:
+                        from Quartz import (
+                            CGWindowListCreateImage,
+                            CGRectMake,
+                            kCGWindowListOptionOnScreenOnly,
+                            kCGNullWindowID,
+                            kCGWindowImageDefault,
+                        )
+                        _img = CGWindowListCreateImage(
+                            CGRectMake(0, 0, 1, 1),
+                            kCGWindowListOptionOnScreenOnly,
+                            kCGNullWindowID,
+                            kCGWindowImageDefault,
+                        )
+                        logger.info("ScreenRecorder: 1×1 pixel capture fallback executed (TCC registration)")
+                    except Exception as fallback_err:
+                        logger.warning("ScreenRecorder: 1×1 pixel capture fallback failed: %s", fallback_err)
+
+                    # Re-check after request + fallback
+                    if not CGPreflightScreenCaptureAccess():
+                        logger.warning(
+                            "ScreenRecorder: Screen Recording permission denied — skipping start. "
+                            "Grant in System Settings → Privacy & Security → Screen Recording."
+                        )
+                        return
             except ImportError:
                 logger.error("pyobjc-framework-Quartz not installed — cannot check Screen Recording")
                 return

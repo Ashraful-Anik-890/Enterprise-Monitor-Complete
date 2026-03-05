@@ -43,6 +43,7 @@ let trayManager: TrayManager | null = null;
 let apiClient: ApiClient;                    // initialised after port handshake
 let backendProcess: ChildProcess | null = null;
 let isQuitting = false;
+let allowAuthenticatedQuit = false;   // only set true after authenticated app:quit IPC
 let backendKilled = false;
 let backendExited = false;     // set when child exits before port handshake completes
 let backendExitCode: number | null = null;
@@ -53,9 +54,9 @@ const IS_MAC = process.platform === 'darwin';
 const EM_DIR = IS_MAC
   ? path.join(os.homedir(), 'Library', 'Application Support', 'EnterpriseMonitor')
   : path.join(
-      process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
-      'EnterpriseMonitor',
-    );
+    process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
+    'EnterpriseMonitor',
+  );
 
 const PORT_INFO = path.join(EM_DIR, 'port.info');
 
@@ -432,14 +433,39 @@ app.whenReady().then(async () => {
   startBackendHealthCheck();
 });
 
-// Safety hook: kill backend if Electron quits for ANY reason (crash, force-close, etc.)
-// This prevents zombie backend.exe processes.
-// NOTE: before-quit is synchronous — we can't await the graceful shutdown here.
-// The graceful path is handled in the app:quit IPC handler; this is the fallback.
-app.on('before-quit', () => {
-  isQuitting = true;
-  // Fire-and-forget: attempt graceful, then force-kill
-  killBackend().catch(() => { });
+// ── macOS quit-bypass protection ──────────────────────────────────────────────
+// On macOS, Cmd+Q and Dock → Quit both fire 'before-quit'. We block quit
+// attempts unless:
+//   (a) allowAuthenticatedQuit has been set by the app:quit IPC handler, OR
+//   (b) the backend is dead/unreachable — blocking quit when the user CAN'T
+//       authenticate creates a deadlock (can't quit, can't uninstall).
+app.on('before-quit', (event) => {
+  if (allowAuthenticatedQuit) {
+    // Authenticated quit path — proceed with cleanup
+    isQuitting = true;
+    killBackend().catch(() => { });
+    return;
+  }
+
+  // If backend is dead, don't trap the user — let them quit
+  if (backendExited || !backendProcess) {
+    console.log('[main] Backend is not running — allowing quit without authentication.');
+    isQuitting = true;
+    return;
+  }
+
+  // Backend is alive — block quit and require authentication
+  event.preventDefault();
+  console.log('[main] Quit blocked — authentication required. Use the app UI to quit.');
+
+  // Show the window AND tell the renderer to display the quit-auth dialog.
+  // Without the IPC send, Cmd+Q / Dock→Quit would just show the current
+  // page (login or dashboard) instead of the quit auth overlay.
+  if (mainWindow) {
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.send('show-quit-dialog');
+  }
 });
 
 // Tray keeps the app alive — intentional no-op
@@ -797,11 +823,28 @@ function setupIpcHandlers(): void {
     } catch (error: any) { throw new Error(error.message); }
   });
 
+  // ── Verify credentials (quit dialog) — does NOT store token ────────────────
+  // Cross-platform: both Windows tray-quit and macOS Cmd+Q/Dock quit use this
+  // to verify the user's password before allowing app exit.
+  ipcMain.handle('auth:verifyOnly', async (_event, credentials: { username: string; password: string }) => {
+    try {
+      const response = await apiClient.post('/api/auth/login', credentials);
+      if (response.data.success) {
+        // Intentionally do NOT store response.data.token — verify only
+        return { success: true };
+      }
+      return { success: false, error: response.data.error || 'Invalid credentials' };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
   // ── QUIT — authenticated, Master/Child shutdown ───────────────────────────
   // This is the ONLY valid exit path (called by renderer after credential check).
   // It kills the backend child process before Electron exits to prevent zombies.
   ipcMain.handle('app:quit', async () => {
     console.log('[main] Authenticated quit requested — graceful backend shutdown...');
+    allowAuthenticatedQuit = true;   // unlock before-quit handler
     isQuitting = true;
     await killBackend();     // graceful shutdown, then force-kill fallback
     app.quit();

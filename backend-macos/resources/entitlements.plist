@@ -16,5 +16,13 @@
     Only needed if you accidentally enable sandbox elsewhere.
     -->
     <!-- Do NOT add com.apple.security.app-sandbox — it breaks monitoring -->
+
+    <!--
+    Required for PyInstaller: allows the hardened binary to load bundled
+    .dylib/.so files that have a different (or no) Team ID.
+    Disables strict Team ID matching for loaded libraries.
+    -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
 </dict>
 </plist>

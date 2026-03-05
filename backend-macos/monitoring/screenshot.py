@@ -46,11 +46,40 @@ class ScreenshotMonitor:
             return
 
         # ── TCC permission guard ─────────────────────────────────────────────
+        # For PyInstaller child processes inside an Electron bundle, the child
+        # binary must explicitly request Screen Recording access to register
+        # itself with macOS TCC — inheriting the parent's grant is not enough.
         try:
-            from Quartz import CGPreflightScreenCaptureAccess
+            from Quartz import CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
+
             if not CGPreflightScreenCaptureAccess():
-                logger.warning("Screenshot: Screen Recording permission denied — skipping start.")
-                return
+                # Attempt to request access — triggers system prompt on first call
+                CGRequestScreenCaptureAccess()
+
+                # Fallback: 1×1 pixel capture forces TCC to notice this specific
+                # binary (critical on macOS 14+ for unsigned PyInstaller binaries)
+                try:
+                    from Quartz import (
+                        CGWindowListCreateImage,
+                        CGRectMake,
+                        kCGWindowListOptionOnScreenOnly,
+                        kCGNullWindowID,
+                        kCGWindowImageDefault,
+                    )
+                    _img = CGWindowListCreateImage(
+                        CGRectMake(0, 0, 1, 1),
+                        kCGWindowListOptionOnScreenOnly,
+                        kCGNullWindowID,
+                        kCGWindowImageDefault,
+                    )
+                    logger.info("Screenshot: 1×1 pixel capture fallback executed (TCC registration)")
+                except Exception as fallback_err:
+                    logger.warning("Screenshot: 1×1 pixel capture fallback failed: %s", fallback_err)
+
+                # Re-check after request + fallback
+                if not CGPreflightScreenCaptureAccess():
+                    logger.warning("Screenshot: Screen Recording permission denied — skipping start.")
+                    return
         except ImportError:
             logger.error("pyobjc-framework-Quartz not installed — cannot check Screen Recording")
             return

@@ -76,7 +76,7 @@
           ]
         }
       ],
-      "identity": null,
+      "identity": "-",
       "icon": "resources/icon.icns",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,

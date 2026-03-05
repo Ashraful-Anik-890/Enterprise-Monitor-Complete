@@ -190,3 +190,163 @@ def probe_input_monitoring(timeout_seconds: float = 5.0) -> bool:
     except Exception as e:
         logger.warning("Input Monitoring probe failed: %s — keylogger may not receive events", e)
         return False
+
+
+# ── Proactive TCC Permission Prompting (First-Run Onboarding) ────────────────
+
+def _request_accessibility_prompt() -> bool:
+    """
+    Trigger the native Accessibility TCC prompt via
+    AXIsProcessTrustedWithOptions with kAXTrustedCheckOptionPrompt = True.
+    Returns current granted state.
+    """
+    try:
+        from ApplicationServices import AXIsProcessTrustedWithOptions
+        from CoreFoundation import kCFBooleanTrue
+
+        # The options dict with prompt=True triggers the system dialog
+        options = {"AXTrustedCheckOptionPrompt": kCFBooleanTrue}
+        trusted = bool(AXIsProcessTrustedWithOptions(options))
+        logger.info("Accessibility prompt triggered — currently %s",
+                     "GRANTED" if trusted else "DENIED (user must grant in System Settings)")
+        return trusted
+    except ImportError:
+        logger.error("pyobjc-framework-ApplicationServices not installed — cannot prompt Accessibility")
+        return False
+    except Exception as e:
+        logger.error("Accessibility prompt failed: %s", e)
+        return False
+
+
+def _request_screen_recording_prompt() -> bool:
+    """
+    Trigger the native Screen Recording TCC prompt.
+    Strategy:
+      1. Call CGRequestScreenCaptureAccess() — works on macOS 10.15+
+      2. Fallback: perform a 1×1 pixel CGWindowListCreateImage capture to
+         force TCC to notice this binary (critical for unsigned PyInstaller
+         child processes on macOS 14+ where CGRequestScreenCaptureAccess
+         may silently do nothing).
+    Returns current granted state.
+    """
+    try:
+        from Quartz import (
+            CGPreflightScreenCaptureAccess,
+            CGRequestScreenCaptureAccess,
+        )
+
+        if CGPreflightScreenCaptureAccess():
+            logger.info("Screen Recording already GRANTED")
+            return True
+
+        # Trigger the system dialog
+        CGRequestScreenCaptureAccess()
+        logger.info("CGRequestScreenCaptureAccess() called — system dialog should appear")
+
+        # Fallback: 1×1 pixel capture to force TCC registration for this binary
+        try:
+            from Quartz import (
+                CGWindowListCreateImage,
+                CGRectMake,
+                kCGWindowListOptionOnScreenOnly,
+                kCGNullWindowID,
+                kCGWindowImageDefault,
+            )
+            _img = CGWindowListCreateImage(
+                CGRectMake(0, 0, 1, 1),
+                kCGWindowListOptionOnScreenOnly,
+                kCGNullWindowID,
+                kCGWindowImageDefault,
+            )
+            logger.info("1×1 pixel capture fallback executed (forces TCC registration)")
+        except Exception as fallback_err:
+            logger.warning("1×1 pixel capture fallback failed: %s", fallback_err)
+
+        # Open System Settings to the Screen Recording pane for user convenience
+        subprocess.run(
+            ['open', 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'],
+            capture_output=True, timeout=5,
+        )
+
+        # Re-check — user may not have granted yet (dialog is async)
+        return bool(CGPreflightScreenCaptureAccess())
+
+    except ImportError:
+        logger.error("pyobjc-framework-Quartz not installed — cannot prompt Screen Recording")
+        return False
+    except Exception as e:
+        logger.error("Screen Recording prompt failed: %s", e)
+        return False
+
+
+def _request_automation_prompt() -> bool:
+    """
+    Trigger the Automation (Apple Events) TCC prompt by executing a harmless
+    osascript command targeting System Events. macOS will show the consent
+    dialog on first invocation.
+    Returns True if the command succeeded (permission granted), False otherwise.
+    """
+    try:
+        result = subprocess.run(
+            ['osascript', '-e', 'tell application "System Events" to get name of first process'],
+            capture_output=True, text=True, timeout=10,
+        )
+        granted = result.returncode == 0
+        if granted:
+            logger.info("Automation (Apple Events) permission GRANTED")
+        else:
+            logger.warning(
+                "Automation (Apple Events) permission DENIED or prompt shown. "
+                "stderr: %s", result.stderr.strip()
+            )
+        return granted
+    except subprocess.TimeoutExpired:
+        logger.warning("Automation prompt timed out — user may be interacting with the dialog")
+        return False
+    except Exception as e:
+        logger.error("Automation prompt failed: %s", e)
+        return False
+
+
+def check_automation_permission() -> bool:
+    """Check if Automation (Apple Events) permission is granted without prompting."""
+    try:
+        result = subprocess.run(
+            ['osascript', '-e', 'tell application "System Events" to get name of first process'],
+            capture_output=True, text=True, timeout=5,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def request_all_permissions() -> dict:
+    """
+    Proactively trigger all required macOS TCC permission prompts.
+    Intended for first-run onboarding — call via /api/permissions/request.
+
+    Returns a dict with the current state of each permission after prompting.
+    """
+    logger.info("=== Proactive TCC permission prompting (first-run onboarding) ===")
+
+    accessibility = _request_accessibility_prompt()
+    screen_recording = _request_screen_recording_prompt()
+    automation = _request_automation_prompt()
+    input_monitoring = probe_input_monitoring()
+
+    # Update the cached module-level state
+    global _state
+    _state = PermissionState(
+        screen_recording=screen_recording,
+        accessibility=accessibility,
+        input_monitoring=input_monitoring,
+    )
+
+    results = {
+        "accessibility": accessibility,
+        "screen_recording": screen_recording,
+        "automation": automation,
+        "input_monitoring": input_monitoring,
+    }
+    logger.info("TCC permission prompt results: %s", results)
+    return results

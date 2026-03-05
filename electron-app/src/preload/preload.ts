@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('auth:getSecurityQuestions', username),
   resetPassword: (payload: { username: string; answer1: string; answer2: string; new_password: string }) =>
     ipcRenderer.invoke('auth:resetPassword', payload),
+  verifyCredentials: (credentials: { username: string; password: string }) =>
+    ipcRenderer.invoke('auth:verifyOnly', credentials),
 
   // ── Data ──────────────────────────────────────────────────────────────────
   getStatistics: (params: { date?: string }) =>
