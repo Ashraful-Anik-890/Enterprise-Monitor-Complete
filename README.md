@@ -18,9 +18,6 @@ This project demonstrates deep expertise in **systems programming**, **cross-pla
 
 ### Windows
 
-<details>
-<summary>Click to expand Windows screenshots</summary>
-
 #### Login Page
 > Gradient background with animated floating circles, credential-protected access, and a forgot password flow via security Q&A.
 
@@ -63,8 +60,6 @@ This project demonstrates deep expertise in **systems programming**, **cross-pla
 <p align="center">
   <img src="resources/change credeintial.png" alt="Credential Management" width="700" />
 </p>
-
-</details>
 
 ### macOS
 
@@ -109,52 +104,52 @@ This project demonstrates deep expertise in **systems programming**, **cross-pla
 ## 🏗️ Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     ELECTRON (Master Process)                    │
-│                                                                  │
-│  ┌──────────┐   ┌──────────────┐   ┌──────────────────────────┐  │
+┌──────────────────────────────────────────────────────────────--───┐
+│                     ELECTRON (Master Process)                     │
+│                                                                   │
+│  ┌──────────┐   ┌──────────────-┐   ┌──────────────────────────┐  │
 │  │  Tray    │   │  BrowserWindow│   │  Preload (Context Bridge)│  │
 │  │  Manager │   │  (Renderer)   │   │  • Secure IPC Bridge     │  │
-│  └──────────┘   └──────┬───────┘   └──────────────────────────┘  │
-│                        │ IPC Handlers                            │
+│  └──────────┘   └──────┬──────-─┘   └──────────────────────────┘  │
+│                        │ IPC Handlers                             │
 │  ┌─────────────────────┴───────────────────────────────────────┐  │
-│  │ Main Process: spawn → port.info handshake → ApiClient       │ │
-│  └─────────────────────────────────────────────────────────────┘ │
+│  │ Main Process: spawn → port.info handshake → ApiClient       │  │
+│  └─────────────────────────────────────────────────────────────┘  │
 │          │ HTTP (dynamic port)                                    │
-└──────────┼──────────────────────────────────────────────────────┘
+└──────────┼───────────────────────────────────────────────────--───┘
            │
            ▼
-┌─────────────────────────────────────────────────────────────────┐
+┌────────────────────────────────────────────────────────────────--─┐
 │              PYTHON BACKEND (Child Process)                       │
-│          ┌─────────────┐  ┌─────────────────┐                    │
+│          ┌─────────────┐  ┌─────────────────┐                     │
 │          │   Windows   │  │     macOS        │                    │
 │          │  (pywin32,  │  │  (AppleScript,   │                    │
 │          │  UIAuto)    │  │  pyobjc, TCC)    │                    │
-│          └─────────────┘  └─────────────────┘                    │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────────┐│
-│  │  FastAPI + Uvicorn (dynamic port, 127.0.0.1 only)           ││
-│  │  • JWT Auth  • REST API  • CORS  • Lifecycle Hooks          ││
-│  │  • Graceful Shutdown Endpoint (/api/shutdown)                ││
-│  └──────────────────────────────────────────────────────────────┘│
-│                                                                  │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────────────────┐  │
-│  │Screenshot│ │App       │ │Browser   │ │Keylogger           │  │
-│  │Monitor   │ │Tracker   │ │Tracker   │ │(pynput)            │  │
-│  └──────────┘ └──────────┘ └──────────┘ └────────────────────┘  │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────────────────┐  │
-│  │Clipboard │ │Screen    │ │Sync      │ │Data Cleanup Service│  │
-│  │Monitor   │ │Recorder  │ │Service   │ │(7-day retention)   │  │
-│  │          │ │(OpenCV)  │ │(6-type)  │ └────────────────────┘  │
-│  └──────────┘ └──────────┘ └──────────┘                         │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────────┐│
-│  │  SQLite (WAL mode, shared connection, thread-safe Lock)     ││
-│  │  • screenshots • app_activity • browser_activity            ││
-│  │  • clipboard_events • text_logs • video_recordings          ││
-│  │  • device_config                                            ││
-│  └──────────────────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────────────┘
+│          └─────────────┘  └─────────────────┘                     │
+│                                                                   │
+│  ┌──────────────────────────────────────────────────────────────┐ │
+│  │  FastAPI + Uvicorn (dynamic port, 127.0.0.1 only)            │ │
+│  │  • JWT Auth  • REST API  • CORS  • Lifecycle Hooks           │ │ 
+│  │  • Graceful Shutdown Endpoint (/api/shutdown)                | │
+│  └──────────────────────────────────────────────────────────────┘ │
+│                                                                   │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────────────────┐    │
+│  │Screenshot│ │App       │ │Browser   │ │Keylogger           │    │
+│  │Monitor   │ │Tracker   │ │Tracker   │ │(pynput)            │    │
+│  └──────────┘ └──────────┘ └──────────┘ └────────────────────┘    │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────────────────┐    │
+│  │Clipboard │ │Screen    │ │Sync      │ │Data Cleanup Service│    │
+│  │Monitor   │ │Recorder  │ │Service   │ │(7-day retention)   │    │
+│  │          │ │(OpenCV)  │ │(6-type)  │ └────────────────────┘    │
+│  └──────────┘ └──────────┘ └──────────┘                           │
+│                                                                   │
+│  ┌──────────────────────────────────────────────────────────────┐ │
+│  │  SQLite (WAL mode, shared connection, thread-safe Lock)      │ │
+│  │  • screenshots • app_activity • browser_activity             │ │
+│  │  • clipboard_events • text_logs • video_recordings           │ │
+│  │  • device_config                                             │ │
+│  └──────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────--┘
 ```
 
 ### Master/Child Process Model
