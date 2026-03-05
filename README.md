@@ -18,9 +18,6 @@ This project demonstrates deep expertise in **systems programming**, **cross-pla
 
 ### Windows
 
-<details>
-<summary>Click to expand Windows screenshots</summary>
-
 #### Login Page
 > Gradient background with animated floating circles, credential-protected access, and a forgot password flow via security Q&A.
 
@@ -63,8 +60,6 @@ This project demonstrates deep expertise in **systems programming**, **cross-pla
 <p align="center">
   <img src="resources/change credeintial.png" alt="Credential Management" width="700" />
 </p>
-
-</details>
 
 ### macOS
 
