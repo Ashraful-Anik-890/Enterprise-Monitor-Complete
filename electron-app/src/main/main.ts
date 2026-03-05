@@ -26,7 +26,7 @@
  *   In development (npm run dev), the exe path falls back to the local dist/ folder.
  */
 
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, powerMonitor } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -44,6 +44,7 @@ let apiClient: ApiClient;                    // initialised after port handshake
 let backendProcess: ChildProcess | null = null;
 let isQuitting = false;
 let allowAuthenticatedQuit = false;   // only set true after authenticated app:quit IPC
+let isSystemShutdown = false;         // set when OS is shutting down / restarting / logging out
 let backendKilled = false;
 let backendExited = false;     // set when child exits before port handshake completes
 let backendExitCode: number | null = null;
@@ -431,17 +432,37 @@ app.whenReady().then(async () => {
   createWindow();
   setupIpcHandlers();
   startBackendHealthCheck();
+
+  // ── Detect system shutdown / restart / logout ──────────────────────────────
+  // powerMonitor.on('shutdown') fires when the OS is about to power off,
+  // restart, or when the user logs out. On macOS this is driven by
+  // NSWorkspaceWillPowerOffNotification which fires BEFORE the app receives
+  // its quit signal. We set a flag so before-quit can skip auth.
+  powerMonitor.on('shutdown', () => {
+    console.log('[main] powerMonitor: system shutdown/restart/logout detected');
+    isSystemShutdown = true;
+  });
 });
 
 // ── macOS quit-bypass protection ──────────────────────────────────────────────
 // On macOS, Cmd+Q and Dock → Quit both fire 'before-quit'. We block quit
 // attempts unless:
 //   (a) allowAuthenticatedQuit has been set by the app:quit IPC handler, OR
-//   (b) the backend is dead/unreachable — blocking quit when the user CAN'T
+//   (b) the system is shutting down / restarting / logging out, OR
+//   (c) the backend is dead/unreachable — blocking quit when the user CAN'T
 //       authenticate creates a deadlock (can't quit, can't uninstall).
 app.on('before-quit', (event) => {
   if (allowAuthenticatedQuit) {
     // Authenticated quit path — proceed with cleanup
+    isQuitting = true;
+    killBackend().catch(() => { });
+    return;
+  }
+
+  // System shutdown / restart / logout — allow quit without auth.
+  // The app will auto-start again on next login via setLoginItemSettings.
+  if (isSystemShutdown) {
+    console.log('[main] System shutdown/restart detected — allowing quit without authentication.');
     isQuitting = true;
     killBackend().catch(() => { });
     return;
@@ -471,7 +492,14 @@ app.on('before-quit', (event) => {
 // Tray keeps the app alive — intentional no-op
 app.on('window-all-closed', () => { /* no-op on Windows */ });
 
-app.on('activate', () => { if (!mainWindow) createWindow(); });
+app.on('activate', () => {
+  if (mainWindow) {
+    mainWindow.show();
+    mainWindow.focus();
+  } else {
+    createWindow();
+  }
+});
 
 // ─── Backend health check ─────────────────────────────────────────────────────
 
