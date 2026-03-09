@@ -1269,6 +1269,67 @@
       opacity: 0.6;
       cursor: not-allowed;
     }
+
+    /* ── Locked banner ───────────────────────────────────────────────────────── */
+    .sc-locked-banner {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin-bottom: 16px;
+      color: #7a5800;
+    }
+    .sc-lock-icon {
+      font-size: 24px;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    .sc-locked-banner strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 14px;
+    }
+    .sc-locked-banner p {
+      margin: 0;
+      font-size: 13px;
+      opacity: 0.85;
+    }
+
+    /* ── Base URL row ────────────────────────────────────────────────────────── */
+    .sc-base-url-row {
+      margin-bottom: 12px;
+    }
+    .sc-base-url-controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .sc-base-url-input {
+      flex: 1;
+    }
+    .sc-apply-base-btn {
+      white-space: nowrap;
+      padding: 8px 14px;
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .sc-apply-base-btn:hover {
+      background: #1d4ed8;
+    }
+    .sc-base-url-hint {
+      margin: 6px 0 0;
+      font-size: 12px;
+      color: #6b7280;
+    }
   </style>
 </head>
 
@@ -1691,9 +1752,59 @@
 
       <div class="sc-header">
         <h2>⚙ Configure Server APIs</h2>
-        <p>Enter the ERP endpoint URL for each data type. Leave blank to skip that type.
-          The server team can use the demo formats below to build compatible endpoints.</p>
       </div>
+
+      <!-- LOCKED BANNER — visible only when DYNAMIC_API_ENABLED = False -->
+      <div id="sc-locked-banner" style="display:none;" class="sc-locked-banner">
+        <span class="sc-lock-icon">🔒</span>
+        <div>
+          <strong>API endpoints are managed centrally by
+            <span id="sc-locked-company"></span>.
+          </strong>
+          <p>If you need to make changes, contact your Admin.</p>
+        </div>
+      </div>
+
+      <!-- DYNAMIC BODY — visible only when DYNAMIC_API_ENABLED = True -->
+      <div id="sc-dynamic-body">
+
+        <div class="sc-intro">
+          <p>Configure individual endpoint URLs, or use the <strong>Base URL</strong>
+             shortcut below to populate all 6 at once.
+             Leave a field blank to skip syncing that data type.</p>
+        </div>
+
+        <!-- Base URL Shortcut row -->
+        <div class="sc-base-url-row">
+          <div class="sc-base-url-field">
+            <label class="sc-label">
+              Base URL
+              <span class="sc-opt">(optional shortcut — sets all 6 endpoints at once)</span>
+            </label>
+            <div class="sc-base-url-controls">
+              <input
+                type="url"
+                id="sc-base-url"
+                placeholder="https://api.company.com"
+                class="sc-input sc-base-url-input"
+              />
+              <button
+                type="button"
+                class="sc-apply-base-btn"
+                onclick="applyBaseUrl()"
+                title="Fills all 6 URL fields using this base + the standard path suffixes"
+              >
+                ⚡ Apply to All
+              </button>
+            </div>
+            <p class="sc-base-url-hint">
+              After clicking Apply, the full URLs appear in the fields below.
+              You can still edit individual fields manually.
+            </p>
+          </div>
+        </div>
+
+        <div class="sc-divider"></div>
 
       <!-- Global settings row -->
       <div class="sc-global-row">
@@ -1858,6 +1969,8 @@ Response: HTTP 200/201 with any body.</pre>
         style="display:none;color:#e74c3c;font-size:13px;margin-top:12px;text-align:center;"></div>
       <div id="server-config-success"
         style="display:none;color:#1a8a52;font-size:13px;margin-top:12px;text-align:center;"></div>
+
+      </div><!-- end #sc-dynamic-body -->
 
       <!-- Actions -->
       <div class="sc-actions">

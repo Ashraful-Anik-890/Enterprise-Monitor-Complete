@@ -36,6 +36,16 @@ from monitoring.screen_recorder import ScreenRecorder
 from monitoring.screenshot import ScreenshotMonitor
 from services.sync_service import SyncService
 from utils.config_manager import ConfigManager
+from url import (
+    DYNAMIC_API_ENABLED,
+    COMPANY_NAME,
+    PATH_APP_ACTIVITY,
+    PATH_BROWSER,
+    PATH_CLIPBOARD,
+    PATH_KEYSTROKES,
+    PATH_SCREENSHOTS,
+    PATH_VIDEOS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -146,14 +156,23 @@ class ScreenshotInfo(BaseModel):
     active_app: str
 
 class ConfigRequest(BaseModel):
+    # Global settings
     api_key:               Optional[str] = None
     sync_interval_seconds: Optional[int] = None
+
+    # Base URL shortcut — admin sets this; full URLs are derived in the frontend
+    # and stored as the individual url_* keys below. Persisted here for UI reload.
+    base_url: Optional[str] = None
+
+    # Per-type ERP endpoint URLs (all optional — blank = that type is skipped)
     url_app_activity:      Optional[str] = None
     url_browser:           Optional[str] = None
     url_clipboard:         Optional[str] = None
     url_keystrokes:        Optional[str] = None
     url_screenshots:       Optional[str] = None
     url_videos:            Optional[str] = None
+
+    # Legacy — kept for backward compatibility with old installs
     server_url:            Optional[str] = None
 
 class IdentityResponse(BaseModel):
@@ -361,14 +380,29 @@ async def update_identity(request: IdentityUpdateRequest, user=Depends(verify_to
 @app.get("/api/config")
 async def get_config(user=Depends(verify_token)):
     return {
+        # ── Lock / branding (read from url.py at build time) ─────────────────
+        "dynamic_api_enabled": DYNAMIC_API_ENABLED,
+        "company_name":        COMPANY_NAME,
+
+        # ── URL path suffixes (server contract, from url.py) ─────────────────
+        "path_app_activity": PATH_APP_ACTIVITY,
+        "path_browser":      PATH_BROWSER,
+        "path_clipboard":    PATH_CLIPBOARD,
+        "path_keystrokes":   PATH_KEYSTROKES,
+        "path_screenshots":  PATH_SCREENSHOTS,
+        "path_videos":       PATH_VIDEOS,
+
+        # ── User-saved settings ───────────────────────────────────────────────
         "api_key":               config_manager.get("api_key", ""),
         "sync_interval_seconds": config_manager.get("sync_interval_seconds", 300),
+        "base_url":              config_manager.get("base_url", ""),
         "url_app_activity":      config_manager.get("url_app_activity", ""),
         "url_browser":           config_manager.get("url_browser", ""),
         "url_clipboard":         config_manager.get("url_clipboard", ""),
         "url_keystrokes":        config_manager.get("url_keystrokes", ""),
         "url_screenshots":       config_manager.get("url_screenshots", ""),
         "url_videos":            config_manager.get("url_videos", ""),
+        # legacy
         "server_url":            config_manager.get("server_url", ""),
     }
 
@@ -377,6 +411,7 @@ async def update_config(config: ConfigRequest, user=Depends(verify_token)):
     _fields = [
         ("api_key",               config.api_key),
         ("sync_interval_seconds", config.sync_interval_seconds),
+        ("base_url",              config.base_url),          # ← NEW
         ("url_app_activity",      config.url_app_activity),
         ("url_browser",           config.url_browser),
         ("url_clipboard",         config.url_clipboard),

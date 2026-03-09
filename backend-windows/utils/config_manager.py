@@ -42,6 +42,7 @@ class ConfigManager:
         default_config = {
             "server_url": "",  # Empty by default, user must configure
             "api_key": "",
+            "base_url": "",          # persists the Base URL shortcut input
             "device_id": str(uuid.uuid4()),
             "sync_interval_seconds": 60,
             "screenshot_interval": 60

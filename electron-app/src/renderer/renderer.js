@@ -284,25 +284,104 @@ function showModalError(msg) {
 // ─── SERVER API CONFIG MODAL ─────────────────────────────────
 function openServerConfigModal() {
   const modal = document.getElementById('server-config-modal');
-  document.getElementById('server-config-error').style.display = 'none';
+  document.getElementById('server-config-error').style.display   = 'none';
   document.getElementById('server-config-success').style.display = 'none';
   modal.classList.add('open');
 
-  // Pre-populate all 6 URL fields + global settings from backend config
   window.electronAPI.getConfig().then(cfg => {
-    document.getElementById('sc-api-key').value = cfg.api_key || '';
+    const dynamicEnabled = cfg.dynamic_api_enabled !== false; // default true if old backend
+
+    // ── Locked state ─────────────────────────────────────────────────────────
+    const lockedBanner  = document.getElementById('sc-locked-banner');
+    const dynamicBody   = document.getElementById('sc-dynamic-body');
+    const saveBtn       = document.getElementById('sc-save-btn');
+
+    if (!dynamicEnabled) {
+      // Show lock banner, hide editable body
+      document.getElementById('sc-locked-company').textContent =
+        cfg.company_name || 'your IT Administrator';
+      lockedBanner.style.display  = 'block';
+      dynamicBody.style.display   = 'none';
+      saveBtn.style.display       = 'none';
+      return; // Nothing else to populate
+    }
+
+    // ── Dynamic mode ─────────────────────────────────────────────────────────
+    lockedBanner.style.display = 'none';
+    dynamicBody.style.display  = 'block';
+    saveBtn.style.display      = '';
+
+    // Global fields
+    document.getElementById('sc-api-key').value       = cfg.api_key || '';
     document.getElementById('sc-sync-interval').value = cfg.sync_interval_seconds ?? 300;
-    document.getElementById('sc-url-app').value = cfg.url_app_activity || '';
-    document.getElementById('sc-url-browser').value = cfg.url_browser || '';
-    document.getElementById('sc-url-clipboard').value = cfg.url_clipboard || '';
-    document.getElementById('sc-url-keystrokes').value = cfg.url_keystrokes || '';
-    document.getElementById('sc-url-screenshots').value = cfg.url_screenshots || '';
-    document.getElementById('sc-url-videos').value = cfg.url_videos || '';
-  }).catch(() => { /* backend not ready yet — fields stay blank */ });
+
+    // Base URL shortcut
+    document.getElementById('sc-base-url').value = cfg.base_url || '';
+
+    // Per-type URL fields — store path suffixes on the inputs for applyBaseUrl()
+    const urlFields = [
+      { id: 'sc-url-app',        val: cfg.url_app_activity, path: cfg.path_app_activity },
+      { id: 'sc-url-browser',    val: cfg.url_browser,      path: cfg.path_browser      },
+      { id: 'sc-url-clipboard',  val: cfg.url_clipboard,    path: cfg.path_clipboard    },
+      { id: 'sc-url-keystrokes', val: cfg.url_keystrokes,   path: cfg.path_keystrokes   },
+      { id: 'sc-url-screenshots',val: cfg.url_screenshots,  path: cfg.path_screenshots  },
+      { id: 'sc-url-videos',     val: cfg.url_videos,       path: cfg.path_videos       },
+    ];
+
+    urlFields.forEach(({ id, val, path }) => {
+      const el = document.getElementById(id);
+      el.value = val || '';
+      // Store the path suffix as a data attribute so applyBaseUrl() can use it
+      el.dataset.pathSuffix = path || '';
+      // Update the placeholder to show the actual expected path
+      if (path) el.placeholder = `https://your-server.com${path}`;
+    });
+
+  }).catch(() => { /* backend not ready yet */ });
 }
 
 function closeServerConfigModal() {
   document.getElementById('server-config-modal').classList.remove('open');
+}
+
+function applyBaseUrl() {
+  const baseUrlEl  = document.getElementById('sc-base-url');
+  const errorEl    = document.getElementById('server-config-error');
+  const baseUrlRaw = baseUrlEl.value.trim();
+
+  errorEl.style.display = 'none';
+
+  if (!baseUrlRaw) {
+    errorEl.textContent   = 'Base URL is empty. Enter a URL like https://api.company.com';
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  // Validate base URL
+  try { new URL(baseUrlRaw); }
+  catch {
+    errorEl.textContent   = 'Base URL is invalid — must start with https://';
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  // Strip trailing slash so https://api.company.com/ + /api/... doesn't double-slash
+  const base = baseUrlRaw.replace(/\/$/, '');
+
+  const urlInputIds = [
+    'sc-url-app',
+    'sc-url-browser',
+    'sc-url-clipboard',
+    'sc-url-keystrokes',
+    'sc-url-screenshots',
+    'sc-url-videos',
+  ];
+
+  urlInputIds.forEach(id => {
+    const el   = document.getElementById(id);
+    const path = el.dataset.pathSuffix || '';
+    if (path) el.value = base + path;
+  });
 }
 
 async function handleSaveServerConfig() {
@@ -324,8 +403,9 @@ async function handleSaveServerConfig() {
   ];
 
   const payload = {
-    api_key: document.getElementById('sc-api-key').value.trim(),
+    api_key:               document.getElementById('sc-api-key').value.trim(),
     sync_interval_seconds: parseInt(document.getElementById('sc-sync-interval').value, 10) || 300,
+    base_url:              document.getElementById('sc-base-url').value.trim(),   // ← NEW
   };
 
   for (const f of urlFields) {
