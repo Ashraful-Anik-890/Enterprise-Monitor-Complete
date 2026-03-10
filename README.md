@@ -44,8 +44,21 @@ This project demonstrates deep expertise in **systems programming**, **cross-pla
 </p>
 
 <p align="center">
+  <img src="resources/brawser.png" alt="Monitor Data - Browser" width="700" />
+</p>
+
+<p align="center">
+  <img src="resources/clipboard.png" alt="Monitor Data - Browser" width="700" />
+</p>
+
+<p align="center">
+  <img src="resources/keylog.png" alt="Monitor Data - Browser" width="700" />
+</p>
+
+<p align="center">
   <img src="resources/monitor data video4.png" alt="Monitor Data - Videos" width="700" />
 </p>
+
 
 #### Server & API Configuration
 > 6 configurable ERP endpoint URLs with live payload preview and API key setup.
