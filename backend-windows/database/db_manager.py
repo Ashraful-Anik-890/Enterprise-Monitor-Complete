@@ -37,6 +37,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
 import json
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +155,7 @@ class DatabaseManager:
                     timestamp       TEXT NOT NULL,
                     file_path       TEXT NOT NULL,
                     duration_seconds INTEGER DEFAULT 0,
+                    username        TEXT DEFAULT '',
                     is_synced       INTEGER DEFAULT 0,
                     created_at      TEXT DEFAULT CURRENT_TIMESTAMP
                 )
@@ -186,7 +188,7 @@ class DatabaseManager:
 
                 # ── username column on all tracking tables ────────────────────
                 for table in ("screenshots", "app_activity", "clipboard_events",
-                               "browser_activity", "text_logs"):
+                               "browser_activity", "text_logs", "video_recordings"):
                     cursor.execute(f"PRAGMA table_info({table})")
                     if "username" not in [r[1] for r in cursor.fetchall()]:
                         cursor.execute(
@@ -215,11 +217,18 @@ class DatabaseManager:
             cursor.execute("SELECT key, value FROM device_config")
             rows = {r["key"]: r["value"] for r in cursor.fetchall()}
 
+        mac_address = ':'.join(
+            '{:02x}'.format((uuid.getnode() >> ele) & 0xff) 
+            for ele in reversed(range(0, 8 * 6, 8))
+        )
+
         return {
-            "machine_id":    socket.gethostname(),
-            "os_user":       getpass.getuser(),
-            "device_alias":  rows.get("device_alias", ""),
-            "user_alias":    rows.get("user_alias", ""),
+            "machine_id":     socket.gethostname(),
+            "mac_address":    mac_address,
+            "os_user":        getpass.getuser(),
+            "device_alias":   rows.get("device_alias", ""),
+            "user_alias":     rows.get("user_alias", ""),
+            "login_username": rows.get("login_username", ""),
         }
 
     def update_identity_config(
@@ -248,6 +257,22 @@ class DatabaseManager:
                 return True
             except Exception as exc:
                 logger.error("update_identity_config: %s", exc)
+                self._conn.rollback()
+                return False
+
+    def update_login_username(self, username: str) -> bool:
+        with self._lock:
+            cursor = self._conn.cursor()
+            try:
+                cursor.execute(
+                    "INSERT INTO device_config (key, value) VALUES ('login_username', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (username,),
+                )
+                self._conn.commit()
+                return True
+            except Exception as exc:
+                logger.error("update_login_username: %s", exc)
                 self._conn.rollback()
                 return False
 
@@ -331,14 +356,14 @@ class DatabaseManager:
                 self._conn.rollback()
 
     def insert_video_recording(self, timestamp: str, file_path: str,
-                                duration_seconds: int) -> None:
+                                duration_seconds: int, username: str = '') -> None:
         """Insert a completed recording chunk into video_recordings."""
         with self._lock:
             try:
                 self._conn.execute(
-                    "INSERT INTO video_recordings (timestamp, file_path, duration_seconds) "
-                    "VALUES (?, ?, ?)",
-                    (timestamp, file_path, duration_seconds),
+                    "INSERT INTO video_recordings (timestamp, file_path, duration_seconds, username) "
+                    "VALUES (?, ?, ?, ?)",
+                    (timestamp, file_path, duration_seconds, username),
                 )
                 self._conn.commit()
             except Exception as exc:

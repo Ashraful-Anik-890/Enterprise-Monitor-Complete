@@ -97,6 +97,7 @@ class ScreenshotMonitor:
             # Capture screenshot
             with mss.mss() as sct:
                 # Capture primary monitor
+                sct.with_cursor = False
                 monitor = sct.monitors[1]
                 screenshot = sct.grab(monitor)
                 

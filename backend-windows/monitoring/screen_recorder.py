@@ -155,6 +155,7 @@ class ScreenRecorder:
 
         with mss.mss() as sct:
             monitor = sct.monitors[1]   # primary monitor
+            sct.with_cursor = False
             native_w = monitor["width"]
             native_h = monitor["height"]
 

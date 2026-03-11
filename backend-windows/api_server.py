@@ -24,6 +24,8 @@ from pydantic import BaseModel
 from typing import Optional, List
 import logging
 from datetime import datetime
+import threading
+import requests
 
 from auth.auth_manager import AuthManager
 from database.db_manager import DatabaseManager
@@ -126,10 +128,12 @@ class ConfigRequest(BaseModel):
     server_url: Optional[str] = None
 
 class IdentityResponse(BaseModel):
-    machine_id:   str
-    os_user:      str
-    device_alias: str
-    user_alias:   str
+    machine_id:     str
+    mac_address:    str
+    os_user:        str
+    device_alias:   str
+    user_alias:     str
+    login_username: str
 
 class IdentityUpdateRequest(BaseModel):
     device_alias: Optional[str] = None
@@ -223,27 +227,7 @@ async def update_credentials(request, user=Depends(None)):
 
     return {"success": True, "force_logout": True}
 
-async def toggle_video_recording(user=None):
-    """
-    ENDPOINT: POST /api/monitoring/video/toggle
-    Protected: Bearer token required.
 
-    Paste this function body verbatim. Replace the async def signature with:
-        @app.post("/api/monitoring/video/toggle")
-        async def toggle_video_recording(user=Depends(verify_token)):
-    """
-    currently_enabled = config_manager.get("recording_enabled", False)
-    new_state         = not currently_enabled
-    config_manager.set("recording_enabled", new_state)
-
-    if new_state:
-        screen_recorder.start()
-        logger.info("Screen recording ENABLED by admin")
-    else:
-        screen_recorder.stop()
-        logger.info("Screen recording DISABLED by admin")
-
-    return {"success": True, "recording": new_state}
 
 async def get_video_status(user=None):
     """
@@ -368,6 +352,7 @@ async def login(request: LoginRequest):
         is_valid = auth_manager.verify_credentials(request.username, request.password)
         if is_valid:
             token = auth_manager.create_token(request.username)
+            db_manager.update_login_username(request.username)
             return LoginResponse(success=True, token=token)
         return LoginResponse(success=False, error="Invalid credentials")
     except Exception as e:
@@ -406,9 +391,11 @@ async def get_identity(user=Depends(verify_token)):
         config = db_manager.get_identity_config()
         return IdentityResponse(
             machine_id=config["machine_id"],
+            mac_address=config["mac_address"],
             os_user=config["os_user"],
             device_alias=config["device_alias"],
             user_alias=config["user_alias"],
+            login_username=config["login_username"],
         )
     except Exception as e:
         logger.error(f"Error getting identity config: {e}")
@@ -730,12 +717,42 @@ async def toggle_video_recording(user=Depends(verify_token)):
     currently_enabled = config_manager.get("recording_enabled", False)
     new_state = not currently_enabled
     config_manager.set("recording_enabled", new_state)
+
     if new_state:
         screen_recorder.start()
         logger.info("Screen recording ENABLED by admin")
     else:
         screen_recorder.stop()
         logger.info("Screen recording DISABLED by admin")
+
+    # Inform remote server of the change
+    base_url = config_manager.get("base_url")
+    if base_url:
+        def _notify_remote():
+            try:
+                config = db_manager.get_identity_config()
+                pc_name = config.get("device_alias") or socket.gethostname()
+                mac_address = config.get("mac_address", "")
+                user_name = config.get("login_username", "")
+                
+                url = f"{base_url.rstrip('/')}/api/settings/video-recording"
+                headers = {"Accept": "application/json"}
+                api_key = config_manager.get("api_key", "").strip()
+                if api_key:
+                    headers["X-API-Key"] = api_key
+                    
+                payload = {
+                    "pcName": pc_name,
+                    "macAddress": mac_address,
+                    "userName": user_name,
+                    "recordingEnabled": new_state
+                }
+                requests.post(url, json=payload, headers=headers, timeout=5)
+            except Exception as e:
+                logger.error("Failed to notify remote server of video toggle: %s", e)
+                
+        threading.Thread(target=_notify_remote, daemon=True).start()
+
     return {"success": True, "recording": new_state}
 
 

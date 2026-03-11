@@ -108,13 +108,9 @@ function setupEventListeners() {
     tzSelect.addEventListener('change', (e) => saveTimezone(e.target.value));
   }
 
-  // Pause / Resume (header controls + overview tab)
+  // Pause / Resume (header controls only)
   document.getElementById('pause-btn').addEventListener('click', pauseMonitoring);
   document.getElementById('resume-btn').addEventListener('click', resumeMonitoring);
-  const pause2 = document.getElementById('pause-btn2');
-  const resume2 = document.getElementById('resume-btn2');
-  if (pause2) pause2.addEventListener('click', pauseMonitoring);
-  if (resume2) resume2.addEventListener('click', resumeMonitoring);
 
   // Tabs
   document.querySelectorAll('.tab-button').forEach(btn => {
@@ -600,8 +596,12 @@ async function loadIdentity() {
     if (userLabel) userLabel.textContent = identity.user_alias || identity.os_user;
     const mid = document.getElementById('identity-machine-id');
     const osu = document.getElementById('identity-os-user');
+    const mac = document.getElementById('display-mac-address');
+    const logUser = document.getElementById('identity-login-user');
     if (mid) mid.textContent = `Raw: ${identity.machine_id}`;
     if (osu) osu.textContent = `Raw: ${identity.os_user}`;
+    if (mac) mac.textContent = identity.mac_address || 'Unavailable';
+    if (logUser) logUser.textContent = identity.login_username || 'Unknown';
     const di = document.getElementById('device-alias-input');
     const ui = document.getElementById('user-alias-input');
     if (di) di.value = identity.device_alias || '';
@@ -968,12 +968,22 @@ async function loadChartsData() {
       const tzForChart = currentTimezone || 'UTC';
       timeline.forEach(t => {
         if (!t.timestamp) return;
+        // Ensure timestamp is parsed as UTC if it doesn't have timezone info
+        let tsStr = t.timestamp;
+        if (!tsStr.endsWith('Z') && !tsStr.includes('+') && !tsStr.match(/-\d\d:\d\d$/)) {
+          tsStr = tsStr.replace(' ', 'T');
+          if (!tsStr.endsWith('Z')) tsStr += 'Z';
+        }
+        
         // Extract the hour in the *selected* timezone, not browser local time
-        const hourStr = new Intl.DateTimeFormat('en-US', {
+        let hourStr = new Intl.DateTimeFormat('en-US', {
           timeZone: tzForChart,
           hour: '2-digit',
           hour12: false,
-        }).format(new Date(t.timestamp));
+        }).format(new Date(tsStr));
+        
+        // Fix for 24:00 displaying instead of 00:00
+        if (hourStr === '24') hourStr = '00';
         // hourStr is like "08" or "23"
         const label = hourStr.padStart(2, '0') + ':00';
         hourMap[label] = (hourMap[label] || 0) + (t.duration_seconds || 0);
@@ -1012,8 +1022,14 @@ async function loadChartsData() {
 function formatWithTZ(isoString, tz) {
   if (!isoString) return '—';
   try {
+    let tsStr = isoString;
+    if (typeof tsStr === 'string' && !tsStr.endsWith('Z') && !tsStr.includes('+') && !tsStr.match(/-\d\d:\d\d$/)) {
+      tsStr = tsStr.replace(' ', 'T');
+      if (!tsStr.endsWith('Z')) tsStr += 'Z';
+    }
+    
     const zone = tz || currentTimezone || 'UTC';
-    return new Date(isoString).toLocaleString('en-US', {
+    return new Date(tsStr).toLocaleString('en-US', {
       timeZone: zone,
       year: 'numeric',
       month: '2-digit',

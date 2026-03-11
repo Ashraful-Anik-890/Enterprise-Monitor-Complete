@@ -315,7 +315,7 @@ async function killBackend(): Promise<void> {
 
 // ─── Window ───────────────────────────────────────────────────────────────────
 
-function createWindow(): void {
+function createWindow(showOnReady = true): void {
   mainWindow = new BrowserWindow({
     width: 1000,
     height: 750,
@@ -333,7 +333,11 @@ function createWindow(): void {
 
   mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
 
-  mainWindow.once('ready-to-show', () => { mainWindow?.show(); });
+  mainWindow.once('ready-to-show', () => {
+    if (showOnReady) {
+      mainWindow?.show();
+    }
+  });
 
   mainWindow.on('close', (event) => {
     if (!isQuitting) {
@@ -348,15 +352,35 @@ function createWindow(): void {
 function getMainWindow(): BrowserWindow | null { return mainWindow; }
 
 function showMainWindow(): void {
-  if (!mainWindow) createWindow();
+  if (!mainWindow) createWindow(true);
   mainWindow?.show();
   mainWindow?.focus();
 }
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 
-app.whenReady().then(async () => {
-  app.setLoginItemSettings({ openAtLogin: true, path: app.getPath('exe') });
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    // Focus our main window if someone tried to run a second instance.
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    } else {
+      createWindow(true);
+    }
+  });
+
+  app.whenReady().then(async () => {
+  app.setLoginItemSettings({
+    openAtLogin: true,
+    path: app.getPath('exe'),
+    args: ['--hidden'],
+  });
 
   // ── Self-heal: remove stale Task Scheduler entry from old installs (Windows only)
   if (!IS_MAC) {
@@ -447,7 +471,8 @@ app.whenReady().then(async () => {
     getMainWindow,
   );
 
-  createWindow();
+  const isHiddenStartup = process.argv.includes('--hidden') || (IS_MAC && app.getLoginItemSettings().wasOpenedAsHidden);
+  createWindow(!isHiddenStartup);
   setupIpcHandlers();
   startBackendHealthCheck();
 
@@ -461,6 +486,7 @@ app.whenReady().then(async () => {
     isSystemShutdown = true;
   });
 });
+}
 
 // ── macOS quit-bypass protection ──────────────────────────────────────────────
 // On macOS, Cmd+Q and Dock → Quit both fire 'before-quit'. We block quit
@@ -515,7 +541,7 @@ app.on('activate', () => {
     mainWindow.show();
     mainWindow.focus();
   } else {
-    createWindow();
+    createWindow(true);
   }
 });
 

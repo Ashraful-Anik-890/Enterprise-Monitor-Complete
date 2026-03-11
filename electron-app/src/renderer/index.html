@@ -656,6 +656,7 @@
       width: 100%;
       border-collapse: collapse;
       font-size: 13px;
+      table-layout: fixed;
     }
 
     thead th {
@@ -674,6 +675,7 @@
       padding: 10px 14px;
       border-bottom: 1px solid #f0f2f8;
       color: #444;
+      overflow-wrap: break-word;
     }
 
     tbody tr:hover {
@@ -1524,16 +1526,18 @@
           </div>
 
           <div class="monitoring-controls">
-            <h3 style="margin-bottom:12px;font-size:14px;color:#555;">Monitoring Controls</h3>
-            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-              <button class="btn-danger" id="pause-btn2" style="padding:8px 16px;font-size:13px;">⏸ Pause
-                Monitoring</button>
-              <button class="btn-success" id="resume-btn2" style="padding:8px 16px;font-size:13px;display:none;">▶
-                Resume Monitoring</button>
-              <button id="server-config-btn" onclick="openServerConfigModal()"
-                style="padding:7px 14px;font-size:13px;background:#5a67d8;color:#fff;border:none;border-radius:6px;cursor:pointer;">
-                ⚙ Config Server API
-              </button>
+            <div style="display:flex; justify-content:space-between; align-items:center; width: 100%;">
+              <div>
+                <h3 style="margin-bottom:4px;font-size:14px;color:#555;">Monitoring Controls</h3>
+                <small style="color:#888;font-size:12px;">MAC Address: <span
+                    id="display-mac-address">Loading...</span></small>
+              </div>
+              <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                <button id="server-config-btn" onclick="openServerConfigModal()"
+                  style="padding:7px 14px;font-size:13px;background:#5a67d8;color:#fff;border:none;border-radius:6px;cursor:pointer;">
+                  ⚙ Config Server API
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1565,10 +1569,10 @@
               <table>
                 <thead>
                   <tr>
-                    <th>Time</th>
-                    <th>Application</th>
-                    <th>Window Title</th>
-                    <th>Duration</th>
+                    <th style="width: 15%;">Time</th>
+                    <th style="width: 20%;">Application</th>
+                    <th style="width: 45%;">Window Title</th>
+                    <th style="width: 20%;">Duration</th>
                   </tr>
                 </thead>
                 <tbody id="app-logs-body">
@@ -1586,10 +1590,10 @@
               <table>
                 <thead>
                   <tr>
-                    <th>Time</th>
-                    <th>Browser</th>
-                    <th>Page Title</th>
-                    <th>URL</th>
+                    <th style="width: 15%;">Time</th>
+                    <th style="width: 15%;">Browser</th>
+                    <th style="width: 35%;">Page Title</th>
+                    <th style="width: 35%;">URL</th>
                   </tr>
                 </thead>
                 <tbody id="browser-logs-body">
@@ -1607,9 +1611,9 @@
               <table>
                 <thead>
                   <tr>
-                    <th>Time</th>
-                    <th>Type</th>
-                    <th>Preview</th>
+                    <th style="width: 15%;">Time</th>
+                    <th style="width: 15%;">Type</th>
+                    <th style="width: 70%;">Preview</th>
                   </tr>
                 </thead>
                 <tbody id="clipboard-logs-body">
@@ -1627,10 +1631,10 @@
               <table>
                 <thead>
                   <tr>
-                    <th>Time</th>
-                    <th>Application</th>
-                    <th>Window</th>
-                    <th>Text Captured</th>
+                    <th style="width: 15%;">Time</th>
+                    <th style="width: 20%;">Application</th>
+                    <th style="width: 25%;">Window</th>
+                    <th style="width: 40%;">Text Captured</th>
                   </tr>
                 </thead>
                 <tbody id="key-logs-body">
@@ -1832,6 +1836,8 @@
             <summary>📋 Demo Format (server must accept this)</summary>
             <pre class="sc-demo-pre">{
   "pcName":       "DESKTOP-ABC123",
+  "macAddress":   "00:1B:44:11:3A:B7",
+  "userName":     "jdoe",
   "appName":      "chrome.exe",
   "windowsTitle": "Google - Chrome",
   "startTime":    "2026-02-22T08:30:00+00:00",
@@ -1855,6 +1861,8 @@
             <summary>📋 Demo Format</summary>
             <pre class="sc-demo-pre">{
   "pcName":      "DESKTOP-ABC123",
+  "macAddress":  "00:1B:44:11:3A:B7",
+  "userName":    "jdoe",
   "browserName": "Chrome",
   "url":         "https://github.com/",
   "pageTitle":   "GitHub",
@@ -1877,6 +1885,8 @@
             <summary>📋 Demo Format</summary>
             <pre class="sc-demo-pre">{
   "pcName":         "DESKTOP-ABC123",
+  "macAddress":     "00:1B:44:11:3A:B7",
+  "userName":       "jdoe",
   "contentType":    "text",
   "contentPreview": "Copied text preview (truncated)…",
   "timestamp":      "2026-02-22T08:31:45+00:00",
@@ -1898,6 +1908,8 @@
             <summary>📋 Demo Format</summary>
             <pre class="sc-demo-pre">{
   "pcName":      "DESKTOP-ABC123",
+  "macAddress":  "00:1B:44:11:3A:B7",
+  "userName":    "jdoe",
   "application": "notepad.exe",
   "windowTitle": "Untitled - Notepad",
   "content":     "buffered keystrokes text…",
@@ -1922,6 +1934,8 @@
 
 Form fields:
   pcName        = "DESKTOP-ABC123"
+  macAddress    = "00:1B:44:11:3A:B7"
+  userName      = "jdoe"
   timestamp     = "2026-02-22T08:30:00+00:00"
   activeWindow  = "Google - Chrome"
   activeApp     = "chrome.exe"
@@ -1950,6 +1964,8 @@ Response: HTTP 200/201 with any body.</pre>
 
 Form fields:
   pcName          = "DESKTOP-ABC123"
+  macAddress      = "00:1B:44:11:3A:B7"
+  userName        = "jdoe"
   timestamp       = "2026-02-22T08:00:00+00:00"
   durationSeconds = 300
   syncTime        = "2026-02-22T08:35:01+00:00"

