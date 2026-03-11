@@ -49,6 +49,24 @@ let backendKilled = false;
 let backendExited = false;     // set when child exits before port handshake completes
 let backendExitCode: number | null = null;
 
+// ── 401 helpers ───────────────────────────────────────────────────────────────
+
+/** True when an axios error is an HTTP 401 (token expired / invalid). */
+function is401(error: any): boolean {
+  return error?.response?.status === 401;
+}
+
+/**
+ * Clear stored token, update tray, and tell the renderer to force-logout.
+ * Returns a sentinel object the renderer can also detect from the IPC return.
+ */
+function handleAuthExpired(): { __forceLogout: true } {
+  store.delete('authToken');
+  trayManager?.setAuthStatus(false);
+  mainWindow?.webContents.send('force-logout');
+  return { __forceLogout: true };
+}
+
 // ── Paths ─────────────────────────────────────────────────────────────────────
 const IS_MAC = process.platform === 'darwin';
 
@@ -621,7 +639,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.get('/api/statistics', token, params);
       return response.data;
-    } catch (error: any) { throw new Error(error.message); }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      throw new Error(error.message);
+    }
   });
 
   ipcMain.handle('api:getActivityStats', async (_event, params: { start: string; end: string }) => {
@@ -629,7 +650,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.get('/api/stats/activity', token, params);
       return response.data;
-    } catch (error: any) { throw new Error(error.message); }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      throw new Error(error.message);
+    }
   });
 
   ipcMain.handle('api:getTimelineData', async (_event, params: { date: string }) => {
@@ -637,7 +661,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.get('/api/stats/timeline', token, params);
       return response.data;
-    } catch (error: any) { throw new Error(error.message); }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      throw new Error(error.message);
+    }
   });
 
   // ── Screenshots ───────────────────────────────────────────────────────────
@@ -646,7 +673,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.get('/api/data/screenshots', token, params);
       return response.data;
-    } catch (error: any) { throw new Error(error.message); }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      throw new Error(error.message);
+    }
   });
 
   // ── App logs ──────────────────────────────────────────────────────────────
@@ -655,7 +685,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.get('/api/data/apps', token, params);
       return response.data;
-    } catch (error: any) { throw new Error(error.message); }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      throw new Error(error.message);
+    }
   });
 
   // ── Key logs ──────────────────────────────────────────────────────────────
@@ -664,7 +697,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.get('/api/data/keylogs', token, params);
       return response.data;
-    } catch (error: any) { throw new Error(error.message); }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      throw new Error(error.message);
+    }
   });
 
   // ── Browser logs ──────────────────────────────────────────────────────────
@@ -673,7 +709,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.get('/api/data/browser', token, params);
       return response.data;
-    } catch (error: any) { throw new Error(error.message); }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      throw new Error(error.message);
+    }
   });
 
   // ── Clipboard logs ────────────────────────────────────────────────────────
@@ -682,7 +721,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.get('/api/data/clipboard', token, params);
       return response.data;
-    } catch (error: any) { throw new Error(error.message); }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      throw new Error(error.message);
+    }
   });
 
   // ── Video recordings ──────────────────────────────────────────────────────
@@ -691,7 +733,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.get('/api/data/videos', token, params);
       return response.data;
-    } catch (error: any) { throw new Error(error.message); }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      throw new Error(error.message);
+    }
   });
 
   // ── Monitoring controls ───────────────────────────────────────────────────
@@ -700,7 +745,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.get('/api/monitoring/status', token);
       return response.data;
-    } catch (error: any) { return { error: error.message }; }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      return { error: error.message };
+    }
   });
 
   ipcMain.handle('api:setMonitoringStatus', async (_event, payload: Record<string, boolean>) => {
@@ -708,7 +756,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.post('/api/monitoring/status', payload, token);
       return response.data;
-    } catch (error: any) { return { success: false, error: error.message }; }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      return { success: false, error: error.message };
+    }
   });
 
   // ── Config ────────────────────────────────────────────────────────────────
@@ -717,7 +768,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.get('/api/config', token);
       return response.data;
-    } catch (error: any) { throw new Error(error.message); }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      throw new Error(error.message);
+    }
   });
 
   ipcMain.handle('api:updateConfig', async (_event, payload: Record<string, unknown>) => {
@@ -725,7 +779,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.post('/api/config', payload, token);
       return response.data;
-    } catch (error: any) { throw new Error(error.message); }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      throw new Error(error.message);
+    }
   });
 
   ipcMain.handle('api:getIdentity', async () => {
@@ -733,7 +790,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.get('/api/config/identity', token);
       return response.data;
-    } catch (error: any) { throw new Error(error.message); }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      throw new Error(error.message);
+    }
   });
 
   ipcMain.handle('api:updateIdentity', async (_event, payload: Record<string, string>) => {
@@ -741,7 +801,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.post('/api/config/identity', payload, token);
       return response.data;
-    } catch (error: any) { throw new Error(error.message); }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      throw new Error(error.message);
+    }
   });
 
   ipcMain.handle('api:getTimezone', async () => {
@@ -757,7 +820,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.post('/api/config/timezone', { timezone: tz }, token);
       return response.data;
-    } catch (error: any) { return { success: false, error: error.message }; }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      return { success: false, error: error.message };
+    }
   });
 
   // ── Sync ──────────────────────────────────────────────────────────────────
@@ -766,7 +832,8 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.get('/api/sync/status', token);
       return response.data;
-    } catch {
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
       return { last_sync: null, last_error: null, is_syncing: false };
     }
   });
@@ -776,7 +843,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.post('/api/sync/trigger', {}, token);
       return response.data;
-    } catch (error: any) { return { success: false, error: error.message }; }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      return { success: false, error: error.message };
+    }
   });
 
   // ── File / folder ─────────────────────────────────────────────────────────
@@ -806,7 +876,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.post('/api/monitoring/pause', {}, token);
       return response.data;
-    } catch (error: any) { return { success: false, error: error.message }; }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      return { success: false, error: error.message };
+    }
   });
 
   ipcMain.handle('api:resumeMonitoring', async () => {
@@ -814,7 +887,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.post('/api/monitoring/resume', {}, token);
       return response.data;
-    } catch (error: any) { return { success: false, error: error.message }; }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      return { success: false, error: error.message };
+    }
   });
 
   // ── Video ─────────────────────────────────────────────────────────────────
@@ -823,7 +899,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.get('/api/monitoring/video/status', token);
       return response.data;
-    } catch (error: any) { return { recording: false, is_active: false }; }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      return { recording: false, is_active: false };
+    }
   });
 
   ipcMain.handle('api:getVideos', async (_event, params: { limit?: number } = {}) => {
@@ -831,7 +910,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.get('/api/data/videos', token, params);
       return response.data;
-    } catch (error: any) { throw new Error(error.message); }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      throw new Error(error.message);
+    }
   });
 
   ipcMain.handle('api:toggleVideoRecording', async () => {
@@ -839,7 +921,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.post('/api/monitoring/video/toggle', {}, token);
       return response.data;
-    } catch (error: any) { return { success: false, error: error.message }; }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      return { success: false, error: error.message };
+    }
   });
 
   // ── Config (setConfig alias for updateConfig) ─────────────────────────────
@@ -848,7 +933,10 @@ function setupIpcHandlers(): void {
       const token = store.get('authToken') as string;
       const response = await apiClient.post('/api/config', payload, token);
       return response.data;
-    } catch (error: any) { throw new Error(error.message); }
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      throw new Error(error.message);
+    }
   });
 
   // ── Verify credentials (quit dialog) — does NOT store token ────────────────

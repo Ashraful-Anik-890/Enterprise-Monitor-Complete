@@ -26,6 +26,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('date-picker').value = currentDate;
   setupEventListeners();
   await checkAuthentication();
+
+  // Force-logout when the main process detects a backend 401 (token expired)
+  window.electronAPI.onForceLogout(() => {
+    console.warn('[renderer] Force-logout: backend token expired (401)');
+    isAuthenticated = false;
+    clearTokenCountdown();
+    stopSyncStatusPoller();
+    showLogin();
+    document.getElementById('username').value = '';
+    document.getElementById('password').value = '';
+    const errEl = document.getElementById('login-error');
+    if (errEl) {
+      errEl.textContent = 'Session expired. Please log in again.';
+      errEl.style.color = '#e74c3c';
+    }
+  });
 });
 
 // ─── AUTH ────────────────────────────────────────────────────
@@ -284,7 +300,7 @@ function showModalError(msg) {
 // ─── SERVER API CONFIG MODAL ─────────────────────────────────
 function openServerConfigModal() {
   const modal = document.getElementById('server-config-modal');
-  document.getElementById('server-config-error').style.display   = 'none';
+  document.getElementById('server-config-error').style.display = 'none';
   document.getElementById('server-config-success').style.display = 'none';
   modal.classList.add('open');
 
@@ -292,27 +308,27 @@ function openServerConfigModal() {
     const dynamicEnabled = cfg.dynamic_api_enabled !== false; // default true if old backend
 
     // ── Locked state ─────────────────────────────────────────────────────────
-    const lockedBanner  = document.getElementById('sc-locked-banner');
-    const dynamicBody   = document.getElementById('sc-dynamic-body');
-    const saveBtn       = document.getElementById('sc-save-btn');
+    const lockedBanner = document.getElementById('sc-locked-banner');
+    const dynamicBody = document.getElementById('sc-dynamic-body');
+    const saveBtn = document.getElementById('sc-save-btn');
 
     if (!dynamicEnabled) {
       // Show lock banner, hide editable body
       document.getElementById('sc-locked-company').textContent =
         cfg.company_name || 'your IT Administrator';
-      lockedBanner.style.display  = 'block';
-      dynamicBody.style.display   = 'none';
-      saveBtn.style.display       = 'none';
+      lockedBanner.style.display = 'block';
+      dynamicBody.style.display = 'none';
+      saveBtn.style.display = 'none';
       return; // Nothing else to populate
     }
 
     // ── Dynamic mode ─────────────────────────────────────────────────────────
     lockedBanner.style.display = 'none';
-    dynamicBody.style.display  = 'block';
-    saveBtn.style.display      = '';
+    dynamicBody.style.display = 'block';
+    saveBtn.style.display = '';
 
     // Global fields
-    document.getElementById('sc-api-key').value       = cfg.api_key || '';
+    document.getElementById('sc-api-key').value = cfg.api_key || '';
     document.getElementById('sc-sync-interval').value = cfg.sync_interval_seconds ?? 300;
 
     // Base URL shortcut
@@ -320,12 +336,12 @@ function openServerConfigModal() {
 
     // Per-type URL fields — store path suffixes on the inputs for applyBaseUrl()
     const urlFields = [
-      { id: 'sc-url-app',        val: cfg.url_app_activity, path: cfg.path_app_activity },
-      { id: 'sc-url-browser',    val: cfg.url_browser,      path: cfg.path_browser      },
-      { id: 'sc-url-clipboard',  val: cfg.url_clipboard,    path: cfg.path_clipboard    },
-      { id: 'sc-url-keystrokes', val: cfg.url_keystrokes,   path: cfg.path_keystrokes   },
-      { id: 'sc-url-screenshots',val: cfg.url_screenshots,  path: cfg.path_screenshots  },
-      { id: 'sc-url-videos',     val: cfg.url_videos,       path: cfg.path_videos       },
+      { id: 'sc-url-app', val: cfg.url_app_activity, path: cfg.path_app_activity },
+      { id: 'sc-url-browser', val: cfg.url_browser, path: cfg.path_browser },
+      { id: 'sc-url-clipboard', val: cfg.url_clipboard, path: cfg.path_clipboard },
+      { id: 'sc-url-keystrokes', val: cfg.url_keystrokes, path: cfg.path_keystrokes },
+      { id: 'sc-url-screenshots', val: cfg.url_screenshots, path: cfg.path_screenshots },
+      { id: 'sc-url-videos', val: cfg.url_videos, path: cfg.path_videos },
     ];
 
     urlFields.forEach(({ id, val, path }) => {
@@ -345,14 +361,14 @@ function closeServerConfigModal() {
 }
 
 function applyBaseUrl() {
-  const baseUrlEl  = document.getElementById('sc-base-url');
-  const errorEl    = document.getElementById('server-config-error');
+  const baseUrlEl = document.getElementById('sc-base-url');
+  const errorEl = document.getElementById('server-config-error');
   const baseUrlRaw = baseUrlEl.value.trim();
 
   errorEl.style.display = 'none';
 
   if (!baseUrlRaw) {
-    errorEl.textContent   = 'Base URL is empty. Enter a URL like https://api.company.com';
+    errorEl.textContent = 'Base URL is empty. Enter a URL like https://api.company.com';
     errorEl.style.display = 'block';
     return;
   }
@@ -360,7 +376,7 @@ function applyBaseUrl() {
   // Validate base URL
   try { new URL(baseUrlRaw); }
   catch {
-    errorEl.textContent   = 'Base URL is invalid — must start with https://';
+    errorEl.textContent = 'Base URL is invalid — must start with https://';
     errorEl.style.display = 'block';
     return;
   }
@@ -378,7 +394,7 @@ function applyBaseUrl() {
   ];
 
   urlInputIds.forEach(id => {
-    const el   = document.getElementById(id);
+    const el = document.getElementById(id);
     const path = el.dataset.pathSuffix || '';
     if (path) el.value = base + path;
   });
@@ -403,9 +419,9 @@ async function handleSaveServerConfig() {
   ];
 
   const payload = {
-    api_key:               document.getElementById('sc-api-key').value.trim(),
+    api_key: document.getElementById('sc-api-key').value.trim(),
     sync_interval_seconds: parseInt(document.getElementById('sc-sync-interval').value, 10) || 300,
-    base_url:              document.getElementById('sc-base-url').value.trim(),   // ← NEW
+    base_url: document.getElementById('sc-base-url').value.trim(),   // ← NEW
   };
 
   for (const f of urlFields) {

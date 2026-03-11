@@ -1282,16 +1282,19 @@
       margin-bottom: 16px;
       color: #7a5800;
     }
+
     .sc-lock-icon {
       font-size: 24px;
       line-height: 1;
       flex-shrink: 0;
     }
+
     .sc-locked-banner strong {
       display: block;
       margin-bottom: 4px;
       font-size: 14px;
     }
+
     .sc-locked-banner p {
       margin: 0;
       font-size: 13px;
@@ -1302,14 +1305,17 @@
     .sc-base-url-row {
       margin-bottom: 12px;
     }
+
     .sc-base-url-controls {
       display: flex;
       gap: 8px;
       align-items: center;
     }
+
     .sc-base-url-input {
       flex: 1;
     }
+
     .sc-apply-base-btn {
       white-space: nowrap;
       padding: 8px 14px;
@@ -1322,9 +1328,11 @@
       cursor: pointer;
       transition: background 0.15s;
     }
+
     .sc-apply-base-btn:hover {
       background: #1d4ed8;
     }
+
     .sc-base-url-hint {
       margin: 6px 0 0;
       font-size: 12px;
@@ -1384,6 +1392,7 @@
         <p>Admin Dashboard</p>
       </div>
       <div class="header-actions">
+        <span id="token-timer" style="font-size:12px;color:#aab;font-variant-numeric:tabular-nums;"></span>
         <button class="btn-secondary" id="refresh-btn">🔄 Refresh</button>
         <button class="btn-warning" id="change-credentials-btn">🔑 Change Credentials</button>
         <button class="btn-danger" id="logout-btn">Logout</button>
@@ -1525,8 +1534,6 @@
                 style="padding:7px 14px;font-size:13px;background:#5a67d8;color:#fff;border:none;border-radius:6px;cursor:pointer;">
                 ⚙ Config Server API
               </button>
-              <span id="token-timer"
-                style="font-size:12px;color:#aab;margin-left:8px;font-variant-numeric:tabular-nums;"></span>
             </div>
           </div>
 
@@ -1770,8 +1777,8 @@
 
         <div class="sc-intro">
           <p>Configure individual endpoint URLs, or use the <strong>Base URL</strong>
-             shortcut below to populate all 6 at once.
-             Leave a field blank to skip syncing that data type.</p>
+            shortcut below to populate all 6 at once.
+            Leave a field blank to skip syncing that data type.</p>
         </div>
 
         <!-- Base URL Shortcut row -->
@@ -1782,18 +1789,10 @@
               <span class="sc-opt">(optional shortcut — sets all 6 endpoints at once)</span>
             </label>
             <div class="sc-base-url-controls">
-              <input
-                type="url"
-                id="sc-base-url"
-                placeholder="https://api.company.com"
-                class="sc-input sc-base-url-input"
-              />
-              <button
-                type="button"
-                class="sc-apply-base-btn"
-                onclick="applyBaseUrl()"
-                title="Fills all 6 URL fields using this base + the standard path suffixes"
-              >
+              <input type="url" id="sc-base-url" placeholder="https://api.company.com"
+                class="sc-input sc-base-url-input" />
+              <button type="button" class="sc-apply-base-btn" onclick="applyBaseUrl()"
+                title="Fills all 6 URL fields using this base + the standard path suffixes">
                 ⚡ Apply to All
               </button>
             </div>
@@ -1806,32 +1805,32 @@
 
         <div class="sc-divider"></div>
 
-      <!-- Global settings row -->
-      <div class="sc-global-row">
-        <div class="sc-field-half">
-          <label class="sc-label">API Key <span class="sc-opt">(optional — all endpoints)</span></label>
-          <input type="password" id="sc-api-key" placeholder="Leave blank if not required" class="sc-input" />
+        <!-- Global settings row -->
+        <div class="sc-global-row">
+          <div class="sc-field-half">
+            <label class="sc-label">API Key <span class="sc-opt">(optional — all endpoints)</span></label>
+            <input type="password" id="sc-api-key" placeholder="Leave blank if not required" class="sc-input" />
+          </div>
+          <div class="sc-field-half">
+            <label class="sc-label">Sync Interval (seconds)</label>
+            <input type="number" id="sc-sync-interval" value="300" min="30" max="86400" class="sc-input" />
+          </div>
         </div>
-        <div class="sc-field-half">
-          <label class="sc-label">Sync Interval (seconds)</label>
-          <input type="number" id="sc-sync-interval" value="300" min="30" max="86400" class="sc-input" />
-        </div>
-      </div>
 
-      <div class="sc-divider"></div>
+        <div class="sc-divider"></div>
 
-      <!-- ── 1. App Activity ─────────────────────────────────────────────── -->
-      <div class="sc-type-block">
-        <div class="sc-type-label">
-          <span class="sc-icon">🖥</span>
-          <span>App Activity</span>
-          <span class="sc-badge json-badge">POST JSON</span>
-        </div>
-        <input type="url" id="sc-url-app" placeholder="https://api.example.com/api/pctracking/appuseage"
-          class="sc-input sc-url-input" />
-        <details class="sc-demo">
-          <summary>📋 Demo Format (server must accept this)</summary>
-          <pre class="sc-demo-pre">{
+        <!-- ── 1. App Activity ─────────────────────────────────────────────── -->
+        <div class="sc-type-block">
+          <div class="sc-type-label">
+            <span class="sc-icon">🖥</span>
+            <span>App Activity</span>
+            <span class="sc-badge json-badge">POST JSON</span>
+          </div>
+          <input type="url" id="sc-url-app" placeholder="https://api.example.com/api/pctracking/appuseage"
+            class="sc-input sc-url-input" />
+          <details class="sc-demo">
+            <summary>📋 Demo Format (server must accept this)</summary>
+            <pre class="sc-demo-pre">{
   "pcName":       "DESKTOP-ABC123",
   "appName":      "chrome.exe",
   "windowsTitle": "Google - Chrome",
@@ -1840,21 +1839,21 @@
   "duration":     150,
   "syncTime":     "2026-02-22T08:35:01+00:00"
 }</pre>
-        </details>
-      </div>
-
-      <!-- ── 2. Browser Activity ─────────────────────────────────────────── -->
-      <div class="sc-type-block">
-        <div class="sc-type-label">
-          <span class="sc-icon">🌐</span>
-          <span>Browser Activity</span>
-          <span class="sc-badge json-badge">POST JSON</span>
+          </details>
         </div>
-        <input type="url" id="sc-url-browser" placeholder="https://api.example.com/api/pctracking/browser"
-          class="sc-input sc-url-input" />
-        <details class="sc-demo">
-          <summary>📋 Demo Format</summary>
-          <pre class="sc-demo-pre">{
+
+        <!-- ── 2. Browser Activity ─────────────────────────────────────────── -->
+        <div class="sc-type-block">
+          <div class="sc-type-label">
+            <span class="sc-icon">🌐</span>
+            <span>Browser Activity</span>
+            <span class="sc-badge json-badge">POST JSON</span>
+          </div>
+          <input type="url" id="sc-url-browser" placeholder="https://api.example.com/api/pctracking/browser"
+            class="sc-input sc-url-input" />
+          <details class="sc-demo">
+            <summary>📋 Demo Format</summary>
+            <pre class="sc-demo-pre">{
   "pcName":      "DESKTOP-ABC123",
   "browserName": "Chrome",
   "url":         "https://github.com/",
@@ -1862,42 +1861,42 @@
   "timestamp":   "2026-02-22T08:31:00+00:00",
   "syncTime":    "2026-02-22T08:35:01+00:00"
 }</pre>
-        </details>
-      </div>
-
-      <!-- ── 3. Clipboard ────────────────────────────────────────────────── -->
-      <div class="sc-type-block">
-        <div class="sc-type-label">
-          <span class="sc-icon">📋</span>
-          <span>Clipboard Events</span>
-          <span class="sc-badge json-badge">POST JSON</span>
+          </details>
         </div>
-        <input type="url" id="sc-url-clipboard" placeholder="https://api.example.com/api/pctracking/clipboard"
-          class="sc-input sc-url-input" />
-        <details class="sc-demo">
-          <summary>📋 Demo Format</summary>
-          <pre class="sc-demo-pre">{
+
+        <!-- ── 3. Clipboard ────────────────────────────────────────────────── -->
+        <div class="sc-type-block">
+          <div class="sc-type-label">
+            <span class="sc-icon">📋</span>
+            <span>Clipboard Events</span>
+            <span class="sc-badge json-badge">POST JSON</span>
+          </div>
+          <input type="url" id="sc-url-clipboard" placeholder="https://api.example.com/api/pctracking/clipboard"
+            class="sc-input sc-url-input" />
+          <details class="sc-demo">
+            <summary>📋 Demo Format</summary>
+            <pre class="sc-demo-pre">{
   "pcName":         "DESKTOP-ABC123",
   "contentType":    "text",
   "contentPreview": "Copied text preview (truncated)…",
   "timestamp":      "2026-02-22T08:31:45+00:00",
   "syncTime":       "2026-02-22T08:35:01+00:00"
 }</pre>
-        </details>
-      </div>
-
-      <!-- ── 4. Keystrokes ───────────────────────────────────────────────── -->
-      <div class="sc-type-block">
-        <div class="sc-type-label">
-          <span class="sc-icon">⌨</span>
-          <span>Keystrokes / Text Logs</span>
-          <span class="sc-badge json-badge">POST JSON</span>
+          </details>
         </div>
-        <input type="url" id="sc-url-keystrokes" placeholder="https://api.example.com/api/pctracking/keystrokes"
-          class="sc-input sc-url-input" />
-        <details class="sc-demo">
-          <summary>📋 Demo Format</summary>
-          <pre class="sc-demo-pre">{
+
+        <!-- ── 4. Keystrokes ───────────────────────────────────────────────── -->
+        <div class="sc-type-block">
+          <div class="sc-type-label">
+            <span class="sc-icon">⌨</span>
+            <span>Keystrokes / Text Logs</span>
+            <span class="sc-badge json-badge">POST JSON</span>
+          </div>
+          <input type="url" id="sc-url-keystrokes" placeholder="https://api.example.com/api/pctracking/keystrokes"
+            class="sc-input sc-url-input" />
+          <details class="sc-demo">
+            <summary>📋 Demo Format</summary>
+            <pre class="sc-demo-pre">{
   "pcName":      "DESKTOP-ABC123",
   "application": "notepad.exe",
   "windowTitle": "Untitled - Notepad",
@@ -1905,21 +1904,21 @@
   "timestamp":   "2026-02-22T08:32:00+00:00",
   "syncTime":    "2026-02-22T08:35:01+00:00"
 }</pre>
-        </details>
-      </div>
-
-      <!-- ── 5. Screenshots ──────────────────────────────────────────────── -->
-      <div class="sc-type-block">
-        <div class="sc-type-label">
-          <span class="sc-icon">📸</span>
-          <span>Screenshots</span>
-          <span class="sc-badge file-badge">POST multipart/form-data</span>
+          </details>
         </div>
-        <input type="url" id="sc-url-screenshots" placeholder="https://api.example.com/api/pctracking/screenshots"
-          class="sc-input sc-url-input" />
-        <details class="sc-demo">
-          <summary>📋 Demo Format (multipart — NOT JSON)</summary>
-          <pre class="sc-demo-pre">Content-Type: multipart/form-data
+
+        <!-- ── 5. Screenshots ──────────────────────────────────────────────── -->
+        <div class="sc-type-block">
+          <div class="sc-type-label">
+            <span class="sc-icon">📸</span>
+            <span>Screenshots</span>
+            <span class="sc-badge file-badge">POST multipart/form-data</span>
+          </div>
+          <input type="url" id="sc-url-screenshots" placeholder="https://api.example.com/api/pctracking/screenshots"
+            class="sc-input sc-url-input" />
+          <details class="sc-demo">
+            <summary>📋 Demo Format (multipart — NOT JSON)</summary>
+            <pre class="sc-demo-pre">Content-Type: multipart/form-data
 
 Form fields:
   pcName        = "DESKTOP-ABC123"
@@ -1933,21 +1932,21 @@ File field:
 
 Server must use request.FILES['file'] or equivalent.
 Response: HTTP 200/201 with any body.</pre>
-        </details>
-      </div>
-
-      <!-- ── 6. Videos ───────────────────────────────────────────────────── -->
-      <div class="sc-type-block">
-        <div class="sc-type-label">
-          <span class="sc-icon">🎥</span>
-          <span>Screen Recordings</span>
-          <span class="sc-badge file-badge">POST multipart/form-data</span>
+          </details>
         </div>
-        <input type="url" id="sc-url-videos" placeholder="https://api.example.com/api/pctracking/videos"
-          class="sc-input sc-url-input" />
-        <details class="sc-demo">
-          <summary>📋 Demo Format (multipart — NOT JSON)</summary>
-          <pre class="sc-demo-pre">Content-Type: multipart/form-data
+
+        <!-- ── 6. Videos ───────────────────────────────────────────────────── -->
+        <div class="sc-type-block">
+          <div class="sc-type-label">
+            <span class="sc-icon">🎥</span>
+            <span>Screen Recordings</span>
+            <span class="sc-badge file-badge">POST multipart/form-data</span>
+          </div>
+          <input type="url" id="sc-url-videos" placeholder="https://api.example.com/api/pctracking/videos"
+            class="sc-input sc-url-input" />
+          <details class="sc-demo">
+            <summary>📋 Demo Format (multipart — NOT JSON)</summary>
+            <pre class="sc-demo-pre">Content-Type: multipart/form-data
 
 Form fields:
   pcName          = "DESKTOP-ABC123"
@@ -1961,14 +1960,14 @@ File field:
 Note: MP4 chunks are ~5 minutes / ~50-150 MB each.
       Set server upload limit accordingly (e.g. client_max_body_size 200m in nginx).
 Response: HTTP 200/201 with any body.</pre>
-        </details>
-      </div>
+          </details>
+        </div>
 
-      <!-- Feedback -->
-      <div id="server-config-error"
-        style="display:none;color:#e74c3c;font-size:13px;margin-top:12px;text-align:center;"></div>
-      <div id="server-config-success"
-        style="display:none;color:#1a8a52;font-size:13px;margin-top:12px;text-align:center;"></div>
+        <!-- Feedback -->
+        <div id="server-config-error"
+          style="display:none;color:#e74c3c;font-size:13px;margin-top:12px;text-align:center;"></div>
+        <div id="server-config-success"
+          style="display:none;color:#1a8a52;font-size:13px;margin-top:12px;text-align:center;"></div>
 
       </div><!-- end #sc-dynamic-body -->
 

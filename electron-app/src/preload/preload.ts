@@ -76,4 +76,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('show-quit-dialog', cb),
   onFirstRunSetup: (cb: (event: IpcRendererEvent) => void) =>
     ipcRenderer.on('first-run-setup', cb),
+  onForceLogout: (cb: (event: IpcRendererEvent) => void) =>
+    ipcRenderer.on('force-logout', cb),
 });

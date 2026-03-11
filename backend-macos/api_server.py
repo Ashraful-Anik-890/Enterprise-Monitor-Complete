@@ -176,10 +176,11 @@ class ConfigRequest(BaseModel):
     server_url:            Optional[str] = None
 
 class IdentityResponse(BaseModel):
-    machine_id:   str
-    os_user:      str
-    device_alias: str
-    user_alias:   str
+    machine_id:     str
+    os_user:        str
+    device_alias:   str
+    user_alias:     str
+    login_username: str
 
 class IdentityUpdateRequest(BaseModel):
     device_alias: Optional[str] = None

@@ -12,6 +12,7 @@ passlib[bcrypt]
 # ── Screenshot & Image ────────────────────────────────────────────────────────
 mss
 Pillow
+opencv-python
 
 # ── System / Windows APIs ────────────────────────────────────────────────────
 pywin32
