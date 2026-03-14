@@ -675,6 +675,7 @@
       padding: 10px 14px;
       border-bottom: 1px solid #f0f2f8;
       color: #444;
+      word-wrap: break-word;
       overflow-wrap: break-word;
     }
 
@@ -1672,6 +1673,21 @@
 
         <!-- ── SCREENSHOTS TAB ── -->
         <div id="screenshots-tab" class="tab-pane">
+          <div class="toggle-row">
+            <div>
+              <div class="toggle-label">Screenshot Capturing</div>
+              <div class="toggle-sublabel">Periodic window-capture · Low resolution · Privacy-aware</div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="screenshot-toggle">
+              <span class="toggle-slider"></span>
+            </label>
+            <div id="ss-badge" class="rec-badge off">
+              <span class="rec-dot"></span>
+              <span id="ss-badge-text">OFF</span>
+            </div>
+          </div>
+
           <div id="screenshots-container" class="screenshot-grid">
             <div class="loading">Loading screenshots…</div>
           </div>
@@ -1781,7 +1797,7 @@
 
         <div class="sc-intro">
           <p>Configure individual endpoint URLs, or use the <strong>Base URL</strong>
-            shortcut below to populate all 6 at once.
+            shortcut below to populate all 9 at once.
             Leave a field blank to skip syncing that data type.</p>
         </div>
 
@@ -1790,13 +1806,13 @@
           <div class="sc-base-url-field">
             <label class="sc-label">
               Base URL
-              <span class="sc-opt">(optional shortcut — sets all 6 endpoints at once)</span>
+              <span class="sc-opt">(optional shortcut — sets all 9 endpoints at once)</span>
             </label>
             <div class="sc-base-url-controls">
               <input type="url" id="sc-base-url" placeholder="https://api.company.com"
                 class="sc-input sc-base-url-input" />
               <button type="button" class="sc-apply-base-btn" onclick="applyBaseUrl()"
-                title="Fills all 6 URL fields using this base + the standard path suffixes">
+                title="Fills all 9 URL fields using this base + the standard path suffixes">
                 ⚡ Apply to All
               </button>
             </div>
@@ -1977,6 +1993,44 @@ Note: MP4 chunks are ~5 minutes / ~50-150 MB each.
       Set server upload limit accordingly (e.g. client_max_body_size 200m in nginx).
 Response: HTTP 200/201 with any body.</pre>
           </details>
+        </div>
+
+        <div class="sc-divider"></div>
+
+        <!-- ── 7. Overall Monitoring Settings ───────────────────────────────── -->
+        <div class="sc-type-block">
+          <div class="sc-type-label">
+            <span class="sc-icon">⚙</span>
+            <span>Monitoring Settings</span>
+            <span class="sc-badge json-badge">GET JSON</span>
+          </div>
+          <input type="url" id="sc-url-monitoring-settings" placeholder="https://api.example.com/api/pctracking/monitoring-settings"
+            class="sc-input sc-url-input" />
+          <p class="sc-base-url-hint">Endpoint to poll for overall Pause/Resume status.</p>
+        </div>
+
+        <!-- ── 8. Screenshot Settings ────────────────────────────────────── -->
+        <div class="sc-type-block">
+          <div class="sc-type-label">
+            <span class="sc-icon">🖼</span>
+            <span>Screenshot Settings</span>
+            <span class="sc-badge json-badge">GET JSON</span>
+          </div>
+          <input type="url" id="sc-url-screenshot-settings" placeholder="https://api.example.com/api/pctracking/screenshot-settings"
+            class="sc-input sc-url-input" />
+          <p class="sc-base-url-hint">Endpoint to poll for screenshot capturing toggle status.</p>
+        </div>
+
+        <!-- ── 9. Video Settings ────────────────────────────────────────── -->
+        <div class="sc-type-block">
+          <div class="sc-type-label">
+            <span class="sc-icon">🎥</span>
+            <span>Video Settings</span>
+            <span class="sc-badge json-badge">GET JSON</span>
+          </div>
+          <input type="url" id="sc-url-video-settings" placeholder="https://api.example.com/api/pctracking/video-settings"
+            class="sc-input sc-url-input" />
+          <p class="sc-base-url-hint">Endpoint to poll for screen recording toggle status.</p>
         </div>
 
         <!-- Feedback -->

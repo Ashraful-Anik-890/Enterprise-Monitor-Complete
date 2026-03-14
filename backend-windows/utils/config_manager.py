@@ -45,7 +45,16 @@ class ConfigManager:
             "base_url": "",          # persists the Base URL shortcut input
             "device_id": str(uuid.uuid4()),
             "sync_interval_seconds": 60,
-            "screenshot_interval": 60
+            "screenshot_interval": 60,
+            "url_app_activity": "",
+            "url_browser": "",
+            "url_clipboard": "",
+            "url_keystrokes": "",
+            "url_screenshots": "",
+            "url_videos": "",
+            "url_monitoring_settings": "",
+            "url_screenshot_settings": "",
+            "url_video_settings": "",
         }
         self.save_config(default_config)
         return default_config

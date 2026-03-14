@@ -32,7 +32,7 @@ DYNAMIC_API_ENABLED: bool = False
 BASE_URL: str = "https://192.168.2.95:5000"
 
 # Displayed in the UI when DYNAMIC_API_ENABLED = False
-COMPANY_NAME: str = "Enterprise IT TEST"
+COMPANY_NAME: str = "Enterprise IT TEST"      
 
 # ── URL path suffixes ─────────────────────────────────────────────────────────
 # Server team: implement exactly these endpoint paths.
@@ -43,3 +43,6 @@ PATH_CLIPBOARD:    str = "/api/pctracking/clipboard"
 PATH_KEYSTROKES:   str = "/api/pctracking/keystrokes"
 PATH_SCREENSHOTS:  str = "/api/pctracking/screenshots"
 PATH_VIDEOS:       str = "/api/pctracking/videos"
+PATH_VIDEO_SETTINGS: str = "/api/pctracking/video-settings"
+PATH_SCREENSHOT_SETTINGS: str = "/api/pctracking/screenshot-settings"
+PATH_MONITORING_SETTINGS: str = "/api/pctracking/monitoring-settings"

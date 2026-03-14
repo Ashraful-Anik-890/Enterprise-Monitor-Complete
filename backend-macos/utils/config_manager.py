@@ -55,6 +55,8 @@ class ConfigManager:
             "url_keystrokes": "",
             "url_screenshots": "",
             "url_videos": "",
+            "url_monitoring_settings": "",
+            "url_screenshot_settings": "",
         }
         self._save_to_disk(default)
         return default

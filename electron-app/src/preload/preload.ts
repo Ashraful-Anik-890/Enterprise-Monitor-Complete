@@ -55,6 +55,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getVideos: (params: { limit?: number }) =>
     ipcRenderer.invoke('api:getVideos', params),
 
+  // ── Screenshots ────────────────────────────────────────────────────────────
+  toggleScreenshotCapturing: () => ipcRenderer.invoke('api:toggleScreenshotCapturing'),
+  getScreenshotStatus: () => ipcRenderer.invoke('api:getScreenshotStatus'),
+
   // ── Config ────────────────────────────────────────────────────────────────
   getConfig: () => ipcRenderer.invoke('api:getConfig'),
   setConfig: (payload: { server_url: string; api_key: string; sync_interval_seconds?: number; url_app_activity?: string; url_browser?: string; url_clipboard?: string; url_keystrokes?: string; url_screenshots?: string; url_videos?: string }) =>

@@ -705,6 +705,28 @@ function setupIpcHandlers(): void {
     }
   });
 
+  ipcMain.handle('api:getScreenshotStatus', async () => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.get('/api/monitoring/screenshot/status', token);
+      return response.data;
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      return { recording: false, is_active: false };
+    }
+  });
+
+  ipcMain.handle('api:toggleScreenshotCapturing', async () => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.post('/api/monitoring/screenshot/toggle', {}, token);
+      return response.data;
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      return { success: false, error: error.message };
+    }
+  });
+
   // ── App logs ──────────────────────────────────────────────────────────────
   ipcMain.handle('api:getAppLogs', async (_event, params: { limit?: number; offset?: number } = {}) => {
     try {

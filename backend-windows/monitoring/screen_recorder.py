@@ -81,6 +81,7 @@ class ScreenRecorder:
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._is_running  = False
+        self._is_paused   = False
         self._lock        = threading.Lock()
 
         self.video_dir = _resolve_video_dir()
@@ -128,6 +129,16 @@ class ScreenRecorder:
         if self._thread:
             self._thread.join(timeout=10)
         logger.info("ScreenRecorder stopped")
+
+    def pause(self):
+        """Pause recording"""
+        self._is_paused = True
+        logger.info("ScreenRecorder paused")
+
+    def resume(self):
+        """Resume recording"""
+        self._is_paused = False
+        logger.info("ScreenRecorder resumed")
 
     # ─── INTERNALS ───────────────────────────────────────────────────────────
 
@@ -178,6 +189,10 @@ class ScreenRecorder:
                     not self._stop_event.is_set()
                     and (time.monotonic() - chunk_start) < CHUNK_SECONDS
                 ):
+                    if self._is_paused:
+                        self._stop_event.wait(1)
+                        continue
+
                     frame_start = time.monotonic()
                     try:
                         raw = sct.grab(monitor)

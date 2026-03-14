@@ -142,6 +142,9 @@ function setupEventListeners() {
   // Recording toggle
   document.getElementById('recording-toggle').addEventListener('change', handleRecordingToggle);
 
+  // Screenshot toggle
+  document.getElementById('screenshot-toggle').addEventListener('change', handleScreenshotToggle);
+
   // New additions
   window.electronAPI.onQuitRequested(() => showQuitAuthDialog());
   window.electronAPI.onFirstRunSetup(() => showFirstRunModal());
@@ -338,6 +341,9 @@ function openServerConfigModal() {
       { id: 'sc-url-keystrokes', val: cfg.url_keystrokes, path: cfg.path_keystrokes },
       { id: 'sc-url-screenshots', val: cfg.url_screenshots, path: cfg.path_screenshots },
       { id: 'sc-url-videos', val: cfg.url_videos, path: cfg.path_videos },
+      { id: 'sc-url-monitoring-settings', val: cfg.url_monitoring_settings, path: cfg.path_monitoring_settings },
+      { id: 'sc-url-screenshot-settings', val: cfg.url_screenshot_settings, path: cfg.path_screenshot_settings },
+      { id: 'sc-url-video-settings', val: cfg.url_video_settings, path: cfg.path_video_settings },
     ];
 
     urlFields.forEach(({ id, val, path }) => {
@@ -387,6 +393,9 @@ function applyBaseUrl() {
     'sc-url-keystrokes',
     'sc-url-screenshots',
     'sc-url-videos',
+    'sc-url-monitoring-settings',
+    'sc-url-screenshot-settings',
+    'sc-url-video-settings',
   ];
 
   urlInputIds.forEach(id => {
@@ -412,6 +421,9 @@ async function handleSaveServerConfig() {
     { id: 'sc-url-keystrokes', key: 'url_keystrokes', label: 'Keystrokes' },
     { id: 'sc-url-screenshots', key: 'url_screenshots', label: 'Screenshots' },
     { id: 'sc-url-videos', key: 'url_videos', label: 'Screen Recordings' },
+    { id: 'sc-url-monitoring-settings', key: 'url_monitoring_settings', label: 'Monitoring Settings' },
+    { id: 'sc-url-screenshot-settings', key: 'url_screenshot_settings', label: 'Screenshot Settings' },
+    { id: 'sc-url-video-settings', key: 'url_video_settings', label: 'Video Settings' },
   ];
 
   const payload = {
@@ -487,11 +499,11 @@ async function loadDashboardData() {
   try {
     await loadIdentity();
     if (currentTab === 'overview') {
-      await Promise.all([loadStatistics(), loadChartsData()]);
+      await Promise.all([loadStatistics(), loadChartsData(), loadMonitoringStatus()]);
     } else if (currentTab === 'monitor-data') {
-      await loadMonitorData();
+      await Promise.all([loadMonitorData(), loadMonitoringStatus()]);
     } else if (currentTab === 'screenshots') {
-      await loadScreenshots();
+      await Promise.all([loadScreenshotStatus(), loadScreenshots(), loadMonitoringStatus()]);
     }
   } catch (error) {
     console.error('Failed to load dashboard data:', error);
@@ -868,6 +880,49 @@ async function openVideoFolder(filepath) {
 }
 
 // ─── SCREENSHOTS ──────────────────────────────────────────────
+async function loadScreenshotStatus() {
+  try {
+    const status = await window.electronAPI.getScreenshotStatus();
+    const toggle = document.getElementById('screenshot-toggle');
+    const badge = document.getElementById('ss-badge');
+    const badgeTxt = document.getElementById('ss-badge-text');
+    const dot = badge.querySelector('.rec-dot');
+
+    toggle.checked = status.recording; // Backend uses "recording" key for active state in status
+
+    if (status.recording) {
+      badge.className = 'rec-badge on';
+      badgeTxt.textContent = 'ON';
+      dot.classList.add('blink');
+    } else {
+      badge.className = 'rec-badge off';
+      badgeTxt.textContent = 'OFF';
+      dot.classList.remove('blink');
+    }
+  } catch (err) {
+    console.error('Failed to load screenshot status:', err);
+  }
+}
+
+async function handleScreenshotToggle() {
+  const toggle = document.getElementById('screenshot-toggle');
+  toggle.disabled = true;
+  try {
+    const result = await window.electronAPI.toggleScreenshotCapturing();
+    if (result.success) {
+      await loadScreenshotStatus();
+    } else {
+      toggle.checked = !toggle.checked;
+      console.error('Screenshot toggle failed:', result.error);
+    }
+  } catch (err) {
+    toggle.checked = !toggle.checked;
+    console.error('Screenshot toggle request failed:', err);
+  } finally {
+    toggle.disabled = false;
+  }
+}
+
 async function loadScreenshots() {
   const container = document.getElementById('screenshots-container');
   container.innerHTML = '<div class="loading">Loading screenshots…</div>';
@@ -1123,7 +1178,11 @@ let _syncPollerInterval = null;
 
 function startSyncStatusPoller() {
   updateSyncStatus();                                // immediate
-  _syncPollerInterval = setInterval(updateSyncStatus, 60_000);
+  loadMonitoringStatus();                            // immediate
+  _syncPollerInterval = setInterval(() => {
+    updateSyncStatus();
+    loadMonitoringStatus();
+  }, 60_000);
 }
 
 function stopSyncStatusPoller() {

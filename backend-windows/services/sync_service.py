@@ -40,6 +40,7 @@ import socket
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from url import PATH_VIDEO_SETTINGS, PATH_SCREENSHOT_SETTINGS, PATH_MONITORING_SETTINGS
 import requests
 
 logger = logging.getLogger(__name__)
@@ -136,6 +137,8 @@ class SyncService:
                 self._is_syncing = True
                 identity = self._get_identity()
                 self._sync_video_status(identity)
+                self._sync_screenshot_status(identity)
+                self._sync_overall_status(identity)
                 self._sync_app_activity(identity)
                 self._sync_browser(identity)
                 self._sync_clipboard(identity)
@@ -482,11 +485,14 @@ class SyncService:
         return len(synced_ids)
 
     def _sync_video_status(self, identity: dict) -> None:
-        base_url = self.config_manager.get("base_url")
-        if not base_url:
-            return
+        url = self.config_manager.get("url_video_settings", "").strip()
+        if not url:
+            base_url = self.config_manager.get("base_url", "").strip()
+            if not base_url:
+                return
+            url = f"{base_url.rstrip('/')}{PATH_VIDEO_SETTINGS}"
         
-        url = f"{base_url.rstrip('/')}/api/settings/video-recording?pcName={identity['pcName']}&macAddress={identity['macAddress']}&userName={identity['userName']}"
+        url = f"{url}?pcName={identity['pcName']}&macAddress={identity['macAddress']}&userName={identity['userName']}"
         try:
             resp = requests.get(
                 url, headers=self._auth_headers(), timeout=10
@@ -498,7 +504,7 @@ class SyncService:
                     local_enabled = self.config_manager.get("recording_enabled", False)
                     if bool(remote_enabled) != bool(local_enabled):
                         self.config_manager.set("recording_enabled", bool(remote_enabled))
-                        from monitoring import screen_recorder
+                        from api_server import screen_recorder
                         if remote_enabled:
                             screen_recorder.start()
                             logger.info("Screen recording ENABLED by remote server sync")
@@ -507,4 +513,68 @@ class SyncService:
                             logger.info("Screen recording DISABLED by remote server sync")
         except Exception as e:
             logger.debug("Failed to sync video status from remote: %s", e)
+
+    def _sync_screenshot_status(self, identity: dict) -> None:
+        url = self.config_manager.get("url_screenshot_settings", "").strip()
+        if not url:
+            base_url = self.config_manager.get("base_url", "").strip()
+            if not base_url:
+                return
+            url = f"{base_url.rstrip('/')}{PATH_SCREENSHOT_SETTINGS}"
+            
+        url = f"{url}?pcName={identity['pcName']}&macAddress={identity['macAddress']}&userName={identity['userName']}"
+        try:
+            resp = requests.get(
+                url, headers=self._auth_headers(), timeout=10
+            )
+            if resp.ok:
+                data = resp.json()
+                remote_enabled = data.get("screenshotEnabled")
+                if remote_enabled is not None:
+                    local_enabled = self.config_manager.get("screenshot_enabled", True)
+                    if bool(remote_enabled) != bool(local_enabled):
+                        self.config_manager.set("screenshot_enabled", bool(remote_enabled))
+                        from api_server import screenshot_monitor
+                        if remote_enabled:
+                            screenshot_monitor.start()
+                            logger.info("Screenshot capturing ENABLED by remote server sync")
+                        else:
+                            screenshot_monitor.stop()
+                            logger.info("Screenshot capturing DISABLED by remote server sync")
+        except Exception as e:
+            logger.debug("Failed to sync screenshot status from remote: %s", e)
+
+    def _sync_overall_status(self, identity: dict) -> None:
+        url = self.config_manager.get("url_monitoring_settings", "").strip()
+        if not url:
+            base_url = self.config_manager.get("base_url", "").strip()
+            if not base_url:
+                return
+            url = f"{base_url.rstrip('/')}{PATH_MONITORING_SETTINGS}"
+            
+        url = f"{url}?pcName={identity['pcName']}&macAddress={identity['macAddress']}&userName={identity['userName']}"
+        try:
+            resp = requests.get(
+                url, headers=self._auth_headers(), timeout=10
+            )
+            if resp.ok:
+                data = resp.json()
+                remote_active = data.get("monitoringActive")
+                if remote_active is not None:
+                    from api_server import monitoring_active
+                    if bool(remote_active) != bool(monitoring_active):
+                        # Use the API server endpoints if possible, or trigger services directly.
+                        # Since we are in the sync thread, we can call the same logic as the endpoints.
+                        if remote_active:
+                            logger.info("Monitoring RESUMED by remote server sync")
+                            requests.post(f"http://127.0.0.1:{self.config_manager.get('api_port', 5000)}/api/monitoring/resume", 
+                                          headers={"Authorization": f"Bearer {self.config_manager.get('admin_token', '')}"},
+                                          timeout=5)
+                        else:
+                            logger.info("Monitoring PAUSED by remote server sync")
+                            requests.post(f"http://127.0.0.1:{self.config_manager.get('api_port', 5000)}/api/monitoring/pause", 
+                                          headers={"Authorization": f"Bearer {self.config_manager.get('admin_token', '')}"},
+                                          timeout=5)
+        except Exception as e:
+            logger.debug("Failed to sync overall monitoring status from remote: %s", e)
 

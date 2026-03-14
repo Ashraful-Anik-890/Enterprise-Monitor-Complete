@@ -2,7 +2,9 @@
 node_modules/
 dist/
 out/
-build/
+backend-windows/build/
+backend-macOS/build/
+backend-linux/build/
 .env
 release/
 resources/.py

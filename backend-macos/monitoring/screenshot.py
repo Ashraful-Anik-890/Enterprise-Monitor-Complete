@@ -141,6 +141,7 @@ class ScreenshotMonitor:
                 # Capture primary monitor
                 monitor = sct.monitors[1]
                 screenshot = sct.grab(monitor)
+                
 
                 # Convert to PIL Image
                 img = Image.frombytes("RGB", screenshot.size, screenshot.rgb)
