@@ -2007,6 +2007,19 @@ Response: HTTP 200/201 with any body.</pre>
           <input type="url" id="sc-url-monitoring-settings" placeholder="https://api.example.com/api/pctracking/monitoring-settings"
             class="sc-input sc-url-input" />
           <p class="sc-base-url-hint">Endpoint to poll for overall Pause/Resume status.</p>
+          <details class="sc-demo">
+            <summary>📋 Demo Format (GET & POST)</summary>
+            <pre class="sc-demo-pre">GET Response:
+{ "monitoringActive": true }
+
+POST Notification (when toggled locally):
+{
+  "pcName": "DESKTOP-ABC123",
+  "macAddress": "00:1B:44:11:3A:B7",
+  "userName": "jdoe",
+  "monitoringActive": false
+}</pre>
+          </details>
         </div>
 
         <!-- ── 8. Screenshot Settings ────────────────────────────────────── -->
@@ -2019,6 +2032,19 @@ Response: HTTP 200/201 with any body.</pre>
           <input type="url" id="sc-url-screenshot-settings" placeholder="https://api.example.com/api/pctracking/screenshot-settings"
             class="sc-input sc-url-input" />
           <p class="sc-base-url-hint">Endpoint to poll for screenshot capturing toggle status.</p>
+          <details class="sc-demo">
+            <summary>📋 Demo Format (GET & POST)</summary>
+            <pre class="sc-demo-pre">GET Response:
+{ "screenshotEnabled": true }
+
+POST Notification (when toggled locally):
+{
+  "pcName": "DESKTOP-ABC123",
+  "macAddress": "00:1B:44:11:3A:B7",
+  "userName": "jdoe",
+  "screenshotEnabled": false
+}</pre>
+          </details>
         </div>
 
         <!-- ── 9. Video Settings ────────────────────────────────────────── -->
@@ -2031,6 +2057,19 @@ Response: HTTP 200/201 with any body.</pre>
           <input type="url" id="sc-url-video-settings" placeholder="https://api.example.com/api/pctracking/video-settings"
             class="sc-input sc-url-input" />
           <p class="sc-base-url-hint">Endpoint to poll for screen recording toggle status.</p>
+          <details class="sc-demo">
+            <summary>📋 Demo Format (GET & POST)</summary>
+            <pre class="sc-demo-pre">GET Response:
+{ "recordingEnabled": true }
+
+POST Notification (when toggled locally):
+{
+  "pcName": "DESKTOP-ABC123",
+  "macAddress": "00:1B:44:11:3A:B7",
+  "userName": "jdoe",
+  "recordingEnabled": false
+}</pre>
+          </details>
         </div>
 
         <!-- Feedback -->
