@@ -211,7 +211,7 @@ The app shares a **single Electron frontend** but uses **platform-specific Pytho
 | 🎥 **Screen Recording** | Continuous MP4 recording | `OpenCV` + `mss` — configurable chunk duration |
 | ⌨️ **Keystroke Logging** | Application-aware text capture | `pynput` — captures per-app-context |
 | 📋 **Clipboard Monitoring** | Copy event tracking | `pyperclip` — content type + preview |
-| 🔄 **ERP Sync** | 6-type data sync engine | JSON POST + multipart file upload to configurable endpoints |
+| 🔄 **ERP Sync** | Bi-directional sync engine | 9 endpoints: 6 data ingestion + 3 remote control (Pause/Resume, Toggles) |
 | 🔐 **Authentication** | JWT + bcrypt + security Q&A | Token expiry, credential update, password reset flow |
 | 🖥️ **System Tray** | Background operation | Minimize to tray, credential-protected quit |
 | 📊 **Dashboard** | Real-time analytics | Chart.js visualizations, timezone-aware display |
@@ -340,7 +340,8 @@ enterprise-monitor-complete/
 │   │   ├── keylogger.py                    # Keystroke capture (pynput)
 │   │   └── data_cleaner.py                 # 7-day data retention
 │   ├── services/
-│   │   └── sync_service.py                 # 6-type ERP sync engine
+│   │   └── sync_service.py                 # 9-endpoint Bi-directional Sync engine
+│   ├── url.py                              # Central Static/Dynamic API config
 │   ├── utils/
 │   │   └── config_manager.py               # JSON config persistence
 │   ├── requirements.txt
@@ -454,24 +455,50 @@ All monitoring threads share a **single persistent SQLite connection** with:
 
 ## 🔄 ERP Sync Engine
 
-The `SyncService` synchronizes 6 data types to configurable ERP endpoints:
+The `SyncService` provides a professional-grade bi-directional synchronization engine between the client and your ERP/Remote Server.
 
-| # | Data Type | Transport | Endpoint Config Key |
+### 📤 Data Ingestion (Telemetry)
+
+| Type | Data Content | Transport | Path |
 |---|---|---|---|
-| 1 | App Activity | JSON POST | `url_app_activity` |
-| 2 | Browser Activity | JSON POST | `url_browser` |
-| 3 | Clipboard Events | JSON POST | `url_clipboard` |
-| 4 | Keystroke Logs | JSON POST | `url_keystrokes` |
-| 5 | Screenshots | Multipart POST | `url_screenshots` |
-| 6 | Video Recordings | Multipart POST | `url_videos` |
+| 1 | App Activity | JSON POST | `/api/pctracking/appuseage` |
+| 2 | Browser Activity | JSON POST | `/api/pctracking/browser` |
+| 3 | Clipboard Events | JSON POST | `/api/pctracking/clipboard` |
+| 4 | Keystroke Logs | JSON POST | `/api/pctracking/keystrokes` |
+| 5 | Screenshots | Multipart POST | `/api/pctracking/screenshots` |
+| 6 | Video Recordings | Multipart POST | `/api/pctracking/videos` |
 
-**Features:**
-- Per-record sync with tracked `synced`/`is_synced` flags
-- Configurable sync interval (default: 300s)
-- `X-API-Key` header authentication
-- UTC-normalized timestamps for ERP compatibility
-- Automatic retry on next cycle for failed records
-- Manual sync trigger via dashboard button
+### 📥 Remote Control (Bi-directional)
+
+The client automatically polls and pushes status changes to synchronize the local GUI with the server's desired state:
+
+| Feature | Remote Control Path | Description |
+|---|---|---|
+| **Pause / Resume** | `/api/pctracking/monitoring-settings` | Master switch to start/stop all monitoring activities globally. |
+| **Screenshot Toggle** | `/api/pctracking/screenshot-settings` | Remotely enable/disable periodic screen captures. |
+| **Video Toggle** | `/api/pctracking/video-settings` | Remotely enable/disable continuous screen recording. |
+
+**Advanced Sync Logic:**
+- **Cooldown Protection**: Prevents race conditions by pausing remote updates for 30s after a local toggle.
+- **Atomic State Enforcement**: Sub-monitors (Screenshots/Video) are automatically gated by the global monitoring status.
+- **Timezone Normalization**: Normalizes all timestamps to UTC/ISO-8601 for global server compatibility.
+- **Manual Sync**: Instant synchronization available via the dashboard "Sync Now" button.
+
+---
+
+## ⚙️ API Configuration Modes
+
+The application supports two modes of API configuration, managed centrally in `url.py`:
+
+### 1. Static Mode (Enterprise Deployment)
+Centrally lock all clients to a specific server.
+- **Config**: Set `DYNAMIC_API_ENABLED = False` and define `BASE_URL` in `url.py`.
+- **Result**: The "Config Server API" modal in the GUI is **locked**. On every startup, the client automatically seeds `config.json` with the hardcoded URLs.
+
+### 2. Dynamic Mode (Flexible/IT Admin)
+Allow local configuration via the GUI.
+- **Config**: Set `DYNAMIC_API_ENABLED = True`.
+- **Result**: The GUI modal is **unlocked**. Users/Admins can enter a Base URL or individual endpoints manually. `BASE_URL` in `url.py` is only used as a first-run seed.
 
 ---
 
