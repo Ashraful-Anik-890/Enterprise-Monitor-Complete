@@ -117,9 +117,9 @@ def _notify_server_sync(endpoint_path_key: str, payload_key: str, payload_value:
             "userName": user_name,
             payload_key: payload_value
         }
-        requests.post(url, json=payload, headers=headers, timeout=5)
-        # Update sync_service to avoid race condition
+        # Mark cooldown BEFORE the network call so it activates even on timeout/failure
         sync_service.mark_local_update()
+        requests.post(url, json=payload, headers=headers, timeout=5)
     except Exception as e:
         logger.error(f"Failed to notify remote server for {payload_key}: {e}")
 

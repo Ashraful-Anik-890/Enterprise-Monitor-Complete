@@ -516,28 +516,45 @@ class SyncService:
             if not base_url:
                 return
             url = f"{base_url.rstrip('/')}{PATH_MONITORING_SETTINGS}"
-            
+
         url = f"{url}?pcName={identity['pcName']}&macAddress={identity['macAddress']}&userName={identity['userName']}"
         try:
-            resp = requests.get(
-                url, headers=self._auth_headers(), timeout=10
-            )
-            if resp.ok:
-                data = resp.json()
-                remote_active = data.get("monitoringActive")
-                if remote_active is not None:
-                    # Trigger local pause/resume via internal loopback to ensure consistent state
-                    port = self.config_manager.get('api_port', 5000)
-                    token = self.config_manager.get('admin_token', '')
-                    headers = {"Authorization": f"Bearer {token}"} if token else {}
-                    
+            resp = requests.get(url, headers=self._auth_headers(), timeout=10)
+            if not resp.ok:
+                return
+            data = resp.json()
+            remote_active = data.get("monitoringActive")
+            if remote_active is not None:
+                    import api_server
+                    if bool(remote_active) == bool(api_server.monitoring_active):
+                        return
+
                     if remote_active:
+                        api_server.monitoring_active = True
+                        if api_server.screenshot_monitor.is_running:
+                            api_server.screenshot_monitor.resume()
+                        elif self.config_manager.get("screenshot_enabled", True):
+                            api_server.screenshot_monitor.start()
+
+                        if api_server.screen_recorder.is_running:
+                            api_server.screen_recorder.resume()
+                        elif self.config_manager.get("recording_enabled", False):
+                            api_server.screen_recorder.start()
+
+                        api_server.clipboard_monitor.resume()
+                        api_server.app_tracker.resume()
+                        api_server.browser_tracker.resume()
+                        api_server.keylogger.resume()
                         logger.info("Monitoring RESUMED by remote server sync")
-                        requests.post(f"http://127.0.0.1:{port}/api/monitoring/resume", 
-                                      headers=headers, timeout=5)
                     else:
+                        api_server.monitoring_active = False
+                        api_server.screenshot_monitor.pause()
+                        api_server.clipboard_monitor.pause()
+                        api_server.app_tracker.pause()
+                        api_server.browser_tracker.pause()
+                        api_server.keylogger.pause()
+                        api_server.screen_recorder.pause()
                         logger.info("Monitoring PAUSED by remote server sync")
-                        requests.post(f"http://127.0.0.1:{port}/api/monitoring/pause", 
-                                      headers=headers, timeout=5)
+
         except Exception as e:
             logger.debug("Failed to sync overall monitoring status from remote: %s", e)
