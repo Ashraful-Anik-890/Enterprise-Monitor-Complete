@@ -40,6 +40,7 @@ class SyncService:
         self._last_sync_time:  Optional[str] = None   # FIX: was str | None
         self._last_sync_error: Optional[str] = None   # FIX: was str | None
         self._is_syncing:      bool           = False
+        self._local_update_time: float     = 0
 
     # ─── IDENTITY ────────────────────────────────────────────────────────────
 
@@ -80,6 +81,15 @@ class SyncService:
         if self.thread:
             self.thread.join(timeout=5)
         logger.info("SyncService stopped")
+
+    def mark_local_update(self) -> None:
+        """Called by api_server when a local toggle happens to prevent immediate override."""
+        self._local_update_time = time.time()
+        logger.debug("SyncService: local update marked, cooldown active")
+
+    def _is_cooldown_active(self) -> bool:
+        """Returns True if a local update happened recently (e.g. within 30s)."""
+        return (time.time() - self._local_update_time) < 30
 
     def get_status(self) -> dict:
         return {
@@ -167,7 +177,7 @@ class SyncService:
             )
             if resp.ok:
                 return True
-            logger.warning("JSON POST %s → HTTP %d: %s", url, resp.status_code, resp.text[:200])
+            logger.warning("JSON POST %s \u2192 HTTP %d: %s", url, resp.status_code, resp.text[:200])
             return False
         except requests.exceptions.Timeout:
             logger.error("JSON POST %s timed out", url)
@@ -190,10 +200,10 @@ class SyncService:
                 )
             if resp.ok:
                 return True
-            logger.warning("File POST %s → HTTP %d: %s", url, resp.status_code, resp.text[:200])
+            logger.warning("File POST %s \u2192 HTTP %d: %s", url, resp.status_code, resp.text[:200])
             return False
         except FileNotFoundError:
-            logger.warning("File not found for upload: %s — marking as synced anyway", file_path)
+            logger.warning("File not found for upload: %s \u2014 marking as synced anyway", file_path)
             return True
         except requests.exceptions.Timeout:
             logger.error("File POST %s timed out", url)
@@ -213,7 +223,7 @@ class SyncService:
         except Exception:
             return ts
 
-    # ─── TYPE 1 — APP ACTIVITY ───────────────────────────────────────────────
+    # \u2500\u2500\u2500 TYPE 1 \u2014 APP ACTIVITY \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
     def _sync_app_activity(self, identity: dict) -> int:
         url = self._get_url("url_app_activity")
@@ -261,7 +271,7 @@ class SyncService:
             logger.error("_build_app_activity_payload id=%s: %s", rec.get("id"), e)
             return None
 
-    # ─── TYPE 2 — BROWSER ACTIVITY ───────────────────────────────────────────
+    # \u2500\u2500\u2500 TYPE 2 \u2014 BROWSER ACTIVITY \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
     def _sync_browser(self, identity: dict) -> int:
         url = self._get_url("url_browser")
@@ -294,7 +304,7 @@ class SyncService:
             logger.info("browser_activity: synced %d records", len(synced_ids))
         return len(synced_ids)
 
-    # ─── TYPE 3 — CLIPBOARD ──────────────────────────────────────────────────
+    # \u2500\u2500\u2500 TYPE 3 \u2014 CLIPBOARD \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
     def _sync_clipboard(self, identity: dict) -> int:
         url = self._get_url("url_clipboard")
@@ -326,7 +336,7 @@ class SyncService:
             logger.info("clipboard_events: synced %d records", len(synced_ids))
         return len(synced_ids)
 
-    # ─── TYPE 4 — KEYSTROKES ─────────────────────────────────────────────────
+    # \u2500\u2500\u2500 TYPE 4 \u2014 KEYSTROKES \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
     def _sync_keystrokes(self, identity: dict) -> int:
         url = self._get_url("url_keystrokes")
@@ -359,7 +369,7 @@ class SyncService:
             logger.info("keystrokes: synced %d records", len(synced_ids))
         return len(synced_ids)
 
-    # ─── TYPE 5 — SCREENSHOTS ────────────────────────────────────────────────
+    # \u2500\u2500\u2500 TYPE 5 \u2014 SCREENSHOTS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
     def _sync_screenshots(self, identity: dict) -> int:
         url = self._get_url("url_screenshots")
@@ -392,7 +402,7 @@ class SyncService:
             logger.info("screenshots: synced %d records", len(synced_ids))
         return len(synced_ids)
 
-    # ─── TYPE 6 — VIDEOS ─────────────────────────────────────────────────────
+    # \u2500\u2500\u2500 TYPE 6 \u2014 VIDEOS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
     def _sync_videos(self, identity: dict) -> int:
         url = self._get_url("url_videos")
@@ -425,6 +435,9 @@ class SyncService:
         return len(synced_ids)
 
     def _sync_video_status(self, identity: dict) -> None:
+        if self._is_cooldown_active():
+            return
+
         url = self.config_manager.get("url_video_settings", "").strip()
         if not url:
             base_url = self.config_manager.get("base_url", "").strip()
@@ -444,10 +457,13 @@ class SyncService:
                     local_enabled = self.config_manager.get("recording_enabled", False)
                     if bool(remote_enabled) != bool(local_enabled):
                         self.config_manager.set("recording_enabled", bool(remote_enabled))
-                        from api_server import screen_recorder
+                        from api_server import screen_recorder, monitoring_active
                         if remote_enabled:
-                            screen_recorder.start()
-                            logger.info("Screen recording ENABLED by remote server sync")
+                            if monitoring_active:
+                                screen_recorder.start()
+                                logger.info("Screen recording ENABLED by remote server sync")
+                            else:
+                                logger.info("Screen recording ENABLED in config by remote sync (but monitoring is paused)")
                         else:
                             screen_recorder.stop()
                             logger.info("Screen recording DISABLED by remote server sync")
@@ -455,6 +471,9 @@ class SyncService:
             logger.debug("Failed to sync video status from remote: %s", e)
 
     def _sync_screenshot_status(self, identity: dict) -> None:
+        if self._is_cooldown_active():
+            return
+
         url = self.config_manager.get("url_screenshot_settings", "").strip()
         if not url:
             base_url = self.config_manager.get("base_url", "").strip()
@@ -474,10 +493,13 @@ class SyncService:
                     local_enabled = self.config_manager.get("screenshot_enabled", True)
                     if bool(remote_enabled) != bool(local_enabled):
                         self.config_manager.set("screenshot_enabled", bool(remote_enabled))
-                        from api_server import screenshot_monitor
+                        from api_server import screenshot_monitor, monitoring_active
                         if remote_enabled:
-                            screenshot_monitor.start()
-                            logger.info("Screenshot capturing ENABLED by remote server sync")
+                            if monitoring_active:
+                                screenshot_monitor.start()
+                                logger.info("Screenshot capturing ENABLED by remote server sync")
+                            else:
+                                logger.info("Screenshot capturing ENABLED in config by remote sync (but monitoring is paused)")
                         else:
                             screenshot_monitor.stop()
                             logger.info("Screenshot capturing DISABLED by remote server sync")
@@ -485,6 +507,9 @@ class SyncService:
             logger.debug("Failed to sync screenshot status from remote: %s", e)
 
     def _sync_overall_status(self, identity: dict) -> None:
+        if self._is_cooldown_active():
+            return
+
         url = self.config_manager.get("url_monitoring_settings", "").strip()
         if not url:
             base_url = self.config_manager.get("base_url", "").strip()
@@ -501,19 +526,18 @@ class SyncService:
                 data = resp.json()
                 remote_active = data.get("monitoringActive")
                 if remote_active is not None:
-                    # Trigger the local API to ensure all monitors are correctly handled.
-                    # This is cleaner than importing monitoring_active directly which might be tricky in the sync thread.
-                    api_port = self.config_manager.get("api_port", 5000)
-                    token = self.config_manager.get("admin_token", "")
+                    # Trigger local pause/resume via internal loopback to ensure consistent state
+                    port = self.config_manager.get('api_port', 5000)
+                    token = self.config_manager.get('admin_token', '')
                     headers = {"Authorization": f"Bearer {token}"} if token else {}
                     
                     if remote_active:
                         logger.info("Monitoring RESUMED by remote server sync")
-                        requests.post(f"http://127.0.0.1:{api_port}/api/monitoring/resume", 
+                        requests.post(f"http://127.0.0.1:{port}/api/monitoring/resume", 
                                       headers=headers, timeout=5)
                     else:
                         logger.info("Monitoring PAUSED by remote server sync")
-                        requests.post(f"http://127.0.0.1:{api_port}/api/monitoring/pause", 
+                        requests.post(f"http://127.0.0.1:{port}/api/monitoring/pause", 
                                       headers=headers, timeout=5)
         except Exception as e:
-            logger.debug("Failed to sync overall monitoring status from remote: %s", e)
+            logger.debug("Failed to sync overall monitoring status from remote: %s", e)

@@ -96,6 +96,7 @@ class ScreenshotMonitor:
         self.is_running = False
         if self.thread is not None:
             self.thread.join(timeout=5)
+            self.thread = None   # clear ref so start() always spawns a fresh thread
         logger.info("Screenshot monitor stopped")
 
     def pause(self):

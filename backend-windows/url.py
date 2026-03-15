@@ -1,48 +1,61 @@
-# url.py — Central API endpoint configuration
-# ─────────────────────────────────────────────────────────────────────────────
-# ADMIN INSTRUCTIONS
+# url.py — Windows
+# Central compile-time API configuration
 # ─────────────────────────────────────────────────────────────────────────────
 #
-#  DYNAMIC_API_ENABLED = True
-#    → The in-app "Config Server API" modal is available to the local user.
-#      They can enter individual full URLs OR use the Base URL shortcut.
+#  HOW TO SWITCH MODES
+#  ───────────────────
 #
-#  DYNAMIC_API_ENABLED = False
-#    → The modal is locked on ALL PCs that ship this build.
-#      The UI will display COMPANY_NAME and the message:
-#      "API endpoints are managed centrally. Contact Admin to make changes."
-#      No endpoint data is exposed to the user.
-#      *** SET BASE_URL BELOW — full endpoints are auto-built from it. ***
+#  ① STATIC MODE  (enterprise deployment — admin controls all URLs)
+#  ────────────────────────────────────────────────────────────────
+#    DYNAMIC_API_ENABLED = False
+#    BASE_URL = "https://your-server.com"   ← set your real server URL here
 #
-#  PATH_* constants define the URL path suffix for each data type.
-#  The server MUST implement these exact paths.
-#  These paths are used in two ways:
-#    1. Shown as placeholder / demo hints in the modal.
-#    2. Auto-appended when admin uses the "Apply Base URL" shortcut.
-#       e.g.  Base URL: https://api.company.com
-#             → App Activity full URL: https://api.company.com/api/pctracking/appuseage
+#    Result:
+#      • The "Configure Server APIs" modal is LOCKED in the GUI (no user input).
+#      • On every startup, config.json is overwritten with BASE_URL + PATH_*.
+#      • Syncing starts immediately without any user action.
+#      • To change the server, edit BASE_URL here and recompile.
+#
+#  ② DYNAMIC MODE  (user / IT admin configures via GUI modal)
+#  ──────────────────────────────────────────────────────────
+#    DYNAMIC_API_ENABLED = True
+#    BASE_URL = "https://your-server.com"   ← used as a first-run seed only
+#
+#    Result:
+#      • The GUI modal is UNLOCKED — user can enter / update URLs.
+#      • On first install (all URLs blank in config.json), BASE_URL + PATH_*
+#        is seeded into config.json automatically so syncing starts immediately.
+#      • After the user saves their own URLs via the GUI, BASE_URL is ignored
+#        on subsequent startups — config.json is the source of truth.
+#      • To wipe user-set URLs and re-seed, delete config.json and restart.
+#
+#  ─────────────────────────────────────────────────────────────────────────────
+#  IN BOTH MODES: BASE_URL must NOT have a trailing slash.
+#  PATH_* constants must NOT be changed unless the server team changes them.
 # ─────────────────────────────────────────────────────────────────────────────
 
-DYNAMIC_API_ENABLED: bool = False
+# ── Mode switch ───────────────────────────────────────────────────────────────
+DYNAMIC_API_ENABLED: bool = False  # True = dynamic GUI modal | False = static/locked
 
-# ── Static Base URL (used when DYNAMIC_API_ENABLED = False) ──────────────────
-# Admin: set your server's base URL here.
-# All endpoint URLs will be auto-constructed as:  BASE_URL + PATH_*
-# Example: "https://api.company.com"
-BASE_URL: str = "https://192.168.2.95:5000"
+# ── Server base URL ───────────────────────────────────────────────────────────
+# Used as source of truth in static mode.
+# Used as first-run seed in dynamic mode.
+# Must NOT have a trailing slash.
+BASE_URL: str = "http://192.168.2.95:5000"
 
-# Displayed in the UI when DYNAMIC_API_ENABLED = False
-COMPANY_NAME: str = "Enterprise IT TEST"      
+# ── Branding (shown in GUI when DYNAMIC_API_ENABLED = False) ─────────────────
+COMPANY_NAME: str = "Enterprise IT"
 
 # ── URL path suffixes ─────────────────────────────────────────────────────────
-# Server team: implement exactly these endpoint paths.
-# Admin: these are appended to your Base URL automatically.
-PATH_APP_ACTIVITY: str = "/api/pctracking/appuseage"
-PATH_BROWSER:      str = "/api/pctracking/browser"
-PATH_CLIPBOARD:    str = "/api/pctracking/clipboard"
-PATH_KEYSTROKES:   str = "/api/pctracking/keystrokes"
-PATH_SCREENSHOTS:  str = "/api/pctracking/screenshots"
-PATH_VIDEOS:       str = "/api/pctracking/videos"
-PATH_VIDEO_SETTINGS: str = "/api/pctracking/video-settings"
+# These are appended to BASE_URL to build each full endpoint URL.
+# The server MUST implement exactly these paths.
+# DO NOT change these unless your server team changes the paths.
+PATH_APP_ACTIVITY:        str = "/api/pctracking/appuseage"
+PATH_BROWSER:             str = "/api/pctracking/browser"
+PATH_CLIPBOARD:           str = "/api/pctracking/clipboard"
+PATH_KEYSTROKES:          str = "/api/pctracking/keystrokes"
+PATH_SCREENSHOTS:         str = "/api/pctracking/screenshots"
+PATH_VIDEOS:              str = "/api/pctracking/videos"
+PATH_VIDEO_SETTINGS:      str = "/api/pctracking/video-settings"
 PATH_SCREENSHOT_SETTINGS: str = "/api/pctracking/screenshot-settings"
 PATH_MONITORING_SETTINGS: str = "/api/pctracking/monitoring-settings"

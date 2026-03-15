@@ -21,7 +21,7 @@ import asyncio
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Any
 import logging
 from datetime import datetime
 import threading
@@ -77,6 +77,56 @@ sync_service       = SyncService(db_manager, config_manager)
 screen_recorder    = ScreenRecorder(db_manager, config_manager)
 
 monitoring_active = True
+
+def _notify_server_sync(endpoint_path_key: str, payload_key: str, payload_value: bool):
+    """
+    Unified helper to notify the remote server of state changes.
+    """
+    try:
+        config = db_manager.get_identity_config()
+        pc_name = config.get("device_alias") or socket.gethostname()
+        mac_address = config.get("mac_address", "")
+        user_name = config.get("login_username", "")
+        
+        # Determine URL
+        # endpoint_path_key is e.g. "url_monitoring_settings"
+        url = config_manager.get(endpoint_path_key, "").strip()
+        if not url:
+            base_url = config_manager.get("base_url", "").strip()
+            if not base_url:
+                return
+            
+            from url import (
+                PATH_MONITORING_SETTINGS, 
+                PATH_SCREENSHOT_SETTINGS, 
+                PATH_VIDEO_SETTINGS
+            )
+            mapping = {
+                "url_monitoring_settings": PATH_MONITORING_SETTINGS,
+                "url_screenshot_settings": PATH_SCREENSHOT_SETTINGS,
+                "url_video_settings": PATH_VIDEO_SETTINGS
+            }
+            path = mapping.get(endpoint_path_key)
+            if not path:
+                return
+            url = f"{base_url.rstrip('/')}{path}"
+            
+        headers = {"Accept": "application/json"}
+        api_key = config_manager.get("api_key", "").strip()
+        if api_key:
+            headers["X-API-Key"] = api_key
+            
+        payload = {
+            "pcName": pc_name,
+            "macAddress": mac_address,
+            "userName": user_name,
+            payload_key: payload_value
+        }
+        requests.post(url, json=payload, headers=headers, timeout=5)
+        # Update sync_service to avoid race condition (immediate override)
+        sync_service.mark_local_update()
+    except Exception as e:
+        logger.error(f"Failed to notify remote server for {payload_key}: {e}")
 
 
 # ─── PYDANTIC MODELS ─────────────────────────────────────────────────────────
@@ -270,19 +320,25 @@ async def get_videos(limit: int = 50, user=None):
 @app.on_event("startup")
 async def startup_event():
     logger.info("Starting monitoring services...")
-    screenshot_monitor.start()
     clipboard_monitor.start()
     app_tracker.start()
     browser_tracker.start()
     keylogger.start()
+
+    # Screenshot — honour config; never start unconditionally before the check
+    if config_manager.get("screenshot_enabled", True):
+        screenshot_monitor.start()
+        logger.info("Screenshot monitor auto-started (was enabled in config)")
+    else:
+        logger.info("Screenshot monitor skipped on startup (disabled in config)")
+
+    # Screen recording — off by default; only start when explicitly enabled
     if config_manager.get("recording_enabled", False):
         screen_recorder.start()
         logger.info("Screen recording auto-started (was enabled in config)")
-    if config_manager.get("screenshot_enabled", True):
-        screenshot_monitor.start()
-        logger.info("Screenshot recording auto-started (was enabled in config)")
     else:
-        screenshot_monitor.stop() # Ensure it's off if disabled
+        logger.info("Screen recording skipped on startup (disabled in config)")
+
     cleanup_service.start()
     sync_service.start()
     logger.info("All monitoring services started")
@@ -545,6 +601,8 @@ async def get_clipboard_logs(limit: int = 50, offset: int = 0, user=Depends(veri
 
 
 # ─── MONITORING CONTROL ──────────────────────────────────────────────────────
+
+
 @app.get("/api/monitoring/status", response_model=MonitoringStatusResponse)
 async def get_monitoring_status(user=Depends(verify_token)):
     global monitoring_active
@@ -565,40 +623,15 @@ async def pause_monitoring(user=Depends(verify_token)):
     app_tracker.pause()
     browser_tracker.pause()
     keylogger.pause()
+    screen_recorder.pause()
     logger.info("Monitoring paused manually")
     
     # Inform remote server
-    def _notify_remote():
-        try:
-            config = db_manager.get_identity_config()
-            pc_name = config.get("device_alias") or socket.gethostname()
-            mac_address = config.get("mac_address", "")
-            user_name = config.get("login_username", "")
-            
-            url = config_manager.get("url_monitoring_settings", "").strip()
-            if not url:
-                base_url = config_manager.get("base_url", "").strip()
-                if not base_url:
-                    return
-                from url import PATH_MONITORING_SETTINGS
-                url = f"{base_url.rstrip('/')}{PATH_MONITORING_SETTINGS}"
-                
-            headers = {"Accept": "application/json"}
-            api_key = config_manager.get("api_key", "").strip()
-            if api_key:
-                headers["X-API-Key"] = api_key
-                
-            payload = {
-                "pcName": pc_name,
-                "macAddress": mac_address,
-                "userName": user_name,
-                "monitoringActive": False
-            }
-            requests.post(url, json=payload, headers=headers, timeout=5)
-        except Exception as e:
-            logger.error("Failed to notify remote server of monitoring pause: %s", e)
-            
-    threading.Thread(target=_notify_remote, daemon=True).start()
+    threading.Thread(
+        target=_notify_server_sync, 
+        args=("url_monitoring_settings", "monitoringActive", False), 
+        daemon=True
+    ).start()
 
     return {"success": True, "message": "Monitoring paused"}
 
@@ -609,7 +642,27 @@ async def resume_monitoring(user=Depends(verify_token)):
         return {"success": True}
         
     monitoring_active = True
-    screenshot_monitor.resume()
+
+    # Screenshot — resume if paused; start if stopped but config-enabled
+    if screenshot_monitor.is_running:
+        screenshot_monitor.resume()
+        logger.info("Screenshot monitor resumed")
+    elif config_manager.get("screenshot_enabled", True):
+        screenshot_monitor.start()
+        logger.info("Screenshot monitor started on resume (was stopped but enabled in config)")
+    else:
+        logger.info("Screenshot monitor not started on resume (disabled in config)")
+
+    # Screen recorder — resume if paused; start if stopped but config-enabled
+    if screen_recorder.is_running:
+        screen_recorder.resume()
+        logger.info("Screen recording resumed")
+    elif config_manager.get("recording_enabled", False):
+        screen_recorder.start()
+        logger.info("Screen recording started on resume (was stopped but enabled in config)")
+    else:
+        logger.info("Screen recording not started on resume (disabled in config)")
+
     clipboard_monitor.resume()
     app_tracker.resume()
     browser_tracker.resume()
@@ -617,37 +670,11 @@ async def resume_monitoring(user=Depends(verify_token)):
     logger.info("Monitoring resumed manually")
     
     # Inform remote server
-    def _notify_remote():
-        try:
-            config = db_manager.get_identity_config()
-            pc_name = config.get("device_alias") or socket.gethostname()
-            mac_address = config.get("mac_address", "")
-            user_name = config.get("login_username", "")
-            
-            url = config_manager.get("url_monitoring_settings", "").strip()
-            if not url:
-                base_url = config_manager.get("base_url", "").strip()
-                if not base_url:
-                    return
-                from url import PATH_MONITORING_SETTINGS
-                url = f"{base_url.rstrip('/')}{PATH_MONITORING_SETTINGS}"
-                
-            headers = {"Accept": "application/json"}
-            api_key = config_manager.get("api_key", "").strip()
-            if api_key:
-                headers["X-API-Key"] = api_key
-                
-            payload = {
-                "pcName": pc_name,
-                "macAddress": mac_address,
-                "userName": user_name,
-                "monitoringActive": True
-            }
-            requests.post(url, json=payload, headers=headers, timeout=5)
-        except Exception as e:
-            logger.error("Failed to notify remote server of monitoring resume: %s", e)
-            
-    threading.Thread(target=_notify_remote, daemon=True).start()
+    threading.Thread(
+        target=_notify_server_sync, 
+        args=("url_monitoring_settings", "monitoringActive", True), 
+        daemon=True
+    ).start()
 
     return {"success": True, "message": "Monitoring resumed"}
 
@@ -813,44 +840,21 @@ async def toggle_video_recording(user=Depends(verify_token)):
     config_manager.set("recording_enabled", new_state)
 
     if new_state:
-        screen_recorder.start()
-        logger.info("Screen recording ENABLED by admin")
+        # Only start the recorder if global monitoring is currently active.
+        # If monitoring is paused, resume_monitoring will call start() on resume.
+        if monitoring_active:
+            screen_recorder.start()
+        logger.info("Screen recording ENABLED by admin (Active: %s)", screen_recorder.is_running)
     else:
         screen_recorder.stop()
         logger.info("Screen recording DISABLED by admin")
 
     # Inform remote server of the change
-    def _notify_remote():
-        try:
-            config = db_manager.get_identity_config()
-            pc_name = config.get("device_alias") or socket.gethostname()
-            mac_address = config.get("mac_address", "")
-            user_name = config.get("login_username", "")
-            
-            url = config_manager.get("url_video_settings", "").strip()
-            if not url:
-                base_url = config_manager.get("base_url", "").strip()
-                if not base_url:
-                    return # Cannot notify without a base_url
-                from url import PATH_VIDEO_SETTINGS
-                url = f"{base_url.rstrip('/')}{PATH_VIDEO_SETTINGS}"
-
-            headers = {"Accept": "application/json"}
-            api_key = config_manager.get("api_key", "").strip()
-            if api_key:
-                headers["X-API-Key"] = api_key
-                
-            payload = {
-                "pcName": pc_name,
-                "macAddress": mac_address,
-                "userName": user_name,
-                "recordingEnabled": new_state
-            }
-            requests.post(url, json=payload, headers=headers, timeout=5)
-        except Exception as e:
-            logger.error("Failed to notify remote server of video toggle: %s", e)
-                
-    threading.Thread(target=_notify_remote, daemon=True).start()
+    threading.Thread(
+        target=_notify_server_sync, 
+        args=("url_video_settings", "recordingEnabled", new_state), 
+        daemon=True
+    ).start()
 
     return {"success": True, "recording": new_state}
 
@@ -870,42 +874,49 @@ async def toggle_screenshot_recording(user=Depends(verify_token)):
     config_manager.set("screenshot_enabled", new_state)
 
     if new_state:
-        screenshot_monitor.start()
-        logger.info("Screenshot capturing ENABLED by admin")
+        # Only start if global monitoring is currently active.
+        # If monitoring is paused, resume_monitoring will call start() on resume.
+        if monitoring_active:
+            screenshot_monitor.start()
+        logger.info("Screenshot capturing ENABLED by admin (Active: %s)", screenshot_monitor.is_running)
     else:
         screenshot_monitor.stop()
         logger.info("Screenshot capturing DISABLED by admin")
 
-    # Inform remote server of the change
-    base_url = config_manager.get("base_url")
-    if base_url:
-        def _notify_remote():
-            try:
-                config = db_manager.get_identity_config()
-                pc_name = config.get("device_alias") or socket.gethostname()
-                mac_address = config.get("mac_address", "")
-                user_name = config.get("login_username", "")
-                
+    # Inform remote server — check url_screenshot_settings first (mirrors video toggle)
+    def _notify_remote():
+        try:
+            config = db_manager.get_identity_config()
+            pc_name = config.get("device_alias") or socket.gethostname()
+            mac_address = config.get("mac_address", "")
+            user_name = config.get("login_username", "")
+
+            url = config_manager.get("url_screenshot_settings", "").strip()
+            if not url:
+                base_url = config_manager.get("base_url", "").strip()
+                if not base_url:
+                    return
                 from url import PATH_SCREENSHOT_SETTINGS
                 url = f"{base_url.rstrip('/')}{PATH_SCREENSHOT_SETTINGS}"
-                headers = {"Accept": "application/json"}
-                api_key = config_manager.get("api_key", "").strip()
-                if api_key:
-                    headers["X-API-Key"] = api_key
-                    
-                payload = {
-                    "pcName": pc_name,
-                    "macAddress": mac_address,
-                    "userName": user_name,
-                    "screenshotEnabled": new_state
-                }
-                requests.post(url, json=payload, headers=headers, timeout=5)
-            except Exception as e:
-                logger.error("Failed to notify remote server of screenshot toggle: %s", e)
-                
-        threading.Thread(target=_notify_remote, daemon=True).start()
 
-    return {"success": True, "recording": new_state}
+            headers = {"Accept": "application/json"}
+            api_key = config_manager.get("api_key", "").strip()
+            if api_key:
+                headers["X-API-Key"] = api_key
+
+            payload = {
+                "pcName": pc_name,
+                "macAddress": mac_address,
+                "userName": user_name,
+                "screenshotEnabled": new_state,
+            }
+            requests.post(url, json=payload, headers=headers, timeout=5)
+        except Exception as e:
+            logger.error("Failed to notify remote server of screenshot toggle: %s", e)
+
+    threading.Thread(target=_notify_remote, daemon=True).start()
+
+    return {"success": True, "recording": new_state, "is_active": screenshot_monitor.is_running}
 
 
 @app.get("/api/monitoring/video/status")

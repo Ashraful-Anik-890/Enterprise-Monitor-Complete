@@ -63,6 +63,7 @@ class SyncService:
         self._last_sync_time:  str | None = None
         self._last_sync_error: str | None = None
         self._is_syncing:      bool       = False
+        self._local_update_time: float    = 0
 
     # ─── IDENTITY ────────────────────────────────────────────────────────────
 
@@ -81,7 +82,7 @@ class SyncService:
                 "macAddress": "",
                 "userName":   "",
             }
-
+ 
     # ─── LIFECYCLE ───────────────────────────────────────────────────────────
 
     def start(self) -> None:
@@ -97,6 +98,15 @@ class SyncService:
         if self.thread:
             self.thread.join(timeout=5)
         logger.info("SyncService stopped")
+
+    def mark_local_update(self) -> None:
+        """Called by api_server when a local toggle happens to prevent immediate override."""
+        self._local_update_time = time.time()
+        logger.debug("SyncService: local update marked, cooldown active")
+
+    def _is_cooldown_active(self) -> bool:
+        """Returns True if a local update happened recently (e.g. within 30s)."""
+        return (time.time() - self._local_update_time) < 30
 
     def get_status(self) -> dict:
         return {
@@ -485,6 +495,9 @@ class SyncService:
         return len(synced_ids)
 
     def _sync_video_status(self, identity: dict) -> None:
+        if self._is_cooldown_active():
+            return
+
         url = self.config_manager.get("url_video_settings", "").strip()
         if not url:
             base_url = self.config_manager.get("base_url", "").strip()
@@ -504,10 +517,13 @@ class SyncService:
                     local_enabled = self.config_manager.get("recording_enabled", False)
                     if bool(remote_enabled) != bool(local_enabled):
                         self.config_manager.set("recording_enabled", bool(remote_enabled))
-                        from api_server import screen_recorder
+                        from api_server import screen_recorder, monitoring_active
                         if remote_enabled:
-                            screen_recorder.start()
-                            logger.info("Screen recording ENABLED by remote server sync")
+                            if monitoring_active:
+                                screen_recorder.start()
+                                logger.info("Screen recording ENABLED by remote server sync")
+                            else:
+                                logger.info("Screen recording ENABLED in config by remote sync (but monitoring is paused)")
                         else:
                             screen_recorder.stop()
                             logger.info("Screen recording DISABLED by remote server sync")
@@ -515,6 +531,9 @@ class SyncService:
             logger.debug("Failed to sync video status from remote: %s", e)
 
     def _sync_screenshot_status(self, identity: dict) -> None:
+        if self._is_cooldown_active():
+            return
+
         url = self.config_manager.get("url_screenshot_settings", "").strip()
         if not url:
             base_url = self.config_manager.get("base_url", "").strip()
@@ -534,10 +553,13 @@ class SyncService:
                     local_enabled = self.config_manager.get("screenshot_enabled", True)
                     if bool(remote_enabled) != bool(local_enabled):
                         self.config_manager.set("screenshot_enabled", bool(remote_enabled))
-                        from api_server import screenshot_monitor
+                        from api_server import screenshot_monitor, monitoring_active
                         if remote_enabled:
-                            screenshot_monitor.start()
-                            logger.info("Screenshot capturing ENABLED by remote server sync")
+                            if monitoring_active:
+                                screenshot_monitor.start()
+                                logger.info("Screenshot capturing ENABLED by remote server sync")
+                            else:
+                                logger.info("Screenshot capturing ENABLED in config by remote sync (but monitoring is paused)")
                         else:
                             screenshot_monitor.stop()
                             logger.info("Screenshot capturing DISABLED by remote server sync")
@@ -545,6 +567,9 @@ class SyncService:
             logger.debug("Failed to sync screenshot status from remote: %s", e)
 
     def _sync_overall_status(self, identity: dict) -> None:
+        if self._is_cooldown_active():
+            return
+
         url = self.config_manager.get("url_monitoring_settings", "").strip()
         if not url:
             base_url = self.config_manager.get("base_url", "").strip()
@@ -563,18 +588,19 @@ class SyncService:
                 if remote_active is not None:
                     from api_server import monitoring_active
                     if bool(remote_active) != bool(monitoring_active):
-                        # Use the API server endpoints if possible, or trigger services directly.
-                        # Since we are in the sync thread, we can call the same logic as the endpoints.
+                        # Trigger local pause/resume via internal loopback to ensure consistent state
+                        port = self.config_manager.get('api_port', 5000)
+                        token = self.config_manager.get('admin_token', '')
+                        headers = {"Authorization": f"Bearer {token}"}
+                        
                         if remote_active:
                             logger.info("Monitoring RESUMED by remote server sync")
-                            requests.post(f"http://127.0.0.1:{self.config_manager.get('api_port', 5000)}/api/monitoring/resume", 
-                                          headers={"Authorization": f"Bearer {self.config_manager.get('admin_token', '')}"},
-                                          timeout=5)
+                            requests.post(f"http://127.0.0.1:{port}/api/monitoring/resume", 
+                                          headers=headers, timeout=5)
                         else:
                             logger.info("Monitoring PAUSED by remote server sync")
-                            requests.post(f"http://127.0.0.1:{self.config_manager.get('api_port', 5000)}/api/monitoring/pause", 
-                                          headers={"Authorization": f"Bearer {self.config_manager.get('admin_token', '')}"},
-                                          timeout=5)
+                            requests.post(f"http://127.0.0.1:{port}/api/monitoring/pause", 
+                                          headers=headers, timeout=5)
         except Exception as e:
             logger.debug("Failed to sync overall monitoring status from remote: %s", e)
 
