@@ -86,7 +86,7 @@ def _notify_server_sync(endpoint_path_key: str, payload_key: str, payload_value:
         config = db_manager.get_identity_config()
         pc_name = config.get("device_alias") or socket.gethostname()
         mac_address = config.get("mac_address", "")
-        user_name = config.get("login_username", "")
+        user_name = config.get("user_alias") or config.get("os_user", "")
         
         # Determine URL
         # endpoint_path_key is e.g. "url_monitoring_settings"
@@ -889,7 +889,7 @@ async def toggle_screenshot_recording(user=Depends(verify_token)):
             config = db_manager.get_identity_config()
             pc_name = config.get("device_alias") or socket.gethostname()
             mac_address = config.get("mac_address", "")
-            user_name = config.get("login_username", "")
+            user_name = config.get("user_alias") or config.get("os_user", "")
 
             url = config_manager.get("url_screenshot_settings", "").strip()
             if not url:

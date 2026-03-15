@@ -1,4 +1,4 @@
-# url.py — Central API endpoint configuration
+#url.py — Central API endpoint configuration
 # ─────────────────────────────────────────────────────────────────────────────
 # ADMIN INSTRUCTIONS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -22,18 +22,14 @@
 #       e.g.  Base URL: https://api.company.com
 #             → App Activity full URL: https://api.company.com/api/pctracking/appuseage
 # ─────────────────────────────────────────────────────────────────────────────
-
 DYNAMIC_API_ENABLED: bool = False
-
 # ── Static Base URL (used when DYNAMIC_API_ENABLED = False) ──────────────────
 # Admin: set your server's base URL here.
 # All endpoint URLs will be auto-constructed as:  BASE_URL + PATH_*
 # Example: "https://api.company.com"
-BASE_URL: str = "https://api.company.com"
-
+BASE_URL: str = "http://api.company.com"
 # Displayed in the UI when DYNAMIC_API_ENABLED = False
 COMPANY_NAME: str = "Enterprise IT"
-
 # ── URL path suffixes ─────────────────────────────────────────────────────────
 # Server team: implement exactly these endpoint paths.
 # Admin: these are appended to your Base URL automatically.

@@ -336,6 +336,7 @@ async def login(request: LoginRequest):
         is_valid = auth_manager.verify_credentials(request.username, request.password)
         if is_valid:
             token = auth_manager.create_token(request.username)
+            db_manager.update_login_username(request.username)
             return LoginResponse(success=True, token=token)
         return LoginResponse(success=False, error="Invalid credentials")
     except Exception as e:
@@ -420,6 +421,7 @@ async def get_identity(user=Depends(verify_token)):
             os_user=config["os_user"],
             device_alias=config["device_alias"],
             user_alias=config["user_alias"],
+            login_username=config.get("login_username", ""),
         )
     except Exception as e:
         logger.error("Error getting identity config: %s", e)

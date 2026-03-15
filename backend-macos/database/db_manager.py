@@ -199,10 +199,11 @@ class DatabaseManager:
             rows = {r["key"]: r["value"] for r in cursor.fetchall()}
 
         return {
-            "machine_id":    socket.gethostname(),
-            "os_user":       getpass.getuser(),
-            "device_alias":  rows.get("device_alias", ""),
-            "user_alias":    rows.get("user_alias", ""),
+            "machine_id":     socket.gethostname(),
+            "os_user":        getpass.getuser(),
+            "device_alias":   rows.get("device_alias", ""),
+            "user_alias":     rows.get("user_alias", ""),
+            "login_username": rows.get("login_username", ""),
         }
 
     def update_identity_config(
@@ -231,6 +232,23 @@ class DatabaseManager:
                 return True
             except Exception as exc:
                 logger.error("update_identity_config: %s", exc)
+                self._conn.rollback()
+                return False
+
+    def update_login_username(self, username: str) -> bool:
+        """Persist the app-auth username after a successful login."""
+        with self._lock:
+            cursor = self._conn.cursor()
+            try:
+                cursor.execute(
+                    "INSERT INTO device_config (key, value) VALUES ('login_username', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (username,),
+                )
+                self._conn.commit()
+                return True
+            except Exception as exc:
+                logger.error("update_login_username: %s", exc)
                 self._conn.rollback()
                 return False
 
