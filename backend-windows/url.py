@@ -41,10 +41,10 @@ DYNAMIC_API_ENABLED: bool = False  # True = dynamic GUI modal | False = static/l
 # Used as source of truth in static mode.
 # Used as first-run seed in dynamic mode.
 # Must NOT have a trailing slash.
-BASE_URL: str = "http://192.168.2.95:5000"
+BASE_URL: str = "https://trackerbackend.skillerszone.com"
 
 # ── Branding (shown in GUI when DYNAMIC_API_ENABLED = False) ─────────────────
-COMPANY_NAME: str = "Enterprise IT"
+COMPANY_NAME: str = "SkillersZone"
 
 # ── URL path suffixes ─────────────────────────────────────────────────────────
 # These are appended to BASE_URL to build each full endpoint URL.

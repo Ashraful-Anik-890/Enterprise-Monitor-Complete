@@ -1196,15 +1196,23 @@ async function updateSyncStatus() {
     if (!banner) return;
 
     if (status.last_error) {
-      banner.textContent = `⚠ Sync error: ${status.last_error}`;
+      // Server unreachable or explicit error — show warning
+      banner.textContent = `⚠ ${status.last_error}`;
       banner.style.background = '#fff3cd';
       banner.style.color = '#856404';
       banner.style.display = 'block';
-    } else if (status.last_sync) {
+    } else if (status.last_sync && status.server_reachable !== false) {
+      // Synced AND server was actually reached (or old backend without the field)
       const t = new Date(status.last_sync).toLocaleTimeString();
       banner.textContent = `✓ Last synced: ${t}`;
       banner.style.background = '#d1edff';
       banner.style.color = '#0c5460';
+      banner.style.display = 'block';
+    } else if (status.last_sync && status.server_reachable === false) {
+      // Loop ran but server was unreachable — don't claim success
+      banner.textContent = `⚠ Server unreachable — monitoring active, data queued`;
+      banner.style.background = '#fff3cd';
+      banner.style.color = '#856404';
       banner.style.display = 'block';
     } else {
       banner.style.display = 'none';  // no URLs configured yet
