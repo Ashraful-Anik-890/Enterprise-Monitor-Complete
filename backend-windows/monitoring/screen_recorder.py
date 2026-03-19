@@ -29,6 +29,7 @@ from pathlib import Path
 
 import numpy as np
 import win32api
+from utils.session_utils import is_user_session_active
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +190,7 @@ class ScreenRecorder:
                     not self._stop_event.is_set()
                     and (time.monotonic() - chunk_start) < CHUNK_SECONDS
                 ):
-                    if self._is_paused:
+                    if self._is_paused or not is_user_session_active():
                         self._stop_event.wait(1)
                         continue
 

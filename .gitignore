@@ -1,5 +1,8 @@
 # Node
+.agent/
 node_modules/
+checklist_output.txt
+
 dist/
 out/
 backend-windows/build/

@@ -12,6 +12,7 @@ import mss
 from PIL import Image
 import psutil
 import getpass
+from utils.session_utils import is_user_session_active
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,11 @@ class ScreenshotMonitor:
     def _capture_screenshot(self):
         """Capture a screenshot"""
         try:
+            # Skip capture if session is inactive or locked
+            if not is_user_session_active():
+                logger.debug("Session inactive or locked, skipping screenshot")
+                return
+            
             # Get active window info
             window_title, app_name = self._get_active_window_info()
             

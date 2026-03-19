@@ -13,6 +13,7 @@ import logging
 import getpass
 from datetime import datetime
 import psutil
+from utils.session_utils import is_user_session_active
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +119,7 @@ class AppTracker:
 
         while self.is_running:
             try:
-                if not self.is_paused:
+                if not self.is_paused and is_user_session_active():
                     self._track_app_usage()
                 time.sleep(self.check_interval)
             except Exception as e:
