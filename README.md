@@ -152,8 +152,8 @@ This project demonstrates deep expertise in **systems programming**, **cross-pla
 │  └──────────┘ └──────────┘ └──────────┘ └────────────────────┘    │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────────────────┐    │
 │  │Clipboard │ │Screen    │ │Sync      │ │Data Cleanup Service│    │
-│  │Monitor   │ │Recorder  │ │Service   │ │(7-day retention)   │    │
-│  │          │ │(OpenCV)  │ │(6-type)  │ └────────────────────┘    │
+│  │Monitor   │ │Recorder  │ │Service   │ │(7-day database)    │    │
+│  │          │ │(OpenCV)  │ │(v2 - 6)  │ └────────────────────┘    │
 │  └──────────┘ └──────────┘ └──────────┘                           │
 │                                                                   │
 │  ┌──────────────────────────────────────────────────────────────┐ │
@@ -478,11 +478,24 @@ The client automatically polls and pushes status changes to synchronize the loca
 | **Screenshot Toggle** | `/api/pctracking/screenshot-settings` | Remotely enable/disable periodic screen captures. |
 | **Video Toggle** | `/api/pctracking/video-settings` | Remotely enable/disable continuous screen recording. |
 
-**Advanced Sync Logic:**
+**Advanced Sync Logic (v2):**
+- **Server Reachability Tracking**: The UI now distinguishes between "Success" and "Server Unreachable" via atomic port polling and reachability flags.
 - **Cooldown Protection**: Prevents race conditions by pausing remote updates for 30s after a local toggle.
 - **Atomic State Enforcement**: Sub-monitors (Screenshots/Video) are automatically gated by the global monitoring status.
 - **Timezone Normalization**: Normalizes all timestamps to UTC/ISO-8601 for global server compatibility.
 - **Manual Sync**: Instant synchronization available via the dashboard "Sync Now" button.
+
+---
+
+## 🧹 Maintenance & Retention
+
+The application includes a background **Cleanup Service** to manage local storage requirements:
+
+- **7-Day Retention**: By default, records in the SQLite database older than 7 days are automatically purged.
+- **Reachability Aware**: Data is only purged if it has either been successfully synced or has exceeded the retention threshold.
+- **Current Limitations**: 
+    - Database cleanup currently skips the `video_recordings` table.
+    - Physical screenshot (`.png`) and video (`.mp4`) files are retained on disk and require manual deletion or a future service update to automate disk space recovery.
 
 ---
 

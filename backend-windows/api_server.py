@@ -159,6 +159,7 @@ class ScreenshotInfo(BaseModel):
     file_path: str
     active_window: str
     active_app: str
+    synced: bool = False
 
 class ConfigRequest(BaseModel):
     # Global settings
@@ -557,7 +558,8 @@ async def get_screenshots(limit: int = 20, offset: int = 0, user=Depends(verify_
                 timestamp=s["timestamp"],
                 file_path=s["file_path"],
                 active_window=s.get("active_window") or "",
-                active_app=s.get("active_app") or ""
+                active_app=s.get("active_app") or "",
+                synced=bool(s.get("synced", False)),
             )
             for s in screenshots
         ]

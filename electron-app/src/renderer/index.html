@@ -713,6 +713,38 @@
       object-fit: cover;
     }
 
+    .screenshot-img-wrap {
+      position: relative;
+    }
+
+    .ss-sync-badge {
+      position: absolute;
+      bottom: 6px;
+      right: 6px;
+      font-size: 16px;
+      line-height: 1;
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .ss-sync-badge.synced {
+      background: rgba(40, 167, 69, 0.92);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    }
+
+    .ss-sync-badge.pending {
+      background: rgba(255, 193, 7, 0.85);
+      font-size: 12px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+    }
+
     .screenshot-item .info {
       padding: 10px;
     }

@@ -932,14 +932,22 @@ async function loadScreenshots() {
       container.innerHTML = '<div class="empty-state"><div class="empty-icon">📸</div><p>No screenshots yet.</p></div>';
       return;
     }
-    container.innerHTML = screenshots.map(s => `
-      <div class="screenshot-item">
-        <img src="file://${s.file_path}" alt="Screenshot" onerror="this.style.display='none'">
-        <div class="info">
-          <div class="timestamp">${formatWithTZ(s.timestamp)}</div>
-          <div class="app-name">${escapeHtml(s.active_app || 'Unknown')}</div>
-        </div>
-      </div>`).join('');
+    container.innerHTML = screenshots.map(s => {
+      const syncedBadge = s.synced
+        ? '<span class="ss-sync-badge synced" title="Synced to server">✓</span>'
+        : '<span class="ss-sync-badge pending" title="Pending sync">⏳</span>';
+      return `
+        <div class="screenshot-item">
+          <div class="screenshot-img-wrap">
+            <img src="file://${s.file_path}" alt="Screenshot" onerror="this.style.display='none'">
+            ${syncedBadge}
+          </div>
+          <div class="info">
+            <div class="timestamp">${formatWithTZ(s.timestamp)}</div>
+            <div class="app-name">${escapeHtml(s.active_app || 'Unknown')}</div>
+          </div>
+        </div>`;
+    }).join('');
   } catch (err) {
     container.innerHTML = '<div class="empty-state"><div class="empty-icon">❌</div><p>Failed to load screenshots.</p></div>';
   }

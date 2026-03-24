@@ -376,7 +376,7 @@ class DatabaseManager:
         with self._lock:
             try:
                 cursor = self._conn.execute(
-                    "SELECT id, timestamp, file_path, active_window, active_app, username "
+                    "SELECT id, timestamp, file_path, active_window, active_app, username, synced "
                     "FROM screenshots ORDER BY timestamp DESC LIMIT ? OFFSET ?",
                     (limit, offset),
                 )
@@ -384,6 +384,7 @@ class DatabaseManager:
                     {
                         "id": r[0], "timestamp": r[1], "file_path": r[2],
                         "active_window": r[3], "active_app": r[4], "username": r[5],
+                        "synced": bool(r[6]),
                     }
                     for r in cursor.fetchall()
                 ]
@@ -690,19 +691,81 @@ class DatabaseManager:
 
     # ─── MAINTENANCE ──────────────────────────────────────────────────────────
 
-    def cleanup_old_data(self, days: int = 7) -> None:
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    def cleanup_old_data(self, synced_days: int = 1, unsynced_days: int = 7) -> None:
+        """
+        Intelligent cleanup with two-tier retention:
+        - Synced records: removed after `synced_days` (default 1 day).
+        - Unsynced records: removed after `unsynced_days` (default 7 days).
+        Physical .png and .mp4 files are deleted from disk first, then DB rows are purged.
+        """
+        now = datetime.utcnow()
+        synced_cutoff   = (now - timedelta(days=synced_days)).isoformat()
+        unsynced_cutoff = (now - timedelta(days=unsynced_days)).isoformat()
+
         with self._lock:
             try:
-                for table in (
-                    "screenshots", "app_activity", "clipboard_events",
-                    "browser_activity", "text_logs",
-                ):
+                # ── 1. Delete physical files for expired screenshots ──────────
+                for row in self._conn.execute(
+                    "SELECT file_path FROM screenshots WHERE "
+                    "  (synced = 1 AND timestamp < ?) OR "
+                    "  (synced = 0 AND timestamp < ?)",
+                    (synced_cutoff, unsynced_cutoff),
+                ).fetchall():
+                    fp = row[0]
+                    if fp:
+                        p = Path(fp)
+                        if p.exists():
+                            try:
+                                p.unlink()
+                            except OSError as e:
+                                logger.warning("Could not delete screenshot file %s: %s", fp, e)
+
+                # ── 2. Delete physical files for expired video recordings ─────
+                for row in self._conn.execute(
+                    "SELECT file_path FROM video_recordings WHERE "
+                    "  (is_synced = 1 AND timestamp < ?) OR "
+                    "  (is_synced = 0 AND timestamp < ?)",
+                    (synced_cutoff, unsynced_cutoff),
+                ).fetchall():
+                    fp = row[0]
+                    if fp:
+                        p = Path(fp)
+                        if p.exists():
+                            try:
+                                p.unlink()
+                            except OSError as e:
+                                logger.warning("Could not delete video file %s: %s", fp, e)
+
+                # ── 3. Purge screenshot DB rows ───────────────────────────────
+                self._conn.execute(
+                    "DELETE FROM screenshots WHERE "
+                    "  (synced = 1 AND timestamp < ?) OR "
+                    "  (synced = 0 AND timestamp < ?)",
+                    (synced_cutoff, unsynced_cutoff),
+                )
+
+                # ── 4. Purge video_recordings DB rows ─────────────────────────
+                self._conn.execute(
+                    "DELETE FROM video_recordings WHERE "
+                    "  (is_synced = 1 AND timestamp < ?) OR "
+                    "  (is_synced = 0 AND timestamp < ?)",
+                    (synced_cutoff, unsynced_cutoff),
+                )
+
+                # ── 5. Purge text-only tables (no physical files) ─────────────
+                for table in ("app_activity", "clipboard_events", "browser_activity", "text_logs"):
                     self._conn.execute(
-                        f"DELETE FROM {table} WHERE timestamp < ?", (cutoff,)
+                        f"DELETE FROM {table} WHERE "
+                        f"  (synced = 1 AND timestamp < ?) OR "
+                        f"  (synced = 0 AND timestamp < ?)",
+                        (synced_cutoff, unsynced_cutoff),
                     )
+
                 self._conn.commit()
-                logger.info("Cleanup: removed records older than %d days", days)
+                logger.info(
+                    "Cleanup done: synced >%dd, unsynced >%dd",
+                    synced_days, unsynced_days,
+                )
             except Exception as exc:
                 logger.error("cleanup_old_data: %s", exc)
                 self._conn.rollback()
