@@ -1,4 +1,6 @@
-// electron-app/src/preload/preload.ts  ← REPLACE entire file
+// electron-app/src/preload/preload.ts
+// Auto-Update Phase 1: Added update system IPC bridges
+
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -82,4 +84,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('first-run-setup', cb),
   onForceLogout: (cb: (event: IpcRendererEvent) => void) =>
     ipcRenderer.on('force-logout', cb),
+
+  // ── Auto-Update system ────────────────────────────────────────────────────
+  // Actions (renderer → main)
+  installUpdate: () =>
+    ipcRenderer.invoke('app:installUpdate'),
+  deferUpdate: () =>
+    ipcRenderer.invoke('app:deferUpdate'),
+  checkForUpdates: () =>
+    ipcRenderer.invoke('app:checkForUpdates'),
+
+  // Push events (main → renderer)
+  onUpdateAvailable: (cb: (event: IpcRendererEvent, info: { version: string; releaseNotes: string }) => void) =>
+    ipcRenderer.on('update-available', cb),
+  onDownloadProgress: (cb: (event: IpcRendererEvent, progress: { percent: number; bytesPerSecond: number; total: number }) => void) =>
+    ipcRenderer.on('download-progress', cb),
+  onUpdateDownloaded: (cb: (event: IpcRendererEvent, info: { version: string }) => void) =>
+    ipcRenderer.on('update-downloaded', cb),
+  onUpdateComplete: (cb: (event: IpcRendererEvent, info: { version: string; previousVersion: string }) => void) =>
+    ipcRenderer.on('update-complete', cb),
+  onUpdateError: (cb: (event: IpcRendererEvent, info: { message: string }) => void) =>
+    ipcRenderer.on('update-error', cb),
 });

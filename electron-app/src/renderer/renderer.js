@@ -172,6 +172,9 @@ function setupEventListeners() {
     ?.addEventListener('click', dismissPostApiCred);
   document.getElementById('post-api-cred-yes-btn')
     ?.addEventListener('click', goToUpdateCredentials);
+
+  // ── Auto-Update IPC listeners ──────────────────────────────
+  setupUpdateListeners();
 }
 
 // ─── LOGIN / LOGOUT ──────────────────────────────────────────
@@ -1473,3 +1476,124 @@ function showInfoToast(message) {
   setTimeout(() => toast.remove(), 5000);
 }
 
+
+// ─── AUTO-UPDATE HANDLERS ─────────────────────────────────────────────────────
+let _currentUpdateVersion = null;
+
+function showUpdateDownloadingModal(version, releaseNotes) {
+  _currentUpdateVersion = version;
+
+  const text = document.getElementById('update-available-text');
+  if (text) {
+    text.textContent = `Version ${version} is downloading in the background. This may take a few minutes.`;
+  }
+
+  const bar = document.getElementById('update-progress-bar');
+  if (bar) bar.style.width = '0%';
+  const pct = document.getElementById('update-progress-percent');
+  if (pct) pct.textContent = '0%';
+  const speed = document.getElementById('update-progress-speed');
+  if (speed) speed.textContent = '';
+
+  const dlState = document.getElementById('update-downloading-state');
+  const rdState = document.getElementById('update-ready-state');
+  if (dlState) dlState.style.display = 'block';
+  if (rdState) rdState.style.display = 'none';
+
+  document.getElementById('update-modal').style.display = 'flex';
+}
+
+function updateDownloadProgress(percent, bytesPerSecond) {
+  const bar = document.getElementById('update-progress-bar');
+  if (bar) bar.style.width = `${percent}%`;
+
+  const pct = document.getElementById('update-progress-percent');
+  if (pct) pct.textContent = `${percent}%`;
+
+  const speed = document.getElementById('update-progress-speed');
+  if (speed) {
+    const mbps = (bytesPerSecond / 1024 / 1024).toFixed(1);
+    speed.textContent = `${mbps} MB/s`;
+  }
+}
+
+function showUpdateReadyModal(version) {
+  _currentUpdateVersion = version;
+
+  const text = document.getElementById('update-ready-text');
+  if (text) {
+    text.textContent = `Version ${version} has been downloaded and verified. Ready to install.`;
+  }
+
+  const dlState = document.getElementById('update-downloading-state');
+  const rdState = document.getElementById('update-ready-state');
+  if (dlState) dlState.style.display = 'none';
+  if (rdState) rdState.style.display = 'block';
+
+  document.getElementById('update-modal').style.display = 'flex';
+}
+
+function dismissUpdateModal() {
+  const modal = document.getElementById('update-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+function deferUpdateInstall() {
+  window.electronAPI.deferUpdate().catch(console.error);
+  dismissUpdateModal();
+  showInfoToast(`Update v${_currentUpdateVersion} will install on next app restart.`);
+}
+
+async function installUpdateNow() {
+  dismissUpdateModal();
+  showInfoToast(`Installing v${_currentUpdateVersion}… The app will close and restart.`);
+
+  await new Promise(resolve => setTimeout(resolve, 1200));
+
+  const result = await window.electronAPI.installUpdate();
+  if (!result || !result.success) {
+    showInfoToast('Install failed: ' + ((result && result.error) || 'Unknown error'));
+  }
+}
+
+function showUpdateCompleteToast(version, previousVersion) {
+  const textEl = document.getElementById('update-complete-text');
+  if (textEl) {
+    textEl.textContent = `✓ Updated to v${version}`;
+  }
+
+  const toast = document.getElementById('update-complete-toast');
+  if (toast) {
+    toast.style.display = 'block';
+    setTimeout(() => { toast.style.display = 'none'; }, 6000);
+  }
+}
+
+function setupUpdateListeners() {
+  if (!window.electronAPI || !window.electronAPI.onUpdateAvailable) return;
+
+  window.electronAPI.onUpdateAvailable((_event, info) => {
+    console.log('[renderer] Update available:', info.version);
+    showUpdateDownloadingModal(info.version, info.releaseNotes);
+  });
+
+  window.electronAPI.onDownloadProgress((_event, progress) => {
+    updateDownloadProgress(progress.percent, progress.bytesPerSecond);
+  });
+
+  window.electronAPI.onUpdateDownloaded((_event, info) => {
+    console.log('[renderer] Update downloaded and ready:', info.version);
+    showUpdateReadyModal(info.version);
+  });
+
+  window.electronAPI.onUpdateComplete((_event, info) => {
+    console.log('[renderer] Post-update restart detected:', info.version);
+    showUpdateCompleteToast(info.version, info.previousVersion);
+  });
+
+  window.electronAPI.onUpdateError((_event, info) => {
+    console.error('[renderer] Update error:', info.message);
+    showInfoToast(`Update error: ${info.message}`);
+  });
+}
+// ─── END AUTO-UPDATE HANDLERS ─────────────────────────────────────────────────

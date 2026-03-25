@@ -10,6 +10,7 @@ backend-macOS/build/
 backend-linux/build/
 .env
 release/
+Patches/
 resources/.py
 
 # Python

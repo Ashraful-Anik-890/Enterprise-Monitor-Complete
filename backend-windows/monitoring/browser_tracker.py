@@ -145,6 +145,10 @@ class BrowserTracker:
                 comtypes.client.gen_dir = cache_dir
                 import uiautomation as uia
                 self._uia = uia
+                # Keep this object alive for the thread's entire lifetime.
+                # UIAutomationInitializerInThread.__del__ calls CoUninitialize(),
+                # so it MUST be an instance attribute, never a local variable.
+                self._uia_initializer = uia.UIAutomationInitializerInThread(debug=False)
             except ImportError:
                 logger.error(
                     "uiautomation not installed. Run: pip install uiautomation -- "

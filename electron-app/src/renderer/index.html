@@ -2251,6 +2251,96 @@ POST Notification (when toggled locally):
     </div>
   </div>
 
+  <!-- ═══════════════════════════════════════════════════════════
+       AUTO-UPDATE MODAL
+       State A (update-downloading-state): Download in progress
+       State B (update-ready-state): Ready to install
+  ═══════════════════════════════════════════════════════════ -->
+  <div id="update-modal" style="display:none; position:fixed; inset:0;
+       background:rgba(0,0,0,0.55); z-index:9998; align-items:center; justify-content:center;">
+    <div class="modal" style="max-width:460px; background:#fff; border-radius:12px;
+         padding:32px; box-shadow:0 20px 60px rgba(0,0,0,0.4);">
+
+      <!-- STATE A: Downloading silently -->
+      <div id="update-downloading-state">
+        <h2>🔄 Update Downloading</h2>
+        <p id="update-available-text" class="modal-subtitle" style="margin-top:8px;"></p>
+
+        <div style="margin:20px 0;">
+          <!-- Progress bar -->
+          <div style="background:#f0f2f8; border-radius:8px; height:8px; overflow:hidden;">
+            <div id="update-progress-bar"
+                 style="background:linear-gradient(135deg,#667eea,#764ba2); height:100%;
+                        width:0%; transition:width 0.4s ease; border-radius:8px;">
+            </div>
+          </div>
+          <!-- Percent + speed labels -->
+          <div style="display:flex; justify-content:space-between; margin-top:6px;
+                      font-size:12px; color:#888;">
+            <span id="update-progress-percent">0%</span>
+            <span id="update-progress-speed"></span>
+          </div>
+        </div>
+
+        <p style="font-size:12px; color:#aaa; margin-top:4px;">
+          Monitoring continues uninterrupted during the download.
+        </p>
+
+        <div style="display:flex; justify-content:flex-end; margin-top:20px;">
+          <button onclick="dismissUpdateModal()"
+                  style="padding:9px 20px; border:none; border-radius:7px; background:#f0f2f8;
+                         color:#555; cursor:pointer; font-size:13px; font-weight:500;">
+            Remind me later
+          </button>
+        </div>
+      </div>
+
+      <!-- STATE B: Download complete, ready to install -->
+      <div id="update-ready-state" style="display:none;">
+        <h2>✅ Update Ready to Install</h2>
+        <p id="update-ready-text" class="modal-subtitle" style="margin-top:8px;"></p>
+
+        <div style="background:#f0fff4; border:1px solid #b7e4c7; border-radius:8px;
+                    padding:12px 16px; margin:16px 0; font-size:13px; color:#1a5c2a;">
+          Monitoring will restart automatically after the update completes.
+        </div>
+
+        <div class="modal-actions" style="display:flex; gap:10px; margin-top:4px;">
+          <button onclick="deferUpdateInstall()"
+                  style="flex:1; padding:11px; border:none; border-radius:8px; background:#f0f2f8;
+                         color:#555; cursor:pointer; font-size:13px; font-weight:500;">
+            Install on Restart
+          </button>
+          <button onclick="installUpdateNow()"
+                  style="flex:1; padding:11px; border:none; border-radius:8px; cursor:pointer;
+                         font-size:14px; font-weight:600; color:#fff;
+                         background:linear-gradient(135deg,#28a745,#1e7e34);">
+            Install Now
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       UPDATE COMPLETE TOAST
+       Shown for 6 seconds on the first startup after an update.
+       Auto-dismisses. Can also be closed manually.
+  ═══════════════════════════════════════════════════════════ -->
+  <div id="update-complete-toast"
+       style="display:none; position:fixed; bottom:70px; left:50%; transform:translateX(-50%);
+              background:#1a8a52; color:#fff; padding:14px 24px; border-radius:10px;
+              font-size:14px; font-weight:500; z-index:9994; min-width:320px;
+              box-shadow:0 4px 20px rgba(0,0,0,0.3); text-align:center;">
+    <span id="update-complete-text"></span>
+    <button onclick="document.getElementById('update-complete-toast').style.display='none'"
+            style="background:none; border:none; color:rgba(255,255,255,0.75); cursor:pointer;
+                   margin-left:12px; font-size:18px; line-height:1; vertical-align:middle;">
+      ✕
+    </button>
+  </div>
+
   <script src="renderer.js"></script>
 </body>
 

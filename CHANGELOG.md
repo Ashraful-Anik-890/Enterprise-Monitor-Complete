@@ -1,0 +1,52 @@
+# Changelog
+
+All notable changes to Enterprise Monitor are documented here.  
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).  
+Versioning follows [Semantic Versioning](https://semver.org/).
+
+---
+
+## [5.2.4] — 2026-03-25
+
+### Added
+- **Silent Auto-Update System (Windows)** — The application now checks GitHub Releases for updates every 4 hours and on every startup. Updates download silently in the background and are installed automatically on the next authenticated quit, or immediately via the new "Install Now" modal. No manual reinstallation is ever required again.
+- **Update Notification Modal** — A two-state modal informs the admin when a download is in progress (with live progress bar and MB/s speed) and when the update is ready to install. Monitoring continues uninterrupted throughout.
+- **Post-Update Toast** — On the first startup after a successful update, a green confirmation banner shows the version that was installed. Auto-dismisses after 6 seconds.
+- **Deferred Install Option** — "Install on Restart" defers the update to the next natural authenticated quit so the admin is never interrupted mid-session.
+
+### Fixed
+- **Browser URL Tracking (Windows)** — Fixed `[WinError -2147221008] CoInitialize has not been called` and `Can not load UIAutomationCore.dll` errors that completely prevented browser URL capture in background threads. Root cause: `uiautomation` requires `UIAutomationInitializerInThread` to be instantiated (and kept alive as an instance attribute) in addition to `pythoncom.CoInitialize()`.
+- **NSIS File Lock (`EBUSY`) During Updates** — Added `/T` flag to all `taskkill` calls in the installer script, which terminates the entire Python process tree (including COM objects and pynput hooks) rather than just the named executable. Extended post-kill sleep from 1000 ms to 2500 ms to accommodate OpenCV and SQLite WAL checkpoint teardown on loaded machines.
+- **Backend Respawn During Installer Pages** — Added a second `taskkill` call immediately before file extraction in `customInstall`. Fixes a race condition where the Windows Registry autostart key could respawn the backend during the 30–60 seconds the user spends clicking through installer pages.
+
+### Changed
+- `before-quit` handler now has a dedicated `isSystemUpdate` code path that bypasses the admin password prompt when an update is being installed. The backend is still killed gracefully before NSIS runs.
+- `app:quit` IPC handler now detects a pending downloaded update and calls `autoUpdater.quitAndInstall(true, false)` instead of `app.quit()` — every authenticated quit automatically applies a waiting update.
+- `package.json` build script `dist:publish` added for one-command GitHub Release publishing.
+
+---
+
+## [5.2.3] — 2026-03-20
+
+### Added
+- Cross-platform desktop monitoring for Windows and macOS.
+- Electron + Python FastAPI Master/Child process architecture with dynamic port handshake.
+- Screenshot capture, screen recording (MP4 chunks), keystroke logging, clipboard monitoring, browser URL tracking, and application activity tracking.
+- Bi-directional ERP sync engine — 6 data types + 3 remote control endpoints.
+- JWT authentication with 5-minute token expiry, security Q&A password reset flow.
+- Credential-protected quit (anti-tamper) — blocks `app.quit()` unless admin password is verified.
+- System tray with backend health indicator and auth status.
+- NSIS Windows installer with Registry autostart and optional user-data cleanup on uninstall.
+- macOS DMG with Hardened Runtime entitlements and TCC permission prompting.
+- Timezone-aware dashboard with Chart.js activity visualisations and activity timeline.
+- Configurable ERP endpoint URLs with static (compile-time) and dynamic (GUI) modes via `url.py`.
+
+---
+
+## Version Policy
+
+| Segment | When it changes |
+|---------|----------------|
+| **Major** (X.0.0) | Breaking API changes, platform drops, architectural rewrites |
+| **Minor** (5.X.0) | New monitoring features, new ERP endpoints, new UI sections |
+| **Patch** (5.2.X) | Bug fixes, performance improvements, update system changes |
