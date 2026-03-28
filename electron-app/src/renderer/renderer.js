@@ -26,6 +26,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('date-picker').value = currentDate;
   setupEventListeners();
   await checkAuthentication();
+  loadAppVersion();
 
   // Force-logout when the main process detects a backend 401 (token expired)
   window.electronAPI.onForceLogout(() => {
@@ -507,6 +508,8 @@ async function loadDashboardData() {
       await Promise.all([loadMonitorData(), loadMonitoringStatus()]);
     } else if (currentTab === 'screenshots') {
       await Promise.all([loadScreenshotStatus(), loadScreenshots(), loadMonitoringStatus()]);
+    } else if (currentTab === 'screen-recording') {
+      await Promise.all([loadVideoTab(), loadMonitoringStatus()]);
     }
   } catch (error) {
     console.error('Failed to load dashboard data:', error);
@@ -672,7 +675,20 @@ async function loadMonitorData() {
   else if (currentSubTab === 'browser') await loadBrowserLogs();
   else if (currentSubTab === 'clipboard') await loadClipboardLogs();
   else if (currentSubTab === 'keylogs') await loadKeyLogs();
-  else if (currentSubTab === 'video') await loadVideoTab();
+}
+
+// ─── APP VERSION ─────────────────────────────────────────────
+async function loadAppVersion() {
+  try {
+    const version = await window.electronAPI.getAppVersion();
+    const label = `Enterprise Monitor v${version}`;
+    const footerEl = document.getElementById('footer-version');
+    const loginEl = document.getElementById('login-version');
+    if (footerEl) footerEl.textContent = label;
+    if (loginEl) loginEl.textContent = label;
+  } catch (e) {
+    console.warn('Could not load app version:', e);
+  }
 }
 
 async function loadAppLogs() {

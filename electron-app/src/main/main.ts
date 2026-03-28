@@ -256,11 +256,22 @@ async function killBackend(): Promise<void> {
   backendKilled = true;
 
   const token = store.get('authToken') as string | undefined;
-  if (token && apiClient) {
+  let tokenValid = false;
+  if (token) {
+    try {
+      const payloadB64 = token.split('.')[1];
+      if (payloadB64) {
+        const { exp } = JSON.parse(Buffer.from(payloadB64, 'base64').toString('utf-8')) as { exp?: number };
+        tokenValid = !!exp && (exp * 1000 > Date.now());
+      }
+    } catch { /* malformed token — treat as expired */ }
+  }
+
+  if (tokenValid && apiClient) {
     console.log('[main] Requesting graceful backend shutdown via /api/shutdown...');
     try {
       await Promise.race([
-        apiClient.post('/api/shutdown', {}, token),
+        apiClient.post('/api/shutdown', {}, token!),
         new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
       ]);
       console.log('[main] Backend acknowledged graceful shutdown');
@@ -273,6 +284,8 @@ async function killBackend(): Promise<void> {
     } catch (err: any) {
       console.warn('[main] Graceful shutdown failed or timed out:', err.message);
     }
+  } else if (token && !tokenValid) {
+    console.log('[main] JWT token expired — skipping graceful HTTP shutdown, proceeding to force-kill');
   }
 
   if (backendProcess && !backendExited) {
@@ -589,6 +602,19 @@ if (!gotTheLock) {
 }
 
 // ─── PATCH C — Modified before-quit handler ───────────────────────────────────
+// Helper: trigger pending update install from any quit path
+function installPendingUpdateOnQuit(): boolean {
+  if (updateDownloaded && updatePendingVersion) {
+    console.log(`[updater] Pending update v${updatePendingVersion} — installing before quit...`);
+    store.set('pendingUpdateVersion', updatePendingVersion);
+    store.set('currentVersionBeforeUpdate', app.getVersion());
+    isSystemUpdate = true;
+    autoUpdater.quitAndInstall(true, true);
+    return true;
+  }
+  return false;
+}
+
 app.on('before-quit', (event) => {
   // Update install path — backend already killed in IPC handler
   if (isSystemUpdate) {
@@ -606,12 +632,14 @@ app.on('before-quit', (event) => {
     console.log('[main] System shutdown/restart detected — allowing quit without authentication.');
     isQuitting = true;
     killBackend().catch(() => { });
+    installPendingUpdateOnQuit();
     return;
   }
 
   if (backendExited || !backendProcess) {
     console.log('[main] Backend is not running — allowing quit without authentication.');
     isQuitting = true;
+    installPendingUpdateOnQuit();
     return;
   }
 
@@ -1108,7 +1136,7 @@ function setupIpcHandlers(): void {
       store.set('pendingUpdateVersion', updatePendingVersion);
       store.set('currentVersionBeforeUpdate', app.getVersion());
       isSystemUpdate = true;
-      autoUpdater.quitAndInstall(true, false);
+      autoUpdater.quitAndInstall(true, true);
     } else {
       app.quit();
     }
@@ -1129,7 +1157,7 @@ function setupIpcHandlers(): void {
     store.set('pendingUpdateVersion', updatePendingVersion);
     store.set('currentVersionBeforeUpdate', app.getVersion());
     isSystemUpdate = true;
-    autoUpdater.quitAndInstall(true, false);
+    autoUpdater.quitAndInstall(true, true);
     return { success: true };
   });
 
@@ -1149,5 +1177,8 @@ function setupIpcHandlers(): void {
       return { success: false, error: err.message };
     }
   });
+
+  // ── App version ───────────────────────────────────────────────────────────
+  ipcMain.handle('app:getVersion', () => app.getVersion());
   // ─────────────────────────────────────────────────────────────────────────
 }

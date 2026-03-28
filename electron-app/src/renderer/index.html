@@ -232,8 +232,7 @@
        DASHBOARD
     ═══════════════════════════════════════ */
     .dashboard {
-      max-width: 1280px;
-      margin: 0 auto;
+      width: 100%;
       padding: 20px;
       padding-bottom: 60px;
       /* space for footer */
@@ -1410,7 +1409,7 @@
       </div>
 
       <div class="login-footer">
-        <span class="app-name">Enterprise Monitor v1.0</span>
+        <span class="app-name" id="login-version">Enterprise Monitor</span>
         <span class="dev-credit">Developed by Ashraful Anik</span>
       </div>
     </div>
@@ -1533,6 +1532,7 @@
         <button class="tab-button active" data-tab="overview">📊 Dashboard</button>
         <button class="tab-button" data-tab="monitor-data">📁 Monitor Data</button>
         <button class="tab-button" data-tab="screenshots">📸 Screenshots</button>
+        <button class="tab-button" data-tab="screen-recording">🎥 Screen Recording</button>
       </div>
 
       <div class="tab-content">
@@ -1593,7 +1593,6 @@
             <button class="sub-tab-btn" data-subtab="browser">🌐 Browser</button>
             <button class="sub-tab-btn" data-subtab="clipboard">📋 Clipboard</button>
             <button class="sub-tab-btn" data-subtab="keylogs">⌨️ Keystrokes</button>
-            <button class="sub-tab-btn" data-subtab="video">🎥 Screen Recording</button>
           </div>
 
           <!-- App Tracking -->
@@ -1679,27 +1678,28 @@
             </div>
           </div>
 
-          <!-- Screen Recording -->
-          <div id="video-subtab" class="sub-tab-pane">
-            <div class="toggle-row">
-              <div>
-                <div class="toggle-label">Screen Recording</div>
-                <div class="toggle-sublabel">5-minute MP4 chunks · 720p · ~10 FPS · Admin only</div>
-              </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="recording-toggle">
-                <span class="toggle-slider"></span>
-              </label>
-              <div id="rec-badge" class="rec-badge off">
-                <span class="rec-dot"></span>
-                <span id="rec-badge-text">OFF</span>
-              </div>
-            </div>
+        </div>
 
-            <h3 style="font-size:14px;font-weight:600;color:#555;margin-bottom:12px;">Recent Recordings</h3>
-            <div id="video-list-container">
-              <div class="loading">Loading recordings…</div>
+        <!-- ── SCREEN RECORDING TAB ── -->
+        <div id="screen-recording-tab" class="tab-pane">
+          <div class="toggle-row">
+            <div>
+              <div class="toggle-label">Screen Recording</div>
+              <div class="toggle-sublabel">5-minute MP4 chunks · 720p · ~10 FPS · Admin only</div>
             </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="recording-toggle">
+              <span class="toggle-slider"></span>
+            </label>
+            <div id="rec-badge" class="rec-badge off">
+              <span class="rec-dot"></span>
+              <span id="rec-badge-text">OFF</span>
+            </div>
+          </div>
+
+          <h3 style="font-size:14px;font-weight:600;color:#555;margin-bottom:12px;">Recent Recordings</h3>
+          <div id="video-list-container">
+            <div class="loading">Loading recordings…</div>
           </div>
         </div>
 
@@ -1734,7 +1734,7 @@
        DASHBOARD FOOTER
   ═══════════════════════════════════════════════════════════ -->
   <div class="app-footer">
-    <span class="footer-brand">Enterprise Monitor</span>
+    <span class="footer-brand" id="footer-version">Enterprise Monitor</span>
     <span class="footer-dev">Developed by Ashraful Anik</span>
   </div>
 

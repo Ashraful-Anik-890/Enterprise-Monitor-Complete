@@ -6,6 +6,21 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [5.2.5] — 2026-03-28
+
+### Added
+- **Top-Level "Screen Recording" Tab** — Moved Screen Recording from a sub-tab under "Monitor Data" to its own top-level tab for faster access, alongside Dashboard, Monitor Data, and Screenshots.
+- **Dynamic Version Display** — The application now pulls its version string directly from `package.json` and displays it in the login footer and the dashboard footer (bottom-left).
+
+### Fixed
+- **Fullscreen Layout Fix** — Dashboard now uses 100% width, eliminating sidebar gaps in fullscreen or on Ultrawide monitors.
+- **Auto-Update: Post-Install Relaunch** — Corrected `quitAndInstall` flags to ensure the application restarts automatically after a silent update installation.
+- **Auto-Update: JWT Expiry during Shutdown** — Added token validation in `killBackend()` to avoid 401 errors when shutting down with an expired session; now defaults to a clean force-kill if the token is invalid.
+- **Auto-Update: Install on System Shutdown** — Implemented `installPendingUpdateOnQuit()` to catch updates during Windows shutdown/restart, ensuring pending updates are not lost during power cycles.
+- **Auto-Update: Backend Crash Resilience** — Pending updates are now correctly triggered even if the backend process has exited unexpectedly before the user quits the app.
+
+---
+
 ## [5.2.4] — 2026-03-25
 
 ### Added

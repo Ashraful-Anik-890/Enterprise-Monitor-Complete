@@ -76,6 +76,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openFolder: (filepath: string) => ipcRenderer.invoke('app:openFolder', filepath),
   quitApp: () => ipcRenderer.invoke('app:quit'),
   firstRunComplete: () => ipcRenderer.invoke('app:firstRunComplete'),
+  getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
 
   // ── Main → Renderer push events ───────────────────────────────────────────
   onQuitRequested: (cb: (event: IpcRendererEvent) => void) =>

@@ -3,7 +3,7 @@
   <img src="https://img.shields.io/badge/Backend-Python%20%7C%20FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white" />
   <img src="https://img.shields.io/badge/Frontend-Electron-47848F?style=for-the-badge&logo=electron&logoColor=white" />
   <img src="https://img.shields.io/badge/Database-SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white" />
-  <img src="https://img.shields.io/badge/Version-1.0.0-green?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Version-5.2.5-green?style=for-the-badge" />
 </p>
 
 # 🖥️ Enterprise Monitor
@@ -662,5 +662,5 @@ Built as a demonstration of **full-stack cross-platform desktop application engi
 ---
 
 <p align="center">
-  <sub>Enterprise Monitor v1.0.0 — Cross-Platform Desktop Application (Windows + macOS)</sub>
+  <sub>Enterprise Monitor v5.2.5 — Cross-Platform Desktop Application (Windows + macOS)</sub>
 </p>
