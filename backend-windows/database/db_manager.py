@@ -704,6 +704,9 @@ class DatabaseManager:
 
         with self._lock:
             try:
+                deleted_ss_files = []
+                deleted_video_files = []
+
                 # ── 1. Delete physical files for expired screenshots ──────────
                 for row in self._conn.execute(
                     "SELECT file_path FROM screenshots WHERE "
@@ -717,8 +720,11 @@ class DatabaseManager:
                         if p.exists():
                             try:
                                 p.unlink()
+                                deleted_ss_files.append(fp)
                             except OSError as e:
                                 logger.warning("Could not delete screenshot file %s: %s", fp, e)
+                        else:
+                            logger.debug("Screenshot file already missing: %s", fp)
 
                 # ── 2. Delete physical files for expired video recordings ─────
                 for row in self._conn.execute(
@@ -733,39 +739,81 @@ class DatabaseManager:
                         if p.exists():
                             try:
                                 p.unlink()
+                                deleted_video_files.append(fp)
                             except OSError as e:
                                 logger.warning("Could not delete video file %s: %s", fp, e)
+                        else:
+                            logger.debug("Video file already missing: %s", fp)
 
                 # ── 3. Purge screenshot DB rows ───────────────────────────────
-                self._conn.execute(
+                ss_cur = self._conn.execute(
                     "DELETE FROM screenshots WHERE "
                     "  (synced = 1 AND timestamp < ?) OR "
                     "  (synced = 0 AND timestamp < ?)",
                     (synced_cutoff, unsynced_cutoff),
                 )
+                ss_deleted = ss_cur.rowcount
 
                 # ── 4. Purge video_recordings DB rows ─────────────────────────
-                self._conn.execute(
+                vid_cur = self._conn.execute(
                     "DELETE FROM video_recordings WHERE "
                     "  (is_synced = 1 AND timestamp < ?) OR "
                     "  (is_synced = 0 AND timestamp < ?)",
                     (synced_cutoff, unsynced_cutoff),
                 )
+                vid_deleted = vid_cur.rowcount
 
                 # ── 5. Purge text-only tables (no physical files) ─────────────
+                text_deleted_total = 0
                 for table in ("app_activity", "clipboard_events", "browser_activity", "text_logs"):
-                    self._conn.execute(
+                    cur = self._conn.execute(
                         f"DELETE FROM {table} WHERE "
                         f"  (synced = 1 AND timestamp < ?) OR "
                         f"  (synced = 0 AND timestamp < ?)",
                         (synced_cutoff, unsynced_cutoff),
                     )
+                    text_deleted_total += cur.rowcount
 
                 self._conn.commit()
-                logger.info(
-                    "Cleanup done: synced >%dd, unsynced >%dd",
-                    synced_days, unsynced_days,
+
+                # ── 6. Sweep explicit orphans from physical directories ───────
+                orphan_delete_count = 0
+                max_retention_seconds = unsynced_days * 86400
+                cutoff_time = now.timestamp() - max_retention_seconds
+
+                for target_folder in ("screenshots", "recordings"):
+                    folder_path = self.db_dir / target_folder
+                    if folder_path.exists() and folder_path.is_dir():
+                        for file_path in folder_path.iterdir():
+                            if file_path.is_file() and file_path.suffix.lower() in ('.jpg', '.png', '.mp4'):
+                                try:
+                                    if file_path.stat().st_mtime < cutoff_time:
+                                        file_path.unlink()
+                                        orphan_delete_count += 1
+                                except OSError as e:
+                                    logger.warning("Could not delete orphaned file %s: %s", file_path, e)
+
+                # Build detailed log message
+                log_msg = (
+                    f"Cleanup done (synced >{synced_days}d, unsynced >{unsynced_days}d). "
+                    f"DB rows removed: {ss_deleted} SS, {vid_deleted} Videos, {text_deleted_total} Text. "
+                    f"Physical files deleted: {len(deleted_ss_files)} SS, {len(deleted_video_files)} Videos, {orphan_delete_count} Orphans."
                 )
+                logger.info(log_msg)
+
+                # Log actual file paths deleted (up to 10 to avoid blasting logs)
+                if deleted_ss_files:
+                    sample = ", ".join(deleted_ss_files[:10])
+                    if len(deleted_ss_files) > 10:
+                        sample += f" ...and {len(deleted_ss_files) - 10} more"
+                    logger.info("Deleted screenshot files: %s", sample)
+                
+                if deleted_video_files:
+                    sample = ", ".join(deleted_video_files[:10])
+                    if len(deleted_video_files) > 10:
+                        sample += f" ...and {len(deleted_video_files) - 10} more"
+                    logger.info("Deleted video files: %s", sample)
+
             except Exception as exc:
                 logger.error("cleanup_old_data: %s", exc)
                 self._conn.rollback()

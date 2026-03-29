@@ -724,6 +724,9 @@ class DatabaseManager:
 
         with self._lock:
             try:
+                deleted_ss_files = []
+                deleted_video_files = []
+
                 # ── 1. Delete physical files for expired screenshots ──────────
                 for row in self._conn.execute(
                     "SELECT file_path FROM screenshots WHERE "
@@ -737,8 +740,11 @@ class DatabaseManager:
                         if p.exists():
                             try:
                                 p.unlink()
+                                deleted_ss_files.append(fp)
                             except OSError as e:
                                 logger.warning("Could not delete screenshot file %s: %s", fp, e)
+                        else:
+                            logger.debug("Screenshot file already missing: %s", fp)
 
                 # ── 2. Delete physical files for expired video recordings ─────
                 for row in self._conn.execute(
@@ -753,24 +759,29 @@ class DatabaseManager:
                         if p.exists():
                             try:
                                 p.unlink()
+                                deleted_video_files.append(fp)
                             except OSError as e:
                                 logger.warning("Could not delete video file %s: %s", fp, e)
+                        else:
+                            logger.debug("Video file already missing: %s", fp)
 
                 # ── 3. Purge screenshot DB rows ───────────────────────────────
-                self._conn.execute(
+                ss_cur = self._conn.execute(
                     "DELETE FROM screenshots WHERE "
                     "  (synced = 1 AND timestamp < ?) OR "
                     "  (synced = 0 AND timestamp < ?)",
                     (synced_cutoff, unsynced_cutoff),
                 )
+                ss_deleted = ss_cur.rowcount
 
                 # ── 4. Purge video_recordings DB rows ─────────────────────────
-                self._conn.execute(
+                vid_cur = self._conn.execute(
                     "DELETE FROM video_recordings WHERE "
                     "  (is_synced = 1 AND timestamp < ?) OR "
                     "  (is_synced = 0 AND timestamp < ?)",
                     (synced_cutoff, unsynced_cutoff),
                 )
+                vid_deleted = vid_cur.rowcount
 
                 # ── 5. Purge text-only tables (no physical files) ─────────────
                 for table in ("app_activity", "clipboard_events", "browser_activity", "text_logs"):

@@ -1,5 +1,7 @@
 // electron-app/src/preload/preload.ts
-// Auto-Update Phase 1: Added update system IPC bridges
+// v5.2.6 — Patch 1D: All push-event IPC channels guarded with removeAllListeners
+// before re-registration. Guarantees listener stack never exceeds 1 regardless
+// of how many times the renderer script executes or the window reloads.
 
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
 
@@ -79,15 +81,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
 
   // ── Main → Renderer push events ───────────────────────────────────────────
-  onQuitRequested: (cb: (event: IpcRendererEvent) => void) =>
-    ipcRenderer.on('show-quit-dialog', cb),
-  onFirstRunSetup: (cb: (event: IpcRendererEvent) => void) =>
-    ipcRenderer.on('first-run-setup', cb),
-  onForceLogout: (cb: (event: IpcRendererEvent) => void) =>
-    ipcRenderer.on('force-logout', cb),
+  // Patch 1D: removeAllListeners before .on on every push channel.
+  // This is the correct sanitization pattern: even if this registration code
+  // runs more than once (hot-reload, double-script-execution), the channel
+  // listener count is always reset to exactly 1.
+  onQuitRequested: (cb: (event: IpcRendererEvent) => void) => {
+    ipcRenderer.removeAllListeners('show-quit-dialog');
+    ipcRenderer.on('show-quit-dialog', cb);
+  },
+  onFirstRunSetup: (cb: (event: IpcRendererEvent) => void) => {
+    ipcRenderer.removeAllListeners('first-run-setup');
+    ipcRenderer.on('first-run-setup', cb);
+  },
+  onForceLogout: (cb: (event: IpcRendererEvent) => void) => {
+    ipcRenderer.removeAllListeners('force-logout');
+    ipcRenderer.on('force-logout', cb);
+  },
 
   // ── Auto-Update system ────────────────────────────────────────────────────
-  // Actions (renderer → main)
   installUpdate: () =>
     ipcRenderer.invoke('app:installUpdate'),
   deferUpdate: () =>
@@ -95,15 +106,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkForUpdates: () =>
     ipcRenderer.invoke('app:checkForUpdates'),
 
-  // Push events (main → renderer)
-  onUpdateAvailable: (cb: (event: IpcRendererEvent, info: { version: string; releaseNotes: string }) => void) =>
-    ipcRenderer.on('update-available', cb),
-  onDownloadProgress: (cb: (event: IpcRendererEvent, progress: { percent: number; bytesPerSecond: number; total: number }) => void) =>
-    ipcRenderer.on('download-progress', cb),
-  onUpdateDownloaded: (cb: (event: IpcRendererEvent, info: { version: string }) => void) =>
-    ipcRenderer.on('update-downloaded', cb),
-  onUpdateComplete: (cb: (event: IpcRendererEvent, info: { version: string; previousVersion: string }) => void) =>
-    ipcRenderer.on('update-complete', cb),
-  onUpdateError: (cb: (event: IpcRendererEvent, info: { message: string }) => void) =>
-    ipcRenderer.on('update-error', cb),
+  onUpdateAvailable: (cb: (event: IpcRendererEvent, info: { version: string; releaseNotes: string }) => void) => {
+    ipcRenderer.removeAllListeners('update-available');
+    ipcRenderer.on('update-available', cb);
+  },
+  onDownloadProgress: (cb: (event: IpcRendererEvent, progress: { percent: number; bytesPerSecond: number; total: number }) => void) => {
+    ipcRenderer.removeAllListeners('download-progress');
+    ipcRenderer.on('download-progress', cb);
+  },
+  onUpdateDownloaded: (cb: (event: IpcRendererEvent, info: { version: string }) => void) => {
+    ipcRenderer.removeAllListeners('update-downloaded');
+    ipcRenderer.on('update-downloaded', cb);
+  },
+  onUpdateComplete: (cb: (event: IpcRendererEvent, info: { version: string; previousVersion: string }) => void) => {
+    ipcRenderer.removeAllListeners('update-complete');
+    ipcRenderer.on('update-complete', cb);
+  },
+  onUpdateError: (cb: (event: IpcRendererEvent, info: { message: string }) => void) => {
+    ipcRenderer.removeAllListeners('update-error');
+    ipcRenderer.on('update-error', cb);
+  },
 });

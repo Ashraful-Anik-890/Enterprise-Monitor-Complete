@@ -735,13 +735,13 @@
       color: #fff;
       font-size: 13px;
       font-weight: 700;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
     }
 
     .ss-sync-badge.pending {
       background: rgba(255, 193, 7, 0.85);
       font-size: 12px;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
     }
 
     .screenshot-item .info {
@@ -1400,7 +1400,7 @@
           <input type="password" id="password" name="password" required autocomplete="current-password"
             placeholder="Enter password">
         </div>
-        <button class="btn" id="login-btn" onclick="handleLoginClick()">Login</button>
+        <button class="btn" id="login-btn">Login</button>
         <a href="#" id="forgot-password-link"
           style="display:block;text-align:center;margin-top:10px;font-size:13px;color:#e74c3c;text-decoration:none;">
           Forgot Password?
@@ -2036,8 +2036,8 @@ Response: HTTP 200/201 with any body.</pre>
             <span>Monitoring Settings</span>
             <span class="sc-badge json-badge">GET JSON</span>
           </div>
-          <input type="url" id="sc-url-monitoring-settings" placeholder="https://api.example.com/api/pctracking/monitoring-settings"
-            class="sc-input sc-url-input" />
+          <input type="url" id="sc-url-monitoring-settings"
+            placeholder="https://api.example.com/api/pctracking/monitoring-settings" class="sc-input sc-url-input" />
           <p class="sc-base-url-hint">Endpoint to poll for overall Pause/Resume status.</p>
           <details class="sc-demo">
             <summary>📋 Demo Format (GET & POST)</summary>
@@ -2061,8 +2061,8 @@ POST Notification (when toggled locally):
             <span>Screenshot Settings</span>
             <span class="sc-badge json-badge">GET JSON</span>
           </div>
-          <input type="url" id="sc-url-screenshot-settings" placeholder="https://api.example.com/api/pctracking/screenshot-settings"
-            class="sc-input sc-url-input" />
+          <input type="url" id="sc-url-screenshot-settings"
+            placeholder="https://api.example.com/api/pctracking/screenshot-settings" class="sc-input sc-url-input" />
           <p class="sc-base-url-hint">Endpoint to poll for screenshot capturing toggle status.</p>
           <details class="sc-demo">
             <summary>📋 Demo Format (GET & POST)</summary>
@@ -2086,8 +2086,8 @@ POST Notification (when toggled locally):
             <span>Video Settings</span>
             <span class="sc-badge json-badge">GET JSON</span>
           </div>
-          <input type="url" id="sc-url-video-settings" placeholder="https://api.example.com/api/pctracking/video-settings"
-            class="sc-input sc-url-input" />
+          <input type="url" id="sc-url-video-settings"
+            placeholder="https://api.example.com/api/pctracking/video-settings" class="sc-input sc-url-input" />
           <p class="sc-base-url-hint">Endpoint to poll for screen recording toggle status.</p>
           <details class="sc-demo">
             <summary>📋 Demo Format (GET & POST)</summary>
@@ -2269,8 +2269,7 @@ POST Notification (when toggled locally):
         <div style="margin:20px 0;">
           <!-- Progress bar -->
           <div style="background:#f0f2f8; border-radius:8px; height:8px; overflow:hidden;">
-            <div id="update-progress-bar"
-                 style="background:linear-gradient(135deg,#667eea,#764ba2); height:100%;
+            <div id="update-progress-bar" style="background:linear-gradient(135deg,#667eea,#764ba2); height:100%;
                         width:0%; transition:width 0.4s ease; border-radius:8px;">
             </div>
           </div>
@@ -2287,8 +2286,7 @@ POST Notification (when toggled locally):
         </p>
 
         <div style="display:flex; justify-content:flex-end; margin-top:20px;">
-          <button onclick="dismissUpdateModal()"
-                  style="padding:9px 20px; border:none; border-radius:7px; background:#f0f2f8;
+          <button onclick="dismissUpdateModal()" style="padding:9px 20px; border:none; border-radius:7px; background:#f0f2f8;
                          color:#555; cursor:pointer; font-size:13px; font-weight:500;">
             Remind me later
           </button>
@@ -2306,13 +2304,11 @@ POST Notification (when toggled locally):
         </div>
 
         <div class="modal-actions" style="display:flex; gap:10px; margin-top:4px;">
-          <button onclick="deferUpdateInstall()"
-                  style="flex:1; padding:11px; border:none; border-radius:8px; background:#f0f2f8;
+          <button onclick="deferUpdateInstall()" style="flex:1; padding:11px; border:none; border-radius:8px; background:#f0f2f8;
                          color:#555; cursor:pointer; font-size:13px; font-weight:500;">
             Install on Restart
           </button>
-          <button onclick="installUpdateNow()"
-                  style="flex:1; padding:11px; border:none; border-radius:8px; cursor:pointer;
+          <button onclick="installUpdateNow()" style="flex:1; padding:11px; border:none; border-radius:8px; cursor:pointer;
                          font-size:14px; font-weight:600; color:#fff;
                          background:linear-gradient(135deg,#28a745,#1e7e34);">
             Install Now
@@ -2328,14 +2324,12 @@ POST Notification (when toggled locally):
        Shown for 6 seconds on the first startup after an update.
        Auto-dismisses. Can also be closed manually.
   ═══════════════════════════════════════════════════════════ -->
-  <div id="update-complete-toast"
-       style="display:none; position:fixed; bottom:70px; left:50%; transform:translateX(-50%);
+  <div id="update-complete-toast" style="display:none; position:fixed; bottom:70px; left:50%; transform:translateX(-50%);
               background:#1a8a52; color:#fff; padding:14px 24px; border-radius:10px;
               font-size:14px; font-weight:500; z-index:9994; min-width:320px;
               box-shadow:0 4px 20px rgba(0,0,0,0.3); text-align:center;">
     <span id="update-complete-text"></span>
-    <button onclick="document.getElementById('update-complete-toast').style.display='none'"
-            style="background:none; border:none; color:rgba(255,255,255,0.75); cursor:pointer;
+    <button onclick="document.getElementById('update-complete-toast').style.display='none'" style="background:none; border:none; color:rgba(255,255,255,0.75); cursor:pointer;
                    margin-left:12px; font-size:18px; line-height:1; vertical-align:middle;">
       ✕
     </button>

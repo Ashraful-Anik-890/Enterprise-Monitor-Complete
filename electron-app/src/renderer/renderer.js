@@ -1,8 +1,9 @@
-// ============================================================
 // renderer.js — Enterprise Monitor
-// Includes: credential modal, screen recording UI, video list,
-//           login/dashboard UI updates, all existing features preserved.
-// ============================================================
+// v5.2.6 patches applied:
+//   Patch 1A: Login button onclick removed from HTML; addEventListener is sole binding.
+//   Patch 1B: IPC push-event listeners registered at module load (before DOMContentLoaded).
+//   Patch 1C: checkAuthentication() checks routing state before calling showLogin().
+//   Patch 1D: preload.ts removeAllListeners guards (see preload.ts).
 
 // ─── GLOBAL STATE ────────────────────────────────────────────
 let isAuthenticated = false;
@@ -21,31 +22,43 @@ function getLocalDateString() {
 let currentDate = getLocalDateString();
 let currentTimezone = 'UTC';
 
+// ─── PATCH 1B: IPC PUSH-EVENT LISTENERS — MODULE LOAD ────────
+// Registered here, once, at parse time. Never re-registered inside
+// checkAuthentication(), showDashboard(), or setupEventListeners().
+// preload.ts removeAllListeners() guards ensure the Node-side count
+// is always exactly 1 even if this script somehow executes twice.
+
+window.electronAPI.onForceLogout(() => {
+  console.warn('[renderer] Force-logout: backend token expired (401)');
+  isAuthenticated = false;
+  clearTokenCountdown();
+  stopSyncStatusPoller();
+  showLogin();
+  document.getElementById('username').value = '';
+  document.getElementById('password').value = '';
+  const errEl = document.getElementById('login-error');
+  if (errEl) {
+    errEl.textContent = 'Session expired. Please log in again.';
+    errEl.style.color = '#e74c3c';
+  }
+});
+
+window.electronAPI.onQuitRequested(() => showQuitAuthDialog());
+window.electronAPI.onFirstRunSetup(() => showFirstRunModal());
+
 // ─── INIT ────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('date-picker').value = currentDate;
   setupEventListeners();
   await checkAuthentication();
   loadAppVersion();
-
-  // Force-logout when the main process detects a backend 401 (token expired)
-  window.electronAPI.onForceLogout(() => {
-    console.warn('[renderer] Force-logout: backend token expired (401)');
-    isAuthenticated = false;
-    clearTokenCountdown();
-    stopSyncStatusPoller();
-    showLogin();
-    document.getElementById('username').value = '';
-    document.getElementById('password').value = '';
-    const errEl = document.getElementById('login-error');
-    if (errEl) {
-      errEl.textContent = 'Session expired. Please log in again.';
-      errEl.style.color = '#e74c3c';
-    }
-  });
 });
 
 // ─── AUTH ────────────────────────────────────────────────────
+// PATCH 1C (revised): Do not call showLogin() if login-container is
+// already active. Checking routing state — not DOM focus — means
+// partially-filled credentials survive a background auth re-check
+// regardless of whether the user has clicked away from the input.
 async function checkAuthentication() {
   try {
     const result = await window.electronAPI.checkAuth();
@@ -55,11 +68,19 @@ async function checkAuthentication() {
       initializeCharts();
       await loadDashboardData();
     } else {
-      showLogin();
+      const loginContainer = document.getElementById('login-container');
+      const isLoginVisible = loginContainer && loginContainer.classList.contains('active');
+      if (!isLoginVisible) {
+        showLogin();
+      }
     }
   } catch (error) {
     console.error('Auth check failed:', error);
-    showLogin();
+    const loginContainer = document.getElementById('login-container');
+    const isLoginVisible = loginContainer && loginContainer.classList.contains('active');
+    if (!isLoginVisible) {
+      showLogin();
+    }
   }
 }
 
@@ -75,8 +96,11 @@ function showDashboard() {
 }
 
 // ─── EVENT LISTENERS ─────────────────────────────────────────
+// PATCH 1A: login-btn has no onclick attribute in HTML.
+// PATCH 1B: IPC push-event listeners removed from this function entirely.
+//           Only DOM event bindings live here.
 function setupEventListeners() {
-  // Login
+  // Login — sole binding (HTML onclick attribute removed in Patch 1A)
   document.getElementById('login-btn').addEventListener('click', handleLoginClick);
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
@@ -103,7 +127,7 @@ function setupEventListeners() {
     loadDashboardData();
   });
 
-  // Timezone — must be top-level, NOT nested inside search-btn
+  // Timezone
   const tzSelect = document.getElementById('timezone-select');
   if (tzSelect) {
     tzSelect.addEventListener('change', (e) => saveTimezone(e.target.value));
@@ -140,15 +164,11 @@ function setupEventListeners() {
     scModal.addEventListener('click', (e) => { if (e.target === scModal) closeServerConfigModal(); });
   }
 
-  // Recording toggle
+  // Recording toggles
   document.getElementById('recording-toggle').addEventListener('change', handleRecordingToggle);
-
-  // Screenshot toggle
   document.getElementById('screenshot-toggle').addEventListener('change', handleScreenshotToggle);
 
-  // New additions
-  window.electronAPI.onQuitRequested(() => showQuitAuthDialog());
-  window.electronAPI.onFirstRunSetup(() => showFirstRunModal());
+  // Quit / forgot-password / first-run / post-api-cred
   document.getElementById('forgot-password-link')
     ?.addEventListener('click', e => { e.preventDefault(); openForgotPassword(); });
   document.getElementById('quit-cancel-btn')
@@ -174,7 +194,7 @@ function setupEventListeners() {
   document.getElementById('post-api-cred-yes-btn')
     ?.addEventListener('click', goToUpdateCredentials);
 
-  // ── Auto-Update IPC listeners ──────────────────────────────
+  // Auto-Update IPC listeners
   setupUpdateListeners();
 }
 
@@ -257,7 +277,6 @@ async function handleUpdateCredentials() {
   errorEl.style.display = 'none';
   successEl.style.display = 'none';
 
-  // Client-side validation
   if (!newUsername) return showModalError('Username is required.');
   if (!newPassword) return showModalError('Password is required.');
   if (newPassword !== confirmPass) return showModalError('Passwords do not match.');
@@ -308,36 +327,29 @@ function openServerConfigModal() {
   modal.classList.add('open');
 
   window.electronAPI.getConfig().then(cfg => {
-    const dynamicEnabled = cfg.dynamic_api_enabled !== false; // default true if old backend
+    const dynamicEnabled = cfg.dynamic_api_enabled !== false;
 
-    // ── Locked state ─────────────────────────────────────────────────────────
     const lockedBanner = document.getElementById('sc-locked-banner');
     const dynamicBody = document.getElementById('sc-dynamic-body');
     const saveBtn = document.getElementById('sc-save-btn');
 
     if (!dynamicEnabled) {
-      // Show lock banner, hide editable body
       document.getElementById('sc-locked-company').textContent =
         cfg.company_name || 'your IT Administrator';
       lockedBanner.style.display = 'block';
       dynamicBody.style.display = 'none';
       saveBtn.style.display = 'none';
-      return; // Nothing else to populate
+      return;
     }
 
-    // ── Dynamic mode ─────────────────────────────────────────────────────────
     lockedBanner.style.display = 'none';
     dynamicBody.style.display = 'block';
     saveBtn.style.display = '';
 
-    // Global fields
     document.getElementById('sc-api-key').value = cfg.api_key || '';
     document.getElementById('sc-sync-interval').value = cfg.sync_interval_seconds ?? 300;
-
-    // Base URL shortcut
     document.getElementById('sc-base-url').value = cfg.base_url || '';
 
-    // Per-type URL fields — store path suffixes on the inputs for applyBaseUrl()
     const urlFields = [
       { id: 'sc-url-app', val: cfg.url_app_activity, path: cfg.path_app_activity },
       { id: 'sc-url-browser', val: cfg.url_browser, path: cfg.path_browser },
@@ -353,13 +365,11 @@ function openServerConfigModal() {
     urlFields.forEach(({ id, val, path }) => {
       const el = document.getElementById(id);
       el.value = val || '';
-      // Store the path suffix as a data attribute so applyBaseUrl() can use it
       el.dataset.pathSuffix = path || '';
-      // Update the placeholder to show the actual expected path
       if (path) el.placeholder = `https://your-server.com${path}`;
     });
 
-  }).catch(() => { /* backend not ready yet */ });
+  }).catch(() => { });
 }
 
 function closeServerConfigModal() {
@@ -379,7 +389,6 @@ function applyBaseUrl() {
     return;
   }
 
-  // Validate base URL
   try { new URL(baseUrlRaw); }
   catch {
     errorEl.textContent = 'Base URL is invalid — must start with https://';
@@ -387,19 +396,12 @@ function applyBaseUrl() {
     return;
   }
 
-  // Strip trailing slash so https://api.company.com/ + /api/... doesn't double-slash
   const base = baseUrlRaw.replace(/\/$/, '');
 
   const urlInputIds = [
-    'sc-url-app',
-    'sc-url-browser',
-    'sc-url-clipboard',
-    'sc-url-keystrokes',
-    'sc-url-screenshots',
-    'sc-url-videos',
-    'sc-url-monitoring-settings',
-    'sc-url-screenshot-settings',
-    'sc-url-video-settings',
+    'sc-url-app', 'sc-url-browser', 'sc-url-clipboard', 'sc-url-keystrokes',
+    'sc-url-screenshots', 'sc-url-videos', 'sc-url-monitoring-settings',
+    'sc-url-screenshot-settings', 'sc-url-video-settings',
   ];
 
   urlInputIds.forEach(id => {
@@ -417,7 +419,6 @@ async function handleSaveServerConfig() {
   errorEl.style.display = 'none';
   successEl.style.display = 'none';
 
-  // Collect all 6 URLs — validate any that are non-empty
   const urlFields = [
     { id: 'sc-url-app', key: 'url_app_activity', label: 'App Activity' },
     { id: 'sc-url-browser', key: 'url_browser', label: 'Browser Activity' },
@@ -433,7 +434,7 @@ async function handleSaveServerConfig() {
   const payload = {
     api_key: document.getElementById('sc-api-key').value.trim(),
     sync_interval_seconds: parseInt(document.getElementById('sc-sync-interval').value, 10) || 300,
-    base_url: document.getElementById('sc-base-url').value.trim(),   // ← NEW
+    base_url: document.getElementById('sc-base-url').value.trim(),
   };
 
   for (const f of urlFields) {
@@ -446,7 +447,7 @@ async function handleSaveServerConfig() {
         return;
       }
     }
-    payload[f.key] = val;  // empty string = disabled for this type
+    payload[f.key] = val;
   }
 
   saveBtn.disabled = true;
@@ -476,7 +477,6 @@ async function handleSaveServerConfig() {
     saveBtn.textContent = '💾 Save All';
   }
 }
-
 
 // ─── TAB SWITCHING ───────────────────────────────────────────
 function switchTab(tab) {
@@ -564,7 +564,6 @@ async function loadTimezone() {
     if (sel) sel.value = currentTimezone;
     updateTzBadge();
   } catch (e) {
-    // Non-fatal — keep UTC default
     console.warn('Could not load timezone config:', e);
   }
 }
@@ -574,12 +573,9 @@ async function saveTimezone(tz) {
     currentTimezone = tz;
     updateTzBadge();
     await window.electronAPI.setTimezone(tz);
-    // Re-render only the charts — no need to reload all data or re-fetch timezone
     if (currentTab === 'overview') {
       await loadChartsData();
     }
-    // If on monitor-data tab, timestamps in the tables use formatWithTZ() which
-    // reads currentTimezone directly — reload the active subtab only
     if (currentTab === 'monitor-data') {
       await loadMonitorData();
     }
@@ -592,7 +588,6 @@ function updateTzBadge() {
   const badge = document.getElementById('tz-badge');
   if (!badge) return;
   try {
-    // Show current UTC offset for the selected zone
     const now = new Date();
     const offset = new Intl.DateTimeFormat('en', {
       timeZone: currentTimezone,
@@ -607,7 +602,6 @@ function updateTzBadge() {
 async function loadIdentity() {
   try {
     const identity = await window.electronAPI.getIdentity();
-    // Show alias (or raw name) as the prominent label
     const deviceLabel = document.querySelector('#identity-section .identity-card:first-child .identity-label');
     const userLabel = document.querySelector('#identity-section .identity-card:nth-child(2) .identity-label');
     if (deviceLabel) deviceLabel.textContent = identity.device_alias || identity.machine_id;
@@ -813,7 +807,6 @@ async function handleRecordingToggle() {
     if (result.success) {
       await loadVideoStatus();
     } else {
-      // Revert toggle on failure
       toggle.checked = !toggle.checked;
       console.error('Toggle failed:', result.error);
     }
@@ -877,8 +870,6 @@ async function loadVideoList() {
         </table>
       </div>`;
 
-    // Attach open-folder listeners via delegation — never use inline onclick for file paths
-    // because HTML attribute parsing corrupts Windows backslashes.
     container.querySelectorAll('.btn-folder[data-filepath]').forEach(btn => {
       btn.addEventListener('click', () => openVideoFolder(btn.dataset.filepath));
     });
@@ -907,7 +898,7 @@ async function loadScreenshotStatus() {
     const badgeTxt = document.getElementById('ss-badge-text');
     const dot = badge.querySelector('.rec-dot');
 
-    toggle.checked = status.recording; // Backend uses "recording" key for active state in status
+    toggle.checked = status.recording;
 
     if (status.recording) {
       badge.className = 'rec-badge on';
@@ -1014,14 +1005,11 @@ async function loadChartsData() {
   try {
     const today = currentDate;
 
-    // FIX 1: pass ONLY "YYYY-MM-DD" — db_manager appends the time parts internally
     const [activity, timeline] = await Promise.all([
       window.electronAPI.getActivityStats({ start: today, end: today }),
       window.electronAPI.getTimelineData({ date: today }),
     ]);
 
-    // ── App Usage Doughnut ────────────────────────────────────────────────
-    // Backend returns: [{app_name: "chrome.exe", total_seconds: 300}, ...]
     if (Array.isArray(activity) && activity.length > 0 && charts.appUsage) {
       const top7 = activity.slice(0, 7);
       charts.appUsage.data.labels = top7.map(e => {
@@ -1038,11 +1026,7 @@ async function loadChartsData() {
       charts.appUsage.update();
     }
 
-    // ── Activity Timeline Bar ─────────────────────────────────────────────
-    // FIX 2: Backend returns raw app_activity rows — bucket them into hourly slots
-    // [{timestamp: "2026-02-19T08:30:00...", duration_seconds: 45, app_name: "..."}]
     if (Array.isArray(timeline) && timeline.length > 0 && charts.timeline) {
-      // Build a full 24-hour map so hours with zero activity still show
       const hourMap = {};
       for (let h = 0; h < 24; h++) {
         hourMap[String(h).padStart(2, '0') + ':00'] = 0;
@@ -1050,40 +1034,34 @@ async function loadChartsData() {
       const tzForChart = currentTimezone || 'UTC';
       timeline.forEach(t => {
         if (!t.timestamp) return;
-        // Ensure timestamp is parsed as UTC if it doesn't have timezone info
         let tsStr = t.timestamp;
         if (!tsStr.endsWith('Z') && !tsStr.includes('+') && !tsStr.match(/-\d\d:\d\d$/)) {
           tsStr = tsStr.replace(' ', 'T');
           if (!tsStr.endsWith('Z')) tsStr += 'Z';
         }
-        
-        // Extract the hour in the *selected* timezone, not browser local time
+
         let hourStr = new Intl.DateTimeFormat('en-US', {
           timeZone: tzForChart,
           hour: '2-digit',
           hour12: false,
         }).format(new Date(tsStr));
-        
-        // Fix for 24:00 displaying instead of 00:00
+
         if (hourStr === '24') hourStr = '00';
-        // hourStr is like "08" or "23"
         const label = hourStr.padStart(2, '0') + ':00';
         hourMap[label] = (hourMap[label] || 0) + (t.duration_seconds || 0);
       });
 
-      // Trim leading/trailing empty hours for a cleaner chart
       const allHours = Object.entries(hourMap);
       const firstNonZero = allHours.findIndex(([, v]) => v > 0);
       const lastNonZero = allHours.reduce((acc, [, v], i) => v > 0 ? i : acc, -1);
 
-      // Show the active window ± 1 hour padding, or fall back to business hours
       const visible = firstNonZero >= 0
         ? allHours.slice(Math.max(0, firstNonZero - 1), lastNonZero + 2)
         : allHours.slice(7, 19);
 
       charts.timeline.data.labels = visible.map(([label]) => label);
       charts.timeline.data.datasets[0].data = visible.map(([, secs]) =>
-        Math.round(secs / 60)   // convert seconds → minutes for readable axis
+        Math.round(secs / 60)
       );
       charts.timeline.update();
     } else if (charts.timeline) {
@@ -1097,10 +1075,6 @@ async function loadChartsData() {
   }
 }
 
-//param {string} isoString  - UTC ISO-8601 timestamp from the database
-//param {string} [tz]       
-//returns {string}          
-
 function formatWithTZ(isoString, tz) {
   if (!isoString) return '—';
   try {
@@ -1109,7 +1083,7 @@ function formatWithTZ(isoString, tz) {
       tsStr = tsStr.replace(' ', 'T');
       if (!tsStr.endsWith('Z')) tsStr += 'Z';
     }
-    
+
     const zone = tz || currentTimezone || 'UTC';
     return new Date(tsStr).toLocaleString('en-US', {
       timeZone: zone,
@@ -1122,10 +1096,10 @@ function formatWithTZ(isoString, tz) {
       hour12: false,
     });
   } catch (e) {
-    // Fallback: browser default if the TZ string is bad
     return new Date(isoString).toLocaleString();
   }
 }
+
 // ─── UTILITIES ────────────────────────────────────────────────
 function escapeHtml(str) {
   const d = document.createElement('div');
@@ -1162,7 +1136,7 @@ function clearTokenCountdown() {
 async function startTokenCountdown() {
   clearTokenCountdown();
   const el = document.getElementById('token-timer');
-  if (!el) return;   // element not in DOM — no-op
+  if (!el) return;
 
   const { remainingMs } = await window.electronAPI.getTokenExpiry();
   if (remainingMs <= 0) {
@@ -1183,12 +1157,12 @@ async function startTokenCountdown() {
     const s = remaining % 60;
     if (el) {
       el.textContent = `Session: ${m}:${String(s).padStart(2, '0')}`;
-      el.style.color = remaining <= 120 ? '#e74c3c' : '#aab';   // red in last 2 min
+      el.style.color = remaining <= 120 ? '#e74c3c' : '#aab';
     }
     remaining--;
   }
 
-  tick();  // paint immediately; don't wait 1s for first render
+  tick();
   _tokenCountdownInterval = setInterval(tick, 1000);
 }
 
@@ -1196,16 +1170,10 @@ async function startTokenCountdown() {
 window._firstRunApiConfiguring = false;
 let _syncPollerInterval = null;
 
-
-// ═══════════════════════════════════════════════════════════════════════════
-// SYNC STATUS BANNER
-// Shows last sync time + error in the dashboard header area.
-// Polls every 60 seconds while logged in.
-// ═══════════════════════════════════════════════════════════════════════════
-
+// ─── SYNC STATUS BANNER ──────────────────────────────────────────────────────
 function startSyncStatusPoller() {
-  updateSyncStatus();                                // immediate
-  loadMonitoringStatus();                            // immediate
+  updateSyncStatus();
+  loadMonitoringStatus();
   _syncPollerInterval = setInterval(() => {
     updateSyncStatus();
     loadMonitoringStatus();
@@ -1223,37 +1191,30 @@ async function updateSyncStatus() {
     if (!banner) return;
 
     if (status.last_error) {
-      // Server unreachable or explicit error — show warning
       banner.textContent = `⚠ ${status.last_error}`;
       banner.style.background = '#fff3cd';
       banner.style.color = '#856404';
       banner.style.display = 'block';
     } else if (status.last_sync && status.server_reachable !== false) {
-      // Synced AND server was actually reached (or old backend without the field)
       const t = new Date(status.last_sync).toLocaleTimeString();
       banner.textContent = `✓ Last synced: ${t}`;
       banner.style.background = '#d1edff';
       banner.style.color = '#0c5460';
       banner.style.display = 'block';
     } else if (status.last_sync && status.server_reachable === false) {
-      // Loop ran but server was unreachable — don't claim success
       banner.textContent = `⚠ Server unreachable — monitoring active, data queued`;
       banner.style.background = '#fff3cd';
       banner.style.color = '#856404';
       banner.style.display = 'block';
     } else {
-      banner.style.display = 'none';  // no URLs configured yet
+      banner.style.display = 'none';
     }
   } catch {
-    // backend offline — banner already handled by health check
+    // backend offline
   }
 }
 
-
-// ═══════════════════════════════════════════════════════════════════════════
-// QUIT AUTHENTICATION DIALOG
-// ═══════════════════════════════════════════════════════════════════════════
-
+// ─── QUIT AUTHENTICATION DIALOG ──────────────────────────────────────────────
 function showQuitAuthDialog() {
   const overlay = document.getElementById('quit-auth-overlay');
   if (!overlay) return;
@@ -1291,7 +1252,6 @@ async function confirmQuit() {
     if (result.success) {
       await window.electronAPI.quitApp();
     } else {
-      // Wrong credentials — distinguish auth failure from backend offline
       const isOffline = result.error && (
         result.error.includes('ECONNREFUSED') ||
         result.error.includes('Network Error') ||
@@ -1299,7 +1259,6 @@ async function confirmQuit() {
       );
 
       if (isOffline) {
-        // Backend is already dead — monitoring isn't running. Safe to allow exit.
         errorEl.innerHTML =
           '⚠ Backend is offline — monitoring is <strong>not running</strong>.<br>' +
           '<a href="#" id="quit-force-link" style="color:#e74c3c">Force quit anyway</a>';
@@ -1322,11 +1281,7 @@ async function confirmQuit() {
   }
 }
 
-
-// ═══════════════════════════════════════════════════════════════════════════
-// FORGOT PASSWORD FLOW
-// ═══════════════════════════════════════════════════════════════════════════
-
+// ─── FORGOT PASSWORD FLOW ────────────────────────────────────────────────────
 let _fpUsername = '';
 
 function openForgotPassword() {
@@ -1426,16 +1381,8 @@ async function fpResetPassword() {
   }
 }
 
-
-// ═══════════════════════════════════════════════════════════════════════════
-// FIRST-RUN SETUP FLOW
-// Triggered once after first successful login.
-// Step 1: modal offers "Configure APIs" or "Skip"
-// Step 2: after API config saved → prompt to update credentials
-// ═══════════════════════════════════════════════════════════════════════════
-
+// ─── FIRST-RUN SETUP FLOW ────────────────────────────────────────────────────
 function showFirstRunModal() {
-  // Only show if logged in (dashboard visible)
   const dash = document.getElementById('dashboard-container');
   if (!dash || !dash.classList.contains('active')) return;
   document.getElementById('first-run-modal').style.display = 'flex';
@@ -1444,18 +1391,16 @@ function showFirstRunModal() {
 function dismissFirstRun() {
   document.getElementById('first-run-modal').style.display = 'none';
   window.electronAPI.firstRunComplete();
-  // Explain monitoring is already active even without API config
   showInfoToast('Monitoring is active. You can configure APIs anytime via ⚙ Configure Server APIs.');
 }
 
 function firstRunConfigure() {
   document.getElementById('first-run-modal').style.display = 'none';
   window.electronAPI.firstRunComplete();
-  window._firstRunApiConfiguring = true;    // flag: after save → show cred prompt
+  window._firstRunApiConfiguring = true;
   if (typeof openServerConfigModal === 'function') openServerConfigModal();
 }
 
-// Called from handleSaveServerConfig() success path (see instruction [C] at top)
 function showPostApiCredentialPrompt() {
   document.getElementById('post-api-cred-modal').style.display = 'flex';
 }
@@ -1470,11 +1415,7 @@ function goToUpdateCredentials() {
   if (typeof openCredentialsModal === 'function') openCredentialsModal();
 }
 
-
-// ═══════════════════════════════════════════════════════════════════════════
-// UTILITY: Toast notification (non-blocking info message)
-// ═══════════════════════════════════════════════════════════════════════════
-
+// ─── UTILITY: Toast ──────────────────────────────────────────────────────────
 function showInfoToast(message) {
   const existing = document.getElementById('info-toast');
   if (existing) existing.remove();
@@ -1491,7 +1432,6 @@ function showInfoToast(message) {
   document.body.appendChild(toast);
   setTimeout(() => toast.remove(), 5000);
 }
-
 
 // ─── AUTO-UPDATE HANDLERS ─────────────────────────────────────────────────────
 let _currentUpdateVersion = null;
@@ -1585,6 +1525,8 @@ function showUpdateCompleteToast(version, previousVersion) {
   }
 }
 
+// setupUpdateListeners uses the now-guarded preload methods (Patch 1D).
+// The removeAllListeners in preload ensures these are safe to call here.
 function setupUpdateListeners() {
   if (!window.electronAPI || !window.electronAPI.onUpdateAvailable) return;
 
@@ -1612,4 +1554,3 @@ function setupUpdateListeners() {
     showInfoToast(`Update error: ${info.message}`);
   });
 }
-// ─── END AUTO-UPDATE HANDLERS ─────────────────────────────────────────────────

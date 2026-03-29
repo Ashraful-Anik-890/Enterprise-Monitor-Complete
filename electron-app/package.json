@@ -1,6 +1,6 @@
 {
   "name": "enterprise-monitor",
-  "version": "5.2.5",
+  "version": "5.2.6",
   "description": "Enterprise Employee Monitoring System",
   "main": "dist/main/main.js",
   "author": "Ashraful Anik",

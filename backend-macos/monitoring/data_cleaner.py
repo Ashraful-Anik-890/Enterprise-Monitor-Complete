@@ -1,67 +1,145 @@
 """
 data_cleaner.py
-7-day / 1-day data retention cleanup service — macOS backend.
+Background service to automatically clean up old data.
+
+v5.2.6 — HEARTBEAT TIMER REFACTOR
+  Problem: The previous implementation used time.sleep(interval_seconds) inside
+  a loop. On machines that restart the backend daily (e.g. via auto-update or
+  system reboot), the sleep timer reset to zero each time. Cleanup never ran on
+  any machine where the backend uptime was shorter than the 24-hour interval.
+
+  Fix: Persistent timestamp file (.last_cleanup) in the EM data directory.
+  A 15-minute heartbeat wakes up and checks how long ago cleanup last ran.
+  If elapsed time >= cleanup_interval_hours, it runs. This survives restarts.
+
+  The stop() method responds within 1 second because the heartbeat sleeps
+  in 1-second increments rather than one long sleep call.
 
 Retention policy:
-  - Synced records  → deleted from device after 1 day.
-  - Unsynced records → deleted from device after 7 days.
+  - Synced records  → deleted after 1 day.
+  - Unsynced records → deleted after 7 days.
   - Physical .png / .mp4 files are removed from disk during cleanup.
 
-Identical behaviour to the Windows backend; delegates all logic to db_manager.
+NOTE: WAL mode is already configured in db_manager.py. No change needed here.
 """
 
 import threading
 import time
 import logging
+from pathlib import Path
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-SYNCED_RETENTION_DAYS   = 1   # records already on the server
-UNSYNCED_RETENTION_DAYS = 7   # records not yet synced
-CLEANUP_INTERVAL_SECONDS = 3600  # run once per hour
+SYNCED_RETENTION_DAYS   = 1    # records already on the server
+UNSYNCED_RETENTION_DAYS = 7    # records not yet synced
+
+HEARTBEAT_SECONDS   = 900      # wake up every 15 minutes to check
+CLEANUP_INTERVAL_H  = 2        # run actual cleanup every 2 hours
 
 
 class CleanupService:
     def __init__(self, db_manager,
-                 synced_days: int = SYNCED_RETENTION_DAYS,
-                 unsynced_days: int = UNSYNCED_RETENTION_DAYS):
-        self.db_manager    = db_manager
-        self.synced_days   = synced_days
-        self.unsynced_days = unsynced_days
-        self.is_running    = False
-        self.thread: threading.Thread | None = None
+                 interval_hours: int = CLEANUP_INTERVAL_H,
+                 synced_days: int    = SYNCED_RETENTION_DAYS,
+                 unsynced_days: int  = UNSYNCED_RETENTION_DAYS):
+        """
+        :param db_manager:     DatabaseManager instance (must expose .db_dir Path)
+        :param interval_hours: Minimum hours between cleanup runs (default 2)
+        :param synced_days:    Days before synced records are deleted (default 1)
+        :param unsynced_days:  Days before unsynced records are deleted (default 7)
+        """
+        self.db_manager       = db_manager
+        self.interval_seconds = interval_hours * 3600
+        self.synced_days      = synced_days
+        self.unsynced_days    = unsynced_days
+        self.is_running       = False
+        self.thread: Optional[threading.Thread] = None
 
-    def start(self) -> None:
+        # Persistent timestamp file: survives backend restarts.
+        # Written in the same directory as the database.
+        self._ts_file = Path(db_manager.db_dir) / ".last_cleanup"
+
+    # ─── LIFECYCLE ───────────────────────────────────────────────────────────
+
+    def start(self):
         if self.is_running:
+            logger.warning("Cleanup service already running")
             return
         self.is_running = True
         self.thread = threading.Thread(
-            target=self._cleanup_loop, daemon=True, name="CleanupService",
+            target=self._cleanup_loop,
+            daemon=True,
+            name="CleanupService",
         )
         self.thread.start()
         logger.info(
-            "CleanupService started (synced: %dd, unsynced: %dd)",
-            self.synced_days, self.unsynced_days,
+            "Cleanup service started "
+            "(heartbeat=%ds, interval=%dh, synced=%dd, unsynced=%dd)",
+            HEARTBEAT_SECONDS,
+            self.interval_seconds // 3600,
+            self.synced_days,
+            self.unsynced_days,
         )
 
-    def stop(self) -> None:
+    def stop(self):
         self.is_running = False
-        logger.info("CleanupService stopped")
+        if self.thread:
+            self.thread.join(timeout=2)   # responds within 1s due to incremental sleep
+        logger.info("Cleanup service stopped")
 
-    def _cleanup_loop(self) -> None:
+    # ─── TIMESTAMP PERSISTENCE ───────────────────────────────────────────────
+
+    def _get_last_run(self) -> float:
+        """Read last-run epoch from disk. Returns 0.0 if file missing or corrupt."""
+        try:
+            return float(self._ts_file.read_text(encoding="utf-8").strip())
+        except Exception:
+            return 0.0
+
+    def _save_last_run(self) -> None:
+        """Atomically persist the current time as the last-run timestamp."""
+        try:
+            tmp = self._ts_file.with_suffix(".tmp")
+            tmp.write_text(str(time.time()), encoding="utf-8")
+            tmp.replace(self._ts_file)   # atomic on NTFS and POSIX
+        except Exception as e:
+            logger.warning("CleanupService: could not write timestamp file: %s", e)
+
+    # ─── MAIN LOOP ───────────────────────────────────────────────────────────
+
+    def _cleanup_loop(self):
+        """
+        Heartbeat loop. Wakes every HEARTBEAT_SECONDS to check whether
+        enough time has elapsed since the last cleanup run. Uses 1-second
+        incremental sleep so stop() is responsive.
+        """
+        logger.info("Cleanup heartbeat loop started")
+
         while self.is_running:
-            try:
+            elapsed = time.time() - self._get_last_run()
+            if elapsed >= self.interval_seconds:
                 self._run_cleanup()
-            except Exception as e:
-                logger.error("Cleanup error: %s", e)
-            for _ in range(CLEANUP_INTERVAL_SECONDS):
+                self._save_last_run()
+
+            # Sleep in 1-second ticks so stop() takes effect quickly
+            for _ in range(HEARTBEAT_SECONDS):
                 if not self.is_running:
-                    return
+                    break
                 time.sleep(1)
 
-    def _run_cleanup(self) -> None:
-        logger.info("Running scheduled data cleanup...")
+        logger.info("Cleanup heartbeat loop ended")
+
+    # ─── CLEANUP EXECUTION ───────────────────────────────────────────────────
+
+    def _run_cleanup(self):
+        """Execute the actual data deletion via db_manager."""
         try:
+            logger.info(
+                "Running scheduled data cleanup (synced >%dd, unsynced >%dd)…",
+                self.synced_days,
+                self.unsynced_days,
+            )
             self.db_manager.cleanup_old_data(
                 synced_days=self.synced_days,
                 unsynced_days=self.unsynced_days,
