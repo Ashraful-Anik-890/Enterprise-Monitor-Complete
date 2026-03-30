@@ -1,179 +1,213 @@
 """
-Screenshot Monitor
-Captures screenshots at regular intervals
+Screenshot Monitor — Windows
+Captures screenshots at regular intervals.
+
+v5.2.6 — COMPRESSION REFACTOR
+  Old logic: capture → compress at Q85 → reduce quality loop → resize as fallback
+  Problem:   Iterating quality on a full-resolution image (1920x1080) is slow and
+             still produces 60-80KB files. Even at Q10, 1080p JPEG is 30-50KB.
+
+  New logic: resize-first pipeline
+    1. Capture full resolution
+    2. Immediately resize to TARGET_WIDTH=800px (aspect-ratio preserved, LANCZOS)
+    3. JPEG encode at QUALITY_INITIAL=35, optimize=True
+    4. If > TARGET_SIZE_KB (15): reduce quality by 5 per step down to QUALITY_MIN=15
+    5. If still > 15KB (extreme: full-screen video/complex graphics): resize to 0.7x
+
+  Result: ~10-15KB for typical desktop content, ~15-20KB for graphics-heavy screens.
+  Max compression iterations: 4 quality steps + 1 scale = 5 total (negligible CPU cost).
+  Width 800px keeps text legible in the dashboard screenshot grid.
 """
 
+import io
 import threading
 import time
 import logging
+import getpass
 from pathlib import Path
 from datetime import datetime
+
 import mss
 from PIL import Image
 import psutil
-import getpass
+
 from utils.session_utils import is_user_session_active
 
 logger = logging.getLogger(__name__)
 
+# ── Compression constants ─────────────────────────────────────────────────────
+TARGET_WIDTH    = 800    # px — resize target before compression
+TARGET_SIZE_KB  = 15     # KB — hard ceiling
+QUALITY_INITIAL = 35     # JPEG quality for first attempt
+QUALITY_MIN     = 15     # never go below this (severe blocking artefacts)
+QUALITY_STEP    = 5      # reduce by this per iteration if over target
+
+
 class ScreenshotMonitor:
     def __init__(self, db_manager, interval_seconds: int = 5):
-        self.db_manager = db_manager
+        self.db_manager       = db_manager
         self.interval_seconds = interval_seconds
-        self.is_running = False
-        self.is_paused = False
-        self.thread = None
-        self.start_time = None
-        
-        # Screenshot storage directory
-        self.screenshot_dir = Path.home() / "AppData" / "Local" / "EnterpriseMonitor" / "screenshots"
+        self.is_running       = False
+        self.is_paused        = False
+        self.thread           = None
+        self.start_time       = None
+
+        self.screenshot_dir = (
+            Path.home() / "AppData" / "Local" / "EnterpriseMonitor" / "screenshots"
+        )
         self.screenshot_dir.mkdir(parents=True, exist_ok=True)
         self._os_user: str = getpass.getuser()
-    
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
+
     def start(self):
-        """Start screenshot monitoring"""
         if self.is_running:
             logger.warning("Screenshot monitor already running")
             return
-        
-        self.is_running = True
-        self.is_paused = False
-        self.start_time = datetime.utcnow()
-        self.thread = threading.Thread(target=self._monitor_loop, daemon=True)
+        self.is_running  = True
+        self.is_paused   = False
+        self.start_time  = datetime.utcnow()
+        self.thread      = threading.Thread(target=self._monitor_loop, daemon=True)
         self.thread.start()
         logger.info("Screenshot monitor started")
-    
+
     def stop(self):
-        """Stop screenshot monitoring"""
         self.is_running = False
         if self.thread:
             self.thread.join(timeout=5)
-            self.thread = None   # clear ref so start() always spawns a fresh thread
+            self.thread = None
         logger.info("Screenshot monitor stopped")
-    
+
     def pause(self):
-        """Pause screenshot monitoring"""
         self.is_paused = True
         logger.info("Screenshot monitor paused")
-    
+
     def resume(self):
-        """Resume screenshot monitoring"""
         self.is_paused = False
         logger.info("Screenshot monitor resumed")
-    
+
     def get_uptime(self) -> int:
-        """Get uptime in seconds"""
         if self.start_time:
             return int((datetime.utcnow() - self.start_time).total_seconds())
         return 0
-    
+
+    # ── Window info ───────────────────────────────────────────────────────────
+
     def _get_active_window_info(self):
-        """Get active window and application info"""
         try:
             import win32gui
             import win32process
-            
-            # Get foreground window
-            hwnd = win32gui.GetForegroundWindow()
+
+            hwnd         = win32gui.GetForegroundWindow()
             window_title = win32gui.GetWindowText(hwnd)
-            
-            # Get process name
-            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            _, pid       = win32process.GetWindowThreadProcessId(hwnd)
             try:
-                process = psutil.Process(pid)
-                app_name = process.name()
-            except:
+                app_name = psutil.Process(pid).name()
+            except Exception:
                 app_name = "Unknown"
-            
             return window_title, app_name
         except Exception as e:
-            logger.error(f"Failed to get active window info: {e}")
+            logger.error("Failed to get active window info: %s", e)
             return "Unknown", "Unknown"
-    
-    def _capture_screenshot(self):
-        """Capture a screenshot"""
-        try:
-            # Skip capture if session is inactive or locked
-            if not is_user_session_active():
-                logger.debug("Session inactive or locked, skipping screenshot")
-                return
-            
-            # Get active window info
-            window_title, app_name = self._get_active_window_info()
-            
-            # Capture screenshot
-            with mss.mss() as sct:
-                # Capture primary monitor
-                sct.with_cursor = False
-                monitor = sct.monitors[1]
-                screenshot = sct.grab(monitor)
-                
-                # Convert to PIL Image
-                img = Image.frombytes("RGB", screenshot.size, screenshot.rgb)
-                
-                # Generate filename
-                timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-                filename = f"screenshot_{timestamp}.jpg"
-                filepath = self.screenshot_dir / filename
-                
-                # Save screenshot (compressed/resized to target 60-80KB)
-                # First save to memory to check size
-                import io
-                img_byte_arr = io.BytesIO()
-                quality = 85
-                img.save(img_byte_arr, format='JPEG', quality=quality, optimize=True)
-                size_kb = len(img_byte_arr.getvalue()) / 1024
-                
-                # If size is too large (>80KB), reduce quality or resize
-                while size_kb > 80 and quality > 10:
-                    quality -= 5
-                    img_byte_arr = io.BytesIO()
-                    img.save(img_byte_arr, format='JPEG', quality=quality, optimize=True)
-                    size_kb = len(img_byte_arr.getvalue()) / 1024
-                
-                # If still too large, resize
-                if size_kb > 80:
-                    width, height = img.size
-                    ratio = 0.8
-                    while size_kb > 80 and ratio > 0.1:
-                        new_width = int(width * ratio)
-                        new_height = int(height * ratio)
-                        resized_img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                        img_byte_arr = io.BytesIO()
-                        resized_img.save(img_byte_arr, format='JPEG', quality=quality, optimize=True)
-                        size_kb = len(img_byte_arr.getvalue()) / 1024
-                        ratio -= 0.1
-                
-                # Save final image to disk
-                with open(filepath, "wb") as f:
-                    f.write(img_byte_arr.getvalue())
-                
-                # Store in database
-                # Store in database
-                self.db_manager.insert_screenshot(
-                    str(filepath),
-                    window_title,
-                    app_name,
-                    self._os_user,                      # ← ADD THIS ARG
+
+    # ── Capture + compress ────────────────────────────────────────────────────
+
+    def _compress_image(self, img: Image.Image) -> bytes:
+        """
+        Resize-first pipeline:
+          1. Downscale to TARGET_WIDTH while preserving aspect ratio (LANCZOS).
+          2. JPEG at QUALITY_INITIAL.
+          3. If over TARGET_SIZE_KB, reduce quality in QUALITY_STEP increments.
+          4. If still over (extreme content), scale to 70% and retry once.
+
+        Returns compressed JPEG bytes.
+        """
+        orig_w, orig_h = img.size
+        scale = TARGET_WIDTH / orig_w if orig_w > TARGET_WIDTH else 1.0
+        new_w = int(orig_w * scale)
+        new_h = int(orig_h * scale)
+
+        working = img.resize((new_w, new_h), Image.Resampling.LANCZOS) if scale < 1.0 else img
+
+        quality = QUALITY_INITIAL
+        buf = io.BytesIO()
+
+        while True:
+            buf.seek(0)
+            buf.truncate(0)
+            working.save(buf, format="JPEG", quality=quality, optimize=True)
+            size_kb = len(buf.getvalue()) / 1024
+
+            if size_kb <= TARGET_SIZE_KB:
+                break
+
+            if quality > QUALITY_MIN:
+                quality = max(QUALITY_MIN, quality - QUALITY_STEP)
+                continue
+
+            # Quality floor hit — last resort: scale down by 30%
+            w, h = working.size
+            working = working.resize((int(w * 0.7), int(h * 0.7)), Image.Resampling.LANCZOS)
+            buf.seek(0)
+            buf.truncate(0)
+            working.save(buf, format="JPEG", quality=QUALITY_MIN, optimize=True)
+            size_kb = len(buf.getvalue()) / 1024
+            if size_kb > TARGET_SIZE_KB:
+                logger.debug(
+                    "Screenshot: complex content — %.1f KB after max compression", size_kb
                 )
-                
-                logger.debug(f"Screenshot captured: {filename}")
+            break
+
+        logger.debug(
+            "Screenshot compressed: %dx%d Q%d → %.1f KB",
+            working.width, working.height, quality, len(buf.getvalue()) / 1024,
+        )
+        return buf.getvalue()
+
+    def _capture_screenshot(self):
+        if not is_user_session_active():
+            logger.debug("Session inactive — skipping screenshot")
+            return
+
+        try:
+            window_title, app_name = self._get_active_window_info()
+
+            with mss.mss() as sct:
+                sct.with_cursor = False
+                monitor    = sct.monitors[1]
+                screenshot = sct.grab(monitor)
+                img        = Image.frombytes("RGB", screenshot.size, screenshot.rgb)
+
+            jpeg_bytes = self._compress_image(img)
+
+            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            filename  = f"screenshot_{timestamp}.jpg"
+            filepath  = self.screenshot_dir / filename
+
+            with open(filepath, "wb") as f:
+                f.write(jpeg_bytes)
+
+            self.db_manager.insert_screenshot(
+                str(filepath),
+                window_title,
+                app_name,
+                self._os_user,
+            )
+            logger.debug("Screenshot saved: %s (%.1f KB)", filename, len(jpeg_bytes) / 1024)
+
         except Exception as e:
-            logger.error(f"Failed to capture screenshot: {e}")
-    
+            logger.error("Failed to capture screenshot: %s", e)
+
+    # ── Monitor loop ──────────────────────────────────────────────────────────
+
     def _monitor_loop(self):
-        """Main monitoring loop"""
         logger.info("Screenshot monitoring loop started")
-        
         while self.is_running:
             try:
                 if not self.is_paused:
                     self._capture_screenshot()
-                
-                # Wait for next interval
                 time.sleep(self.interval_seconds)
             except Exception as e:
-                logger.error(f"Error in screenshot monitor loop: {e}")
+                logger.error("Error in screenshot monitor loop: %s", e)
                 time.sleep(self.interval_seconds)
-        
         logger.info("Screenshot monitoring loop ended")

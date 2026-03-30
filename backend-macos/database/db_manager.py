@@ -711,15 +711,15 @@ class DatabaseManager:
                 self._conn.rollback()
                 return 0
 
-    def cleanup_old_data(self, synced_days: int = 1, unsynced_days: int = 7) -> None:
+    def cleanup_old_data(self, synced_hours: int = 2, unsynced_days: int = 7) -> None:
         """
         Intelligent cleanup with two-tier retention:
-        - Synced records: removed after `synced_days` (default 1 day).
+        - Synced records: removed after `synced_hours` (default 2 hours).
         - Unsynced records: removed after `unsynced_days` (default 7 days).
         Physical .png and .mp4 files are deleted from disk first, then DB rows are purged.
         """
         now = datetime.utcnow()
-        synced_cutoff   = (now - timedelta(days=synced_days)).isoformat()
+        synced_cutoff   = (now - timedelta(hours=synced_hours)).isoformat()
         unsynced_cutoff = (now - timedelta(days=unsynced_days)).isoformat()
 
         with self._lock:
@@ -728,13 +728,15 @@ class DatabaseManager:
                 deleted_video_files = []
 
                 # ── 1. Delete physical files for expired screenshots ──────────
+                failed_ss_ids = []
                 for row in self._conn.execute(
-                    "SELECT file_path FROM screenshots WHERE "
+                    "SELECT id, file_path FROM screenshots WHERE "
                     "  (synced = 1 AND timestamp < ?) OR "
                     "  (synced = 0 AND timestamp < ?)",
                     (synced_cutoff, unsynced_cutoff),
                 ).fetchall():
-                    fp = row[0]
+                    row_id = row[0]
+                    fp = row[1]
                     if fp:
                         p = Path(fp)
                         if p.exists():
@@ -743,17 +745,20 @@ class DatabaseManager:
                                 deleted_ss_files.append(fp)
                             except OSError as e:
                                 logger.warning("Could not delete screenshot file %s: %s", fp, e)
+                                failed_ss_ids.append(row_id)
                         else:
                             logger.debug("Screenshot file already missing: %s", fp)
 
                 # ── 2. Delete physical files for expired video recordings ─────
+                failed_video_ids = []
                 for row in self._conn.execute(
-                    "SELECT file_path FROM video_recordings WHERE "
+                    "SELECT id, file_path FROM video_recordings WHERE "
                     "  (is_synced = 1 AND timestamp < ?) OR "
                     "  (is_synced = 0 AND timestamp < ?)",
                     (synced_cutoff, unsynced_cutoff),
                 ).fetchall():
-                    fp = row[0]
+                    row_id = row[0]
+                    fp = row[1]
                     if fp:
                         p = Path(fp)
                         if p.exists():
@@ -762,40 +767,53 @@ class DatabaseManager:
                                 deleted_video_files.append(fp)
                             except OSError as e:
                                 logger.warning("Could not delete video file %s: %s", fp, e)
+                                failed_video_ids.append(row_id)
                         else:
                             logger.debug("Video file already missing: %s", fp)
 
                 # ── 3. Purge screenshot DB rows ───────────────────────────────
-                ss_cur = self._conn.execute(
+                ss_query = (
                     "DELETE FROM screenshots WHERE "
-                    "  (synced = 1 AND timestamp < ?) OR "
-                    "  (synced = 0 AND timestamp < ?)",
-                    (synced_cutoff, unsynced_cutoff),
+                    "  ((synced = 1 AND timestamp < ?) OR "
+                    "  (synced = 0 AND timestamp < ?))"
                 )
+                if failed_ss_ids:
+                    placeholders = ",".join(["?"] * len(failed_ss_ids))
+                    ss_query += f" AND id NOT IN ({placeholders})"
+                    ss_cur = self._conn.execute(ss_query, (synced_cutoff, unsynced_cutoff, *failed_ss_ids))
+                else:
+                    ss_cur = self._conn.execute(ss_query, (synced_cutoff, unsynced_cutoff))
                 ss_deleted = ss_cur.rowcount
 
                 # ── 4. Purge video_recordings DB rows ─────────────────────────
-                vid_cur = self._conn.execute(
+                vid_query = (
                     "DELETE FROM video_recordings WHERE "
-                    "  (is_synced = 1 AND timestamp < ?) OR "
-                    "  (is_synced = 0 AND timestamp < ?)",
-                    (synced_cutoff, unsynced_cutoff),
+                    "  ((is_synced = 1 AND timestamp < ?) OR "
+                    "  (is_synced = 0 AND timestamp < ?))"
                 )
+                if failed_video_ids:
+                    placeholders = ",".join(["?"] * len(failed_video_ids))
+                    vid_query += f" AND id NOT IN ({placeholders})"
+                    vid_cur = self._conn.execute(vid_query, (synced_cutoff, unsynced_cutoff, *failed_video_ids))
+                else:
+                    vid_cur = self._conn.execute(vid_query, (synced_cutoff, unsynced_cutoff))
                 vid_deleted = vid_cur.rowcount
 
                 # ── 5. Purge text-only tables (no physical files) ─────────────
+                text_deleted_total = 0
                 for table in ("app_activity", "clipboard_events", "browser_activity", "text_logs"):
-                    self._conn.execute(
+                    cur = self._conn.execute(
                         f"DELETE FROM {table} WHERE "
                         f"  (synced = 1 AND timestamp < ?) OR "
                         f"  (synced = 0 AND timestamp < ?)",
                         (synced_cutoff, unsynced_cutoff),
                     )
+                    text_deleted_total += cur.rowcount
 
                 self._conn.commit()
                 logger.info(
-                    "Cleanup done: synced >%dd, unsynced >%dd",
-                    synced_days, unsynced_days,
+                    "Cleanup done: synced >%dh, unsynced >%dd",
+                    synced_hours, unsynced_days,
                 )
             except Exception as exc:
                 logger.error("cleanup_old_data: %s", exc)

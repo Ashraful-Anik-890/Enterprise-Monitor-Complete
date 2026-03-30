@@ -9,7 +9,7 @@ v5.2.6 — HEARTBEAT TIMER REFACTOR
   any machine where the backend uptime was shorter than the 24-hour interval.
 
   Fix: Persistent timestamp file (.last_cleanup) in the EM data directory.
-  A 15-minute heartbeat wakes up and checks how long ago cleanup last ran.
+  A 5-minute heartbeat wakes up and checks how long ago cleanup last ran.
   If elapsed time >= cleanup_interval_hours, it runs. This survives restarts.
 
   The stop() method responds within 1 second because the heartbeat sleeps
@@ -31,27 +31,27 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-SYNCED_RETENTION_DAYS   = 1    # records already on the server
+SYNCED_RETENTION_HOURS  = 2    # records already on the server
 UNSYNCED_RETENTION_DAYS = 7    # records not yet synced
 
-HEARTBEAT_SECONDS   = 900      # wake up every 15 minutes to check
+HEARTBEAT_SECONDS   = 300      # wake up every 5 minutes to check
 CLEANUP_INTERVAL_H  = 2        # run actual cleanup every 2 hours
 
 
 class CleanupService:
     def __init__(self, db_manager,
                  interval_hours: int = CLEANUP_INTERVAL_H,
-                 synced_days: int    = SYNCED_RETENTION_DAYS,
+                 synced_hours: int   = SYNCED_RETENTION_HOURS,
                  unsynced_days: int  = UNSYNCED_RETENTION_DAYS):
         """
         :param db_manager:     DatabaseManager instance (must expose .db_dir Path)
         :param interval_hours: Minimum hours between cleanup runs (default 2)
-        :param synced_days:    Days before synced records are deleted (default 1)
+        :param synced_hours:   Hours before synced records are deleted (default 2)
         :param unsynced_days:  Days before unsynced records are deleted (default 7)
         """
         self.db_manager       = db_manager
         self.interval_seconds = interval_hours * 3600
-        self.synced_days      = synced_days
+        self.synced_hours     = synced_hours
         self.unsynced_days    = unsynced_days
         self.is_running       = False
         self.thread: Optional[threading.Thread] = None
@@ -75,10 +75,10 @@ class CleanupService:
         self.thread.start()
         logger.info(
             "Cleanup service started "
-            "(heartbeat=%ds, interval=%dh, synced=%dd, unsynced=%dd)",
+            "(heartbeat=%ds, interval=%dh, synced=%dh, unsynced=%dd)",
             HEARTBEAT_SECONDS,
             self.interval_seconds // 3600,
-            self.synced_days,
+            self.synced_hours,
             self.unsynced_days,
         )
 
@@ -136,12 +136,12 @@ class CleanupService:
         """Execute the actual data deletion via db_manager."""
         try:
             logger.info(
-                "Running scheduled data cleanup (synced >%dd, unsynced >%dd)…",
-                self.synced_days,
+                "Running scheduled data cleanup (synced >%dh, unsynced >%dd)…",
+                self.synced_hours,
                 self.unsynced_days,
             )
             self.db_manager.cleanup_old_data(
-                synced_days=self.synced_days,
+                synced_hours=self.synced_hours,
                 unsynced_days=self.unsynced_days,
             )
         except Exception as e:

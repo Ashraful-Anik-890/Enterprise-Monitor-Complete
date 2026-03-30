@@ -6,6 +6,22 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [5.2.7] — 2026-03-30
+
+### Changed
+- **Screenshot Compression Pipeline** — Replaced high-quality JPEG capture (~80KB) with a "resize-first" pipeline. All screenshots are now immediately downscaled to 800px width and target a file size of 10-15KB. This reduces sync bandwidth by 80% and allows much faster backlog clearing.
+- **Storage Cleanup Optimization** — Reduced retention for synced data from 24 hours to **2 hours**. Monitoring data that is successfully uploaded to the ERP is now purged from the local device much more aggressively to save disk space.
+- **Installer Script** - Popup of asking deletation of old data is removed. Now it will preserve old data silently. and shows only in manually uninstallation.
+
+## [5.2.6] — 2026-03-29
+
+### Fixed
+- **Cleanup Ghost File Prevention** — Refactored the data cleanup service to use a "safety-first" deletion sequence. The physical file on disk is now deleted *before* the database record is removed. If a file is locked or fails to delete, the record is preserved, ensuring the system retries the deletion later and preventing "orphaned" files that take up space without being tracked.
+- **Data Cleanup Service** — Added a heartbeat timer to the data cleanup service to ensure that cleanup runs at regular intervals. This is important because the data cleanup service is run in a separate thread and the heartbeat timer is used to ensure that the cleanup runs at regular intervals.
+- **Login Credentials** - Solved the racing problem in the app which was causing dissapering credential when typing in the login page.
+
+---
+
 ## [5.2.5] — 2026-03-28
 
 ### Added

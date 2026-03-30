@@ -67,6 +67,7 @@ async function checkAuthentication() {
       showDashboard();
       initializeCharts();
       await loadDashboardData();
+      startSyncStatusPoller();
     } else {
       const loginContainer = document.getElementById('login-container');
       const isLoginVisible = loginContainer && loginContainer.classList.contains('active');

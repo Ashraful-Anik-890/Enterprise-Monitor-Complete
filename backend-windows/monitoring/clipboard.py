@@ -52,27 +52,41 @@ class ClipboardMonitor:
         logger.info("Clipboard monitor resumed")
     
     def _check_clipboard(self):
-        """Check for clipboard changes"""
-        try:
-            current_content = pyperclip.paste()
-            
-            # Check if clipboard changed
-            if current_content and current_content != self.last_clipboard_content:
-                self.last_clipboard_content = current_content
+        """Check for clipboard changes with retry logic to handle locked clipboard."""
+        max_retries = 3
+        retry_delay = 0.2
+        
+        for attempt in range(max_retries):
+            try:
+                # pyperclip.paste() internally calls OpenClipboard on Windows
+                current_content = pyperclip.paste()
                 
-                # Determine content type
-                content_type = "text"
+                # Check if clipboard changed
+                if current_content and current_content != self.last_clipboard_content:
+                    self.last_clipboard_content = current_content
+                    
+                    # Create preview (limit for DB storage)
+                    preview = current_content[:100]
+                    if len(current_content) > 100:
+                        preview += "..."
+                    
+                    # Store in database
+                    self.db_manager.insert_clipboard_event("text", preview, self._os_user)
+                    logger.debug(f"Clipboard event recorded: {len(current_content)} chars")
                 
-                # Create preview (limit to 100 characters)
-                preview = current_content[:100]
-                if len(current_content) > 100:
-                    preview += "..."
+                # Success, break the retry loop
+                return
                 
-                # Store in database
-                self.db_manager.insert_clipboard_event(content_type, preview, self._os_user)
-                logger.debug(f"Clipboard event recorded: {len(current_content)} chars")
-        except Exception as e:
-            logger.error(f"Failed to check clipboard: {e}")
+            except Exception as e:
+                # WinError 0 is often just a transient "busy" signal on Windows
+                if "OpenClipboard" in str(e) and attempt < max_retries - 1:
+                    logger.debug(f"Clipboard locked (attempt {attempt + 1}), retrying...")
+                    time.sleep(retry_delay)
+                else:
+                    # After all retries, or if it's a different error, log as warning
+                    # Changed from ERROR to WARNING to reduce log noise for expected OS behavior
+                    logger.warning(f"Failed to check clipboard after {attempt + 1} attempts: {e}")
+                    break
     
     def _monitor_loop(self):
         """Main monitoring loop"""

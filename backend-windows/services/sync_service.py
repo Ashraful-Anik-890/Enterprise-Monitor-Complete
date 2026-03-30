@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SYNC_INTERVAL = 300
 BATCH_JSON            = 50
-BATCH_FILES           = 25
+BATCH_FILES           = 30
 BATCH_VIDEOS          = 3
 REQUEST_TIMEOUT_JSON  = 10
 REQUEST_TIMEOUT_FILE  = 60

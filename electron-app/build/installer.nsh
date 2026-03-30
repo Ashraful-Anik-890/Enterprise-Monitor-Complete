@@ -116,6 +116,14 @@
   ; Clean up shadow backup directory
   RMDir /r "${EM_DATA_DIR}\backup"
 
+  ; ── REINSTALL / UPDATE CHECK ────────────────────────────────────────────────
+  ; If we are performing an update (reinstalling the app), we skip the 
+  ; data removal prompt entirely to prevent accidental loss of monitoring logs.
+  ${if} ${isUpdated}
+    DetailPrint "Update detected — preserving user data and skipping prompt."
+    Goto done_purge
+  ${endif}
+
   ; Offer to purge monitoring data (database, screenshots, recordings).
   MessageBox MB_YESNO|MB_ICONQUESTION \
     "Remove all monitoring data?$\r$\n$\r$\n\
