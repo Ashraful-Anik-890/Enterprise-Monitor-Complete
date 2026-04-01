@@ -14,6 +14,23 @@ This project demonstrates deep expertise in **systems programming**, **cross-pla
 
 ---
 
+---
+
+## 📋 Table of Contents
+
+- [Architecture Overview](#-architecture-overview)
+- [Cross-Platform Design](#-cross-platform-design)
+- [Feature Highlights](#-feature-highlights)
+- [Technology Stack](#-technology-stack)
+- [Security Design](#-security-design)
+- [Project Structure](#-project-structure)
+- [Monitoring Capabilities](#-monitoring-capabilities)
+- [ERP Sync Engine](#-erp-sync-engine)
+- [Installation & Development](#-installation--development)
+- [Build & Distribution](#-build--distribution)
+
+---
+
 ## 🖼️ Screenshots
 
 ### Windows
@@ -48,15 +65,19 @@ This project demonstrates deep expertise in **systems programming**, **cross-pla
 </p>
 
 <p align="center">
-  <img src="resources/clipboard.png" alt="Monitor Data - Browser" width="700" />
+  <img src="resources/clipboard.png" alt="Monitor Data - Clipboard width="700" />
 </p>
 
 <p align="center">
-  <img src="resources/keylog.png" alt="Monitor Data - Browser" width="700" />
+  <img src="resources/keylog.png" alt="Monitor Data - Keylog" width="700" />
 </p>
 
 <p align="center">
-  <img src="resources/monitor data video4.png" alt="Monitor Data - Videos" width="700" />
+  <img src="resources/Win_SS.png" alt="Monitor Data - Screenshot" width="700" />
+</p>
+
+<p align="center">
+  <img src="resources/Win_Video.png" alt="Monitor Data - Videos" width="700" />
 </p>
 
 
@@ -97,22 +118,7 @@ This project demonstrates deep expertise in **systems programming**, **cross-pla
   <img src="resources/mac dev screen rec.png" alt="macOS Screen Recording" width="700" />
 </p>
 
----
 
-## 📋 Table of Contents
-
-- [Architecture Overview](#-architecture-overview)
-- [Cross-Platform Design](#-cross-platform-design)
-- [Feature Highlights](#-feature-highlights)
-- [Technology Stack](#-technology-stack)
-- [Security Design](#-security-design)
-- [Project Structure](#-project-structure)
-- [Monitoring Capabilities](#-monitoring-capabilities)
-- [ERP Sync Engine](#-erp-sync-engine)
-- [Installation & Development](#-installation--development)
-- [Build & Distribution](#-build--distribution)
-
----
 
 ## 🏗️ Architecture Overview
 
