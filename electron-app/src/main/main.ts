@@ -592,7 +592,11 @@ if (!gotTheLock) {
     }
 
     // ─── PATCH E (Part 3) — Call setupAutoUpdater ─────────────────────────
-    setupAutoUpdater();
+    if (!IS_MAC) {
+      setupAutoUpdater();
+    } else {
+      console.log('[updater] Auto-update skipped on macOS (not configured)');
+    }
 
     powerMonitor.on('shutdown', () => {
       console.log('[main] powerMonitor: system shutdown/restart/logout detected');
