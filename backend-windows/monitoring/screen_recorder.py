@@ -34,9 +34,9 @@ from utils.session_utils import is_user_session_active
 logger = logging.getLogger(__name__)
 
 CHUNK_SECONDS  = 300          # 5-minute rolling files
-TARGET_FPS     = 10
-TARGET_W       = 1280
-TARGET_H       = 720
+TARGET_FPS     = 5
+TARGET_W       = 720
+TARGET_H       = 480
 FOURCC         = "mp4v"
 FILE_EXT       = ".mp4"
 

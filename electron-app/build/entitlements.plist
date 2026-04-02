@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+    MANDATORY for PyInstaller + NumPy/OpenCV.
+    Hardened Runtime blocks JIT/unsigned executable memory. NumPy and OpenCV
+    both need this or they crash at import with MemoryError inside the
+    PyInstaller bootstrap. Do not remove.
+    -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!--
+    Do NOT add com.apple.security.app-sandbox.
+    Enterprise monitoring apps distributed outside the App Store must NOT
+    be sandboxed — sandboxing blocks osascript, cross-process monitoring,
+    and psutil process enumeration entirely.
+    -->
+
+    <!--
+    Required for PyInstaller child process: allows the hardened Electron app
+    to load the unsigned PyInstaller child binary's .dylib/.so files.
+    Disables strict Team ID matching for loaded libraries.
+    -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>

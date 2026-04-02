@@ -3,7 +3,7 @@
   <img src="https://img.shields.io/badge/Backend-Python%20%7C%20FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white" />
   <img src="https://img.shields.io/badge/Frontend-Electron-47848F?style=for-the-badge&logo=electron&logoColor=white" />
   <img src="https://img.shields.io/badge/Database-SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white" />
-  <img src="https://img.shields.io/badge/Version-5.2.5-green?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Version-5.2.7-green?style=for-the-badge" />
 </p>
 
 # 🖥️ Enterprise Monitor
@@ -224,6 +224,18 @@ The app shares a **single Electron frontend** but uses **platform-specific Pytho
 | 🛡️ **Anti-Tamper** | Credential-gated exit | Users cannot quit without admin password (Cmd+Q intercepted on macOS) |
 | 📦 **Installer** | One-click deployment | NSIS (Windows) / DMG (macOS) with cleanup hooks |
 | 🍎 **TCC Permissions** | macOS privacy compliance | Proactive permission prompting at first run with System Settings deeplinks |
+
+---
+
+## 🚀 Recent Modifications (v5.2.7)
+
+The latest release focuses on **cross-platform performance parity** and **backend-to-frontend stability**:
+
+- **Reduced Resource Consumption**: Video recording FPS lowered from 10 to 5 to reduce CPU overhead while maintaining clear evidence capture.
+- **Synchronous IPC Handshake**: Fixed a race condition in Electron where the renderer requested data before handlers were registered.
+- **Aggressive Sync Backlog Clearing**: Increased screenshot batch upload limit to 50 files per cycle to prevent queue build-up on busy machines.
+- **MIME & Timestamp Standardization**: Screenshots now correctly use `image/jpeg` with explicit ISO-8601 UTC markers, ensuring 100% dashboard compatibility.
+- **Enhanced Startup Resilience**: Increased API Client timeouts to 30s and implemented graceful fallbacks for the `/api/config/identity` endpoint.
 
 ---
 
@@ -574,6 +586,16 @@ On first launch, macOS will prompt for the following TCC permissions. **Grant al
 | **Input Monitoring** | Keystroke logging | System Settings → Privacy & Security → Input Monitoring |
 | **Automation** | Browser URL capture | Automatically prompted on first Apple Events call |
 
+#### macOS Required Permissions (TCC)
+To ensure the application functions correctly, the following Transparency, Consent, and Control (TCC) permissions are used:
+
+| Permission | TCC Access Class | Why the tracker needs it | Note |
+| :--- | :--- | :--- | :--- |
+| **🟢 Screen Recording** | `CGPreflightScreenCaptureAccess` | Required to take Screenshots and Video Recordings. | If denied, it returns black or empty frames. |
+| **🟢 Accessibility** | `AXIsProcessTrusted` | Required to read the Active Window Title and Application Name. | If denied, foreground app titles will appear blank. |
+| **🟢 Input Monitoring** | `(Checked implicitly via pynput)` | Required to capture User Keystrokes. | macOS does not allow programmatic prompts for this. Must be approved in System Settings. |
+| **🟢 Automation (Apple Events)** | `tell application "System Events"` | Required by `osascript` to hook into active interface elements cleanly. | Triggers a prompt automatically. |
+
 > The app proactively triggers permission prompts at first run. If denied, monitoring features degrade gracefully — app tracking still works, but window titles and keystrokes may not be captured.
 
 ---
@@ -668,5 +690,5 @@ Built as a demonstration of **full-stack cross-platform desktop application engi
 ---
 
 <p align="center">
-  <sub>Enterprise Monitor v5.2.5 — Cross-Platform Desktop Application (Windows + macOS)</sub>
+  <sub>Enterprise Monitor v5.2.7 — Cross-Platform Desktop Application (Windows + macOS)</sub>
 </p>

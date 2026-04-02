@@ -141,14 +141,18 @@ def main():
     for subdir in ('logs', 'screenshots', 'videos'):
         (EM_DIR / subdir).mkdir(parents=True, exist_ok=True)
 
-    # ── Step 3: TCC permission checks (MUST be on main thread) ───────────────
-    logger.info("Checking macOS TCC permissions...")
+    # ── Step 3: TCC permission prompts + checks (MUST be on main thread) ─────
+    logger.info("Requesting macOS TCC permissions (first-run onboarding)...")
     try:
-        from monitoring.permissions import check_all_permissions
+        from monitoring.permissions import request_all_permissions, check_all_permissions
+        # Proactive prompt: triggers Screen Recording, Accessibility, and Automation
+        # dialogs at first launch so the user grants everything before monitoring starts.
+        request_all_permissions()
+        # Re-check state and cache it for the lifespan to read
         perm_state = check_all_permissions()
-        logger.info("TCC permission state: %s", perm_state)
+        logger.info("TCC permission state after prompting: %s", perm_state)
     except Exception as e:
-        logger.error("TCC permission check failed: %s — continuing with defaults", e)
+        logger.error("TCC permission request failed: %s — continuing with defaults", e)
 
     # ── Step 4: Find available port and write port.info ──────────────────────
     port = _find_available_port()

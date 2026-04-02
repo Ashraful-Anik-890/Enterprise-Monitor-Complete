@@ -6,12 +6,18 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [5.2.7] — 2026-03-30
+## [5.2.7] — 2026-04-02
 
 ### Changed
-- **Screenshot Compression Pipeline** — Replaced high-quality JPEG capture (~80KB) with a "resize-first" pipeline. All screenshots are now immediately downscaled to 800px width and target a file size of 10-15KB. This reduces sync bandwidth by 80% and allows much faster backlog clearing.
-- **Storage Cleanup Optimization** — Reduced retention for synced data from 24 hours to **2 hours**. Monitoring data that is successfully uploaded to the ERP is now purged from the local device much more aggressively to save disk space.
-- **Installer Script** - Popup of asking deletation of old data is removed. Now it will preserve old data silently. and shows only in manually uninstallation.
+- **Screenshot Compression Pipeline** — Replaced high-quality JPEG capture (~80KB) with a "resize-first" pipeline. All screenshots are now immediately downscaled to 800px width and target a file size of 10-15KB. This reduces sync bandwidth by 80%.
+- **Enhanced Sync Parity** — Synchronized `BATCH_FILES` to **50** for both macOS and Windows to prevent screenshot backlogs.
+- **Resource Optimization** — Lowered screen recording `TARGET_FPS` from 10 to **5** to minimize CPU impact on low-powered machines.
+
+### Fixed
+- **Electron IPC Race Condition** — Reordered initialization to call `setupIpcHandlers()` before `createWindow()`, eliminating "No handler registered" errors during app startup.
+- **macOS ScreenRecorder Crash** — Added missing `pause()` and `resume()` alias methods to fix `AttributeError` during remote sync cycles.
+- **Sync Payload Standardization** — Added explicit ISO-8601 UTC normalization (`+00:00`) to screenshots and corrected the multipart MIME type from `image/png` to `image/jpeg`.
+- **API Resilience** — Increased `ApiClient` timeout to **30 seconds** and added a graceful fallback for `api:getIdentity` to prevent frontend login timeouts.
 
 ## [5.2.6] — 2026-03-29
 

@@ -577,8 +577,8 @@ if (!gotTheLock) {
     );
 
     const isHiddenStartup = process.argv.includes('--hidden') || (IS_MAC && app.getLoginItemSettings().wasOpenedAsHidden);
-    createWindow(!isHiddenStartup);
     setupIpcHandlers();
+    createWindow(!isHiddenStartup);
     startBackendHealthCheck();
 
     // ─── PATCH E (Part 2) — Send post-update notification to renderer ─────
@@ -958,7 +958,8 @@ function setupIpcHandlers(): void {
       return response.data;
     } catch (error: any) {
       if (is401(error)) return handleAuthExpired();
-      throw new Error(error.message);
+      console.warn('[main] Failed to fetch identity config:', error.message);
+      return {};
     }
   });
 

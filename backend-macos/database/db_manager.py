@@ -5,6 +5,10 @@ Handles SQLite database operations for storing monitoring data.
 CHANGES from Windows version:
 - Path changed from LOCALAPPDATA → ~/Library/Application Support/EnterpriseMonitor
 
+v5.2.7 PARITY PATCHES:
+- get_identity_config() now returns mac_address (was always empty on Mac)
+- cleanup_old_data() now runs orphan file sweep (Step 6) matching Windows behaviour
+
 THREAD-SAFETY:
   - ONE persistent connection shared by the entire process lifetime.
   - check_same_thread=False — we own synchronisation via _lock.
@@ -17,6 +21,7 @@ import threading
 import logging
 import socket
 import getpass
+import uuid
 import os
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -198,8 +203,15 @@ class DatabaseManager:
             cursor.execute("SELECT key, value FROM device_config")
             rows = {r["key"]: r["value"] for r in cursor.fetchall()}
 
+        # v5.2.7: compute MAC address the same way as the Windows backend
+        mac_address = ':'.join(
+            '{:02x}'.format((uuid.getnode() >> ele) & 0xff)
+            for ele in reversed(range(0, 8 * 6, 8))
+        )
+
         return {
             "machine_id":     socket.gethostname(),
+            "mac_address":    mac_address,
             "os_user":        getpass.getuser(),
             "device_alias":   rows.get("device_alias", ""),
             "user_alias":     rows.get("user_alias", ""),
@@ -716,7 +728,8 @@ class DatabaseManager:
         Intelligent cleanup with two-tier retention:
         - Synced records: removed after `synced_hours` (default 2 hours).
         - Unsynced records: removed after `unsynced_days` (default 7 days).
-        Physical .png and .mp4 files are deleted from disk first, then DB rows are purged.
+        Physical .jpg/.png and .mp4 files are deleted from disk first, then DB rows
+        are purged. Step 6 sweeps orphan files not tracked by the DB.
         """
         now = datetime.utcnow()
         synced_cutoff   = (now - timedelta(hours=synced_hours)).isoformat()
@@ -724,7 +737,7 @@ class DatabaseManager:
 
         with self._lock:
             try:
-                deleted_ss_files = []
+                deleted_ss_files    = []
                 deleted_video_files = []
 
                 # ── 1. Delete physical files for expired screenshots ──────────
@@ -735,8 +748,7 @@ class DatabaseManager:
                     "  (synced = 0 AND timestamp < ?)",
                     (synced_cutoff, unsynced_cutoff),
                 ).fetchall():
-                    row_id = row[0]
-                    fp = row[1]
+                    row_id, fp = row[0], row[1]
                     if fp:
                         p = Path(fp)
                         if p.exists():
@@ -757,8 +769,7 @@ class DatabaseManager:
                     "  (is_synced = 0 AND timestamp < ?)",
                     (synced_cutoff, unsynced_cutoff),
                 ).fetchall():
-                    row_id = row[0]
-                    fp = row[1]
+                    row_id, fp = row[0], row[1]
                     if fp:
                         p = Path(fp)
                         if p.exists():
@@ -811,10 +822,48 @@ class DatabaseManager:
                     text_deleted_total += cur.rowcount
 
                 self._conn.commit()
+
+                # ── 6. Sweep orphan files from physical directories ────────────
+                # v5.2.7: matches Windows behaviour — removes files on disk that
+                # have no DB record (e.g. written by a thread that crashed before
+                # the INSERT committed).
+                orphan_delete_count = 0
+                max_retention_seconds = unsynced_days * 86400
+                cutoff_time = now.timestamp() - max_retention_seconds
+
+                for target_folder in ("screenshots", "videos"):
+                    folder_path = self.db_dir / target_folder
+                    if folder_path.exists() and folder_path.is_dir():
+                        for file_path in folder_path.iterdir():
+                            if file_path.is_file() and file_path.suffix.lower() in ('.jpg', '.png', '.mp4'):
+                                try:
+                                    if file_path.stat().st_mtime < cutoff_time:
+                                        file_path.unlink()
+                                        orphan_delete_count += 1
+                                except OSError as e:
+                                    logger.warning("Could not delete orphaned file %s: %s", file_path, e)
+
                 logger.info(
-                    "Cleanup done: synced >%dh, unsynced >%dd",
+                    "Cleanup done (synced >%dh, unsynced >%dd). "
+                    "DB rows removed: %d SS, %d Videos, %d Text. "
+                    "Physical files deleted: %d SS, %d Videos, %d Orphans.",
                     synced_hours, unsynced_days,
+                    ss_deleted, vid_deleted, text_deleted_total,
+                    len(deleted_ss_files), len(deleted_video_files), orphan_delete_count,
                 )
+
+                if deleted_ss_files:
+                    sample = ", ".join(deleted_ss_files[:10])
+                    if len(deleted_ss_files) > 10:
+                        sample += f" ...and {len(deleted_ss_files) - 10} more"
+                    logger.info("Deleted screenshot files: %s", sample)
+
+                if deleted_video_files:
+                    sample = ", ".join(deleted_video_files[:10])
+                    if len(deleted_video_files) > 10:
+                        sample += f" ...and {len(deleted_video_files) - 10} more"
+                    logger.info("Deleted video files: %s", sample)
+
             except Exception as exc:
                 logger.error("cleanup_old_data: %s", exc)
                 self._conn.rollback()

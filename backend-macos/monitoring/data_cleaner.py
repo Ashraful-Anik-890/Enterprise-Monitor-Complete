@@ -15,10 +15,12 @@ v5.2.6 — HEARTBEAT TIMER REFACTOR
   The stop() method responds within 1 second because the heartbeat sleeps
   in 1-second increments rather than one long sleep call.
 
-Retention policy:
-  - Synced records  → deleted after 1 day.
-  - Unsynced records → deleted after 7 days.
-  - Physical .png / .mp4 files are removed from disk during cleanup.
+Retention policy (v5.2.7):
+  - Synced records   → deleted after 2 hours (SYNCED_RETENTION_HOURS=2).
+    Mac storage is limited; synced data is purged aggressively once on server.
+    Orphan files on disk (no DB record) are also swept — see db_manager Step 6.
+  - Unsynced records → deleted after 7 days (UNSYNCED_RETENTION_DAYS=7).
+  - Physical .jpg / .png / .mp4 files are removed from disk during cleanup.
 
 NOTE: WAL mode is already configured in db_manager.py. No change needed here.
 """

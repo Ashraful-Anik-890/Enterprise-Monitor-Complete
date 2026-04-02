@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SYNC_INTERVAL = 300
 BATCH_JSON            = 50
-BATCH_FILES           = 20
+BATCH_FILES           = 50
 BATCH_VIDEOS          = 3
 REQUEST_TIMEOUT_JSON  = 10
 REQUEST_TIMEOUT_FILE  = 60
@@ -510,7 +510,7 @@ class SyncService:
                 "pcName":       identity["pcName"],
                 "macAddress":   identity["macAddress"],
                 "userName":     identity["userName"],
-                "timestamp":    rec.get("timestamp") or "",
+                "timestamp":    self._normalize_timestamp(rec.get("timestamp") or ""),
                 "activeWindow": rec.get("active_window") or "",
                 "activeApp":    rec.get("active_app") or "",
                 "syncTime":     datetime.now(timezone.utc).isoformat(),
@@ -520,7 +520,7 @@ class SyncService:
                 synced_ids.append(rec["id"])
                 logger.warning("Screenshot file gone, marking synced: %s", file_path)
                 continue
-            if self._post_file(url, fields, file_path, "image/png"):
+            if self._post_file(url, fields, file_path, "image/jpeg"):
                 synced_ids.append(rec["id"])
             elif self._abort_cycle:
                 break

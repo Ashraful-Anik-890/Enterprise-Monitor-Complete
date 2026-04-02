@@ -24,9 +24,9 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 CHUNK_SECONDS = 300
-TARGET_FPS    = 10
-TARGET_W      = 1280
-TARGET_H      = 720
+TARGET_FPS    = 5
+TARGET_W      = 720
+TARGET_H      = 480
 FOURCC        = "mp4v"
 FILE_EXT      = ".mp4"
 
@@ -126,6 +126,14 @@ class ScreenRecorder:
         if self._thread:
             self._thread.join(timeout=10)
         logger.info("ScreenRecorder stopped")
+
+    def pause(self) -> None:
+        """Alias for stop() to support uniform monitoring interface."""
+        self.stop()
+
+    def resume(self) -> None:
+        """Alias for start() to support uniform monitoring interface."""
+        self.start()
 
     def _record_loop(self) -> None:
         try:

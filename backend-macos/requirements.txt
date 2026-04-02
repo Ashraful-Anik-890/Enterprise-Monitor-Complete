@@ -10,6 +10,10 @@ uvicorn[standard]
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
 python-jose[cryptography]
+passlib[bcrypt]             # matches Windows requirements; future-proofs bcrypt hashing
+
+# ── FastAPI data validation ───────────────────────────────────────────────────
+pydantic                    # explicit pin — FastAPI depends on it, PyInstaller needs it declared
 
 # ── Screen capture ───────────────────────────────────────────────────────────
 mss

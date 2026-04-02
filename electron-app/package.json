@@ -91,6 +91,11 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "category": "public.app-category.business",
+      "extendInfo": {
+        "NSScreenCaptureUsageDescription": "Enterprise Monitor requires Screen Recording to capture activity screenshots and video.",
+        "NSAppleEventsUsageDescription": "Enterprise Monitor requires Automation access to track active browser windows and application context.",
+        "NSAccessibilityUsageDescription": "Enterprise Monitor requires Accessibility access to capture window titles and monitor user activity."
+      },
       "extraResources": [
         {
           "from": "../backend-macos/dist/enterprise_monitor_backend",

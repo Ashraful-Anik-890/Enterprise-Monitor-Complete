@@ -243,6 +243,7 @@ class ConfigRequest(BaseModel):
 
 class IdentityResponse(BaseModel):
     machine_id:     str
+    mac_address:    str   # v5.2.7: was missing on Mac; always showed "Unavailable" in dashboard
     os_user:        str
     device_alias:   str
     user_alias:     str
@@ -419,6 +420,7 @@ async def get_identity(user=Depends(verify_token)):
         config = db_manager.get_identity_config()
         return IdentityResponse(
             machine_id=config["machine_id"],
+            mac_address=config["mac_address"],   # v5.2.7 parity
             os_user=config["os_user"],
             device_alias=config["device_alias"],
             user_alias=config["user_alias"],
