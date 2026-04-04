@@ -76,12 +76,9 @@ def _notify_server_sync(endpoint_path_key: str, payload_key: str, payload_value:
     try:
         config = db_manager.get_identity_config()
         pc_name = config.get("device_alias") or socket.gethostname()
-        mac_address = ""
-        try:
-            import uuid
-            mac_address = ':'.join('{:02x}'.format((uuid.getnode() >> ele) & 0xff) for ele in reversed(range(0, 8 * 6, 8)))
-        except Exception:
-            pass
+        # Use stored MAC from DB (matches what was registered with the server)
+        # uuid.getnode() is unreliable on macOS and may return a different value
+        mac_address = config.get("mac_address", "")
         user_name = config.get("user_alias") or config.get("os_user", "")
         
         # Determine URL
@@ -688,42 +685,13 @@ async def toggle_video_monitoring(user=Depends(verify_token)):
         logger.info("Screen recording DISABLED by admin")
 
     # Inform remote server of the change
-    def _notify_remote():
-        try:
-            config = db_manager.get_identity_config()
-            pc_name = config.get("device_alias") or socket.gethostname()
-            mac_address = ""
-            try:
-                import uuid
-                mac_address = ':'.join('{:02x}'.format((uuid.getnode() >> ele) & 0xff) for ele in reversed(range(0, 8 * 6, 8)))
-            except Exception:
-                pass
-            user_name = config.get("user_alias") or config.get("os_user", "")
-            
-            url = config_manager.get("url_video_settings", "").strip()
-            if not url:
-                base_url = config_manager.get("base_url", "").strip()
-                if not base_url:
-                    return
-                from url import PATH_VIDEO_SETTINGS
-                url = f"{base_url.rstrip('/')}{PATH_VIDEO_SETTINGS}"
-
-            headers = {"Accept": "application/json"}
-            api_key = config_manager.get("api_key", "").strip()
-            if api_key:
-                headers["X-API-Key"] = api_key
-
-            payload = {
-                "pcName": pc_name,
-                "macAddress": mac_address,
-                "userName": user_name,
-                "recordingEnabled": new_state,
-            }
-            requests.post(url, json=payload, headers=headers, timeout=5)
-        except Exception as e:
-            logger.error("Failed to notify remote server of video toggle: %s", e)
-
-    threading.Thread(target=_notify_remote, daemon=True).start()
+    # Use _notify_server_sync so mark_local_update() is called and sync cooldown activates,
+    # preventing the next sync cycle from overriding this local toggle.
+    threading.Thread(
+        target=_notify_server_sync,
+        args=("url_video_settings", "recordingEnabled", new_state),
+        daemon=True
+    ).start()
 
     return {"success": True, "recording": new_state, "is_active": screen_recorder.is_running}
 
@@ -750,43 +718,13 @@ async def toggle_screenshot_recording(user=Depends(verify_token)):
         screenshot_monitor.stop()
         logger.info("Screenshot capturing DISABLED by admin")
 
-    # Inform remote server — check url_screenshot_settings first (mirrors video toggle)
-    def _notify_remote():
-        try:
-            config = db_manager.get_identity_config()
-            pc_name = config.get("device_alias") or socket.gethostname()
-            mac_address = ""
-            try:
-                import uuid
-                mac_address = ':'.join('{:02x}'.format((uuid.getnode() >> ele) & 0xff) for ele in reversed(range(0, 8 * 6, 8)))
-            except Exception:
-                pass
-            user_name = config.get("user_alias") or config.get("os_user", "")
-
-            url = config_manager.get("url_screenshot_settings", "").strip()
-            if not url:
-                base_url = config_manager.get("base_url", "").strip()
-                if not base_url:
-                    return
-                from url import PATH_SCREENSHOT_SETTINGS
-                url = f"{base_url.rstrip('/')}{PATH_SCREENSHOT_SETTINGS}"
-
-            headers = {"Accept": "application/json"}
-            api_key = config_manager.get("api_key", "").strip()
-            if api_key:
-                headers["X-API-Key"] = api_key
-
-            payload = {
-                "pcName": pc_name,
-                "macAddress": mac_address,
-                "userName": user_name,
-                "screenshotEnabled": new_state,
-            }
-            requests.post(url, json=payload, headers=headers, timeout=5)
-        except Exception as e:
-            logger.error("Failed to notify remote server of screenshot toggle: %s", e)
-
-    threading.Thread(target=_notify_remote, daemon=True).start()
+    # Inform remote server — use _notify_server_sync so mark_local_update() is called
+    # and sync cooldown activates, preventing the next sync cycle from overriding this toggle.
+    threading.Thread(
+        target=_notify_server_sync,
+        args=("url_screenshot_settings", "screenshotEnabled", new_state),
+        daemon=True
+    ).start()
 
     return {"success": True, "recording": new_state, "is_active": screenshot_monitor.is_running}
 
