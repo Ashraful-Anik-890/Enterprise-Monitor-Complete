@@ -328,7 +328,7 @@
       background: rgba(15,23,42,0.92);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
-      padding: 14px 20px;
+      padding: 12px 18px;
       border-radius: 12px;
       margin-bottom: 10px;
       box-shadow: 0 4px 24px rgba(0,0,0,0.25);
@@ -336,24 +336,33 @@
       justify-content: space-between;
       align-items: center;
       border: 1px solid rgba(255,255,255,0.12);
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .header-title {
+      flex: 1;
+      min-width: 200px;
     }
 
     .header-title h1 {
       color: #fff;
-      font-size: 20px;
+      font-size: 19px;
       font-weight: 700;
     }
 
     .header-title p {
       color: rgba(255, 255, 255, 0.5);
-      font-size: 12px;
-      margin-top: 2px;
+      font-size: 11.5px;
+      margin-top: 1px;
     }
 
     .header-actions {
       display: flex;
-      gap: 8px;
+      gap: 10px;
       align-items: center;
+      flex-wrap: wrap;
+      justify-content: flex-end;
     }
 
     /* Shared button styles */
@@ -432,113 +441,143 @@
       border: 1px solid rgba(255,255,255,0.6);
       box-shadow: 0 2px 12px rgba(0,0,0,0.06);
       display: flex;
-      justify-content: space-between;
+      justify-content: flex-start;
       align-items: center;
       flex-wrap: wrap;
-      gap: 8px;
+      gap: 12px;
     }
 
-    /* Identity section - compact single row */
-    .identity-section {
+    .control-group {
       display: flex;
-      gap: 8px;
       align-items: center;
-      padding: 8px 14px;
-      background: rgba(255,255,255,0.88);
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .control-divider {
+      width: 1px;
+      height: 20px;
+      background: rgba(0,0,0,0.1);
+      margin: 0 4px;
+    }
+
+    /* Identity section - Responsive Grid */
+    .identity-section {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 10px;
+      padding: 10px;
+      background: rgba(255,255,255,0.8);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-      border: 1px solid rgba(255,255,255,0.6);
-      border-radius: 10px;
-      margin-bottom: 8px;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
-      flex-wrap: nowrap;
-      overflow-x: auto;
+      border: 1px solid rgba(255,255,255,0.5);
+      border-radius: 12px;
+      margin-bottom: 10px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+      align-items: stretch;
     }
 
     .identity-card {
-      display: flex;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
       align-items: center;
-      gap: 8px;
-      background: rgba(248,250,255,0.8);
-      border: 1px solid rgba(102,126,234,0.15);
-      border-radius: 8px;
-      padding: 7px 10px;
-      flex: 1;
-      min-width: 200px;
+      gap: 12px;
+      background: rgba(248,250,255,0.9);
+      border: 1px solid rgba(102,126,234,0.1);
+      border-radius: 10px;
+      padding: 10px 14px;
+      transition: all 0.2s ease;
+    }
+
+    .identity-card:hover {
+      background: #fff;
+      border-color: rgba(102,126,234,0.3);
+      box-shadow: 0 4px 12px rgba(102,126,234,0.08);
     }
 
     .identity-icon {
-      font-size: 20px;
+      font-size: 22px;
       flex-shrink: 0;
+      color: #667eea;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
     }
 
     .identity-info {
       display: flex;
       flex-direction: column;
-      min-width: 90px;
+      min-width: 0; /* Allow truncation */
     }
 
     .identity-label {
       font-size: 11px;
-      font-weight: 600;
+      font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.8px;
       color: #888;
+      margin-bottom: 2px;
     }
 
     .identity-raw {
       font-size: 11px;
-      color: #aaa;
+      color: #94A3B8;
       font-style: italic;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      max-width: 130px;
+      opacity: 0.8;
     }
 
     .identity-input-group {
       display: flex;
       gap: 6px;
-      flex: 1;
+      width: 100%;
+      grid-column: span 3; /* Push to next line in card grid on narrow widths or use child layout */
+      margin-top: 4px;
     }
 
     .identity-input {
       flex: 1;
-      padding: 6px 10px;
-      border: 1px solid #cdd4e8;
-      border-radius: 6px;
+      padding: 8px 12px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
       font-size: 13px;
-      background: #fafbff;
-      color: #333;
-      transition: border-color 0.2s;
+      background: #fff;
+      color: #1E293B;
+      transition: all 0.2s;
     }
 
     .identity-input:focus {
       outline: none;
       border-color: #667eea;
-      background: #fff;
+      box-shadow: 0 0 0 3px rgba(102,126,234,0.1);
     }
 
     .btn-identity-update {
-      padding: 6px 14px;
-      background: #667eea;
+      padding: 8px 16px;
+      background: linear-gradient(135deg, #667eea, #764ba2);
       color: #fff;
       border: none;
-      border-radius: 6px;
-      font-size: 13px;
-      font-weight: 500;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
       cursor: pointer;
       white-space: nowrap;
-      transition: background 0.2s;
+      transition: transform 0.2s, box-shadow 0.2s;
     }
 
     .btn-identity-update:hover {
-      background: #5a6fd8;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(102,126,234,0.2);
     }
 
     .btn-identity-update:disabled {
-      background: #aaa;
+      background: #cbd5e1;
       cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
     }
 
     .identity-feedback {
@@ -1474,6 +1513,34 @@
       font-size: 12px;
       color: #6b7280;
     }
+
+    /* ── RESPONSIVENESS OVERRIDES ── */
+    @media (max-width: 1024px) {
+      .identity-section { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 900px) {
+      .header-actions { justify-content: flex-start; }
+      .header-buttons .btn { padding: 8px 12px; font-size: 12px; }
+      .dashboard-controls { flex-direction: column; align-items: stretch; }
+      .control-group { justify-content: space-between; width: 100%; }
+      .control-divider { display: none; }
+    }
+
+    @media (max-width: 650px) {
+      .identity-section { grid-template-columns: 1fr; }
+      .identity-card { grid-template-columns: auto 1fr; }
+      .identity-input-group { grid-column: span 2; }
+      .header-title h1 { font-size: 17px; }
+      .btn-warning { width: 100%; }
+    }
+
+    @media (max-width: 480px) {
+      .stats-grid { grid-template-columns: 1fr; }
+      .tab-button { padding: 10px 5px; font-size: 11px; }
+      .header-actions { flex-direction: column; align-items: stretch; }
+      .btn { width: 100%; }
+    }
   </style>
 </head>
 
@@ -1539,12 +1606,11 @@
        border-radius:6px; margin:10px 0; font-size:13px;"></div>
 
     <!-- Unified Dashboard Settings Ribbon -->
-    <div class="dashboard-controls" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px;">
+    <div class="dashboard-controls">
       <!-- Left side: Date & Timezone & Config -->
-      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-        <label style="font-size:13px;font-weight:600;color:#555;">TZ:</label>
+      <div class="control-group">
+        <label style="font-size:13px;font-weight:700;color:#64748B;">TZ:</label>
         <select id="timezone-select" class="tz-select" title="Display timezone for all timestamps">
-          <!-- Options populated via JS, assume same innerHTML later or keep it statically here -->
           <optgroup label="— UTC —"><option value="UTC">UTC (Universal)</option></optgroup>
           <optgroup label="South Asia"><option value="Asia/Dhaka">Dhaka (UTC+6)</option><option value="Asia/Kolkata">Kolkata (UTC+5:30)</option><option value="Asia/Karachi">Karachi (UTC+5)</option></optgroup>
           <optgroup label="East / SE Asia"><option value="Asia/Singapore">Singapore (UTC+8)</option><option value="Asia/Shanghai">Beijing / Shanghai (UTC+8)</option><option value="Asia/Tokyo">Tokyo (UTC+9)</option><option value="Asia/Bangkok">Bangkok (UTC+7)</option></optgroup>
@@ -1552,19 +1618,19 @@
           <optgroup label="Americas"><option value="America/New_York">New York (UTC-5)</option><option value="America/Chicago">Chicago (UTC-6)</option><option value="America/Los_Angeles">Los Angeles (UTC-8)</option></optgroup>
         </select>
         <span id="tz-badge" class="tz-badge"></span>
-        <span style="color:#ccc;font-size:18px;margin:0 4px;">|</span>
+        <div class="control-divider"></div>
         <input type="date" id="date-picker" style="padding:7px 10px;border:2px solid #e8eaf0;border-radius:7px;font-size:13px;">
         <button class="btn-success" id="search-btn">Search</button>
         <button class="btn-secondary" id="today-btn">Today</button>
-        <span style="color:#ccc;font-size:18px;margin:0 4px;">|</span>
+        <div class="control-divider"></div>
         <button id="server-config-btn" onclick="openServerConfigModal()" style="padding:7px 14px;font-size:13px;background:linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">
           ⚙ Config Server API
         </button>
       </div>
 
       <!-- Right side: Mac Address, Status, Controls -->
-      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-        <small style="color:#888;font-size:12px;font-weight:600;">MAC: <span id="display-mac-address" style="color:#333;">Loading...</span></small>
+      <div class="control-group" style="margin-left: auto;">
+        <small style="color:#64748B;font-size:12px;font-weight:700;">MAC: <span id="display-mac-address" style="color:#1E293B;">Loading...</span></small>
         <div class="status-badge" id="status-badge">
           <span class="status-indicator active" id="status-indicator"></span>
           <span id="status-text">Active</span>
@@ -1576,8 +1642,8 @@
 
     <!-- Identity section - compact single row with Confirm button far right -->
     <div class="identity-section" id="identity-section">
-      <div class="identity-card" style="flex:1; min-width:180px;">
-        <div class="identity-icon" style="font-size:16px; flex-shrink:0;">🖥️</div>
+      <div class="identity-card">
+        <div class="identity-icon">🖥️</div>
         <div class="identity-info">
           <label class="identity-label">Device Name</label>
           <small class="identity-raw" id="identity-machine-id">Loading…</small>
@@ -1588,8 +1654,8 @@
         </div>
       </div>
 
-      <div class="identity-card" style="flex:1; min-width:180px;">
-        <div class="identity-icon" style="font-size:16px; flex-shrink:0;">👤</div>
+      <div class="identity-card">
+        <div class="identity-icon">👤</div>
         <div class="identity-info">
           <label class="identity-label">User Name</label>
           <small class="identity-raw" id="identity-os-user">Loading…</small>
@@ -1600,8 +1666,8 @@
         </div>
       </div>
 
-      <div class="identity-card" style="flex:1; min-width:180px;">
-        <div class="identity-icon" style="font-size:16px; flex-shrink:0;">📍</div>
+      <div class="identity-card">
+        <div class="identity-icon">📍</div>
         <div class="identity-info">
           <label class="identity-label">Office Location</label>
           <small class="identity-raw" id="identity-location-display">Not set</small>
