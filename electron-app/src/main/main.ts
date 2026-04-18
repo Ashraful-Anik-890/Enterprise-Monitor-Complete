@@ -529,6 +529,12 @@ if (!gotTheLock) {
       console.error('[main] FATAL: Could not spawn backend:', err.message);
     }
 
+    // Pre-initialize apiClient and IPC handlers to prevent race conditions 
+    // where macOS `activate` opens a window (and triggers renderer IPCs) 
+    // before the long waitForPortInfo (TCC prompts) resolves.
+    apiClient = new ApiClient(`http://127.0.0.1:0`);
+    setupIpcHandlers();
+
     // Wait for port.info (backend writes it on startup)
     let port = 51235;
     try {
@@ -577,7 +583,6 @@ if (!gotTheLock) {
     );
 
     const isHiddenStartup = process.argv.includes('--hidden') || (IS_MAC && app.getLoginItemSettings().wasOpenedAsHidden);
-    setupIpcHandlers();
     createWindow(!isHiddenStartup);
     startBackendHealthCheck();
 
@@ -975,6 +980,28 @@ function setupIpcHandlers(): void {
     } catch (error: any) {
       if (is401(error)) return handleAuthExpired();
       throw new Error(error.message);
+    }
+  });
+
+  ipcMain.handle('api:confirmCredential', async (_event, payload: { device_alias: string; user_alias: string; location: string }) => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.post('/api/config/confirm-credential', payload, token);
+      return response.data;
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('api:getCredentialStatus', async () => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.get('/api/config/credential-status', token);
+      return response.data;
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      return { confirmed: false, drifted: false, needs_confirmation: true };
     }
   });
 

@@ -19,20 +19,37 @@ echo ""
 
 echo "[0/4] Checking prerequisites..."
 
-if ! command -v python3 &> /dev/null; then
-    echo "[ERROR] Python 3 not found. Install: brew install python@3.11"
+# Prefer Homebrew python3.12 since the system python3 (3.9) on macOS
+# does not have project dependencies (passlib, bcrypt, etc.) installed.
+# PyInstaller MUST run under the same Python that has all packages installed,
+# otherwise hidden-imports like passlib.handlers.bcrypt are silently missing
+# from the bundle, causing CRITICAL startup failures at runtime.
+PYTHON_BIN=""
+for candidate in /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.11 /opt/homebrew/bin/python3 python3.12 python3.11 python3; do
+    if command -v "$candidate" &>/dev/null; then
+        # Verify this Python can import passlib (our key dependency)
+        if "$candidate" -c "import passlib.handlers.bcrypt" &>/dev/null 2>&1; then
+            PYTHON_BIN="$candidate"
+            break
+        fi
+    fi
+done
+
+if [ -z "$PYTHON_BIN" ]; then
+    echo "[ERROR] Could not find a Python 3 installation with passlib installed."
+    echo "  Fix: /opt/homebrew/bin/python3.12 -m pip install -r backend-macos/requirements.txt"
     exit 1
 fi
 
-PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-PYTHON_MAJOR=$(python3 -c "import sys; print(sys.version_info.major)")
-PYTHON_MINOR=$(python3 -c "import sys; print(sys.version_info.minor)")
+PYTHON_VERSION=$("$PYTHON_BIN" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+PYTHON_MAJOR=$("$PYTHON_BIN" -c "import sys; print(sys.version_info.major)")
+PYTHON_MINOR=$("$PYTHON_BIN" -c "import sys; print(sys.version_info.minor)")
 
 if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 9 ]); then
     echo "[ERROR] Python 3.9+ required. Found: $PYTHON_VERSION"
     exit 1
 fi
-echo "  [OK] Python $PYTHON_VERSION ($(which python3))"
+echo "  [OK] Python $PYTHON_VERSION ($PYTHON_BIN)"
 
 if ! command -v node &> /dev/null; then
     echo "[ERROR] Node.js not found. Install: brew install node"
@@ -44,8 +61,8 @@ echo "  [OK] Node.js $NODE_VERSION"
 # ── STEP 1: Install Python Dependencies ─────────────────────────────────────
 
 echo ""
-echo "[1/4] Installing Python dependencies (system-wide)..."
-pip3 install -r "$BACKEND_DIR/requirements.txt"
+echo "[1/4] Installing Python dependencies..."
+"$PYTHON_BIN" -m pip install -r "$BACKEND_DIR/requirements.txt"
 echo "  [OK] All dependencies installed"
 
 # ── STEP 2: Build Backend with PyInstaller ──────────────────────────────────
@@ -66,7 +83,7 @@ fi
 
 if [ -f "enterprise_monitor_backend_mac.spec" ]; then
     echo "  Using enterprise_monitor_backend_mac.spec"
-    python3 -m PyInstaller enterprise_monitor_backend_mac.spec --noconfirm
+    "$PYTHON_BIN" -m PyInstaller enterprise_monitor_backend_mac.spec --noconfirm
 else
     echo "  [ERROR] enterprise_monitor_backend_mac.spec not found"
     exit 1
@@ -108,8 +125,10 @@ echo "  Backend binary:  $DIST_DIR"
 echo ""
 echo "  To run in development:"
 echo ""
-echo "    1. Start the backend:"
-echo "       cd backend-macos && python3 main.py"
+echo "    1. Start the backend:
+       cd backend-macos && $PYTHON_BIN main.py
+       # or using the Homebrew Python: $PYTHON_BIN main.py
+"
 echo ""
 echo "    2. Start Electron (new terminal):"
 echo "       cd electron-app && npm start"

@@ -134,6 +134,9 @@ async def lifespan(app: FastAPI):
 
     db_manager.initialize()
 
+    screenshot_interval = int(config_manager.get("screenshot_interval", 10))
+    screenshot_monitor.__init__(db_manager, interval_seconds=screenshot_interval)
+
     # Always start — no TCC permission required
     app_tracker.start()
     browser_tracker.start()
@@ -219,6 +222,7 @@ class ConfigRequest(BaseModel):
     # Global settings
     api_key:               Optional[str] = None
     sync_interval_seconds: Optional[int] = None
+    screenshot_interval:   Optional[int] = None
 
     # Base URL shortcut — admin sets this; full URLs are derived in the frontend
     # and stored as the individual url_* keys below. Persisted here for UI reload.
@@ -239,16 +243,25 @@ class ConfigRequest(BaseModel):
     server_url:            Optional[str] = None
 
 class IdentityResponse(BaseModel):
-    machine_id:     str
-    mac_address:    str   # v5.2.7: was missing on Mac; always showed "Unavailable" in dashboard
-    os_user:        str
-    device_alias:   str
-    user_alias:     str
-    login_username: str
+    machine_id:           str
+    mac_address:          str
+    os_user:              str
+    device_alias:         str
+    user_alias:           str
+    login_username:       str
+    location:             str  = ""
+    credential_confirmed: bool = False
+    credential_drifted:   bool = False
 
 class IdentityUpdateRequest(BaseModel):
     device_alias: Optional[str] = None
     user_alias:   Optional[str] = None
+    location:     Optional[str] = None
+
+class ConfirmCredentialRequest(BaseModel):
+    device_alias: str
+    user_alias:   str
+    location:     str
 
 class TimezoneRequest(BaseModel):
     timezone: str
@@ -416,12 +429,15 @@ async def get_identity(user=Depends(verify_token)):
     try:
         config = db_manager.get_identity_config()
         return IdentityResponse(
-            machine_id=config["machine_id"],
-            mac_address=config["mac_address"],   # v5.2.7 parity
-            os_user=config["os_user"],
-            device_alias=config["device_alias"],
-            user_alias=config["user_alias"],
-            login_username=config.get("login_username", ""),
+            machine_id           = config["machine_id"],
+            mac_address          = config["mac_address"],
+            os_user              = config["os_user"],
+            device_alias         = config["device_alias"],
+            user_alias           = config["user_alias"],
+            login_username       = config.get("login_username", ""),
+            location             = config.get("location", ""),
+            credential_confirmed = config.get("credential_confirmed", False),
+            credential_drifted   = config.get("credential_drifted", False),
         )
     except Exception as e:
         logger.error("Error getting identity config: %s", e)
@@ -429,12 +445,13 @@ async def get_identity(user=Depends(verify_token)):
 
 @app.post("/api/config/identity")
 async def update_identity(request: IdentityUpdateRequest, user=Depends(verify_token)):
-    if request.device_alias is None and request.user_alias is None:
+    if request.device_alias is None and request.user_alias is None and request.location is None:
         return {"success": False, "error": "No fields to update"}
     try:
         ok = db_manager.update_identity_config(
-            device_alias=request.device_alias,
-            user_alias=request.user_alias,
+            device_alias = request.device_alias,
+            user_alias   = request.user_alias,
+            location     = request.location,
         )
         if ok:
             return {"success": True, "message": "Identity updated"}
@@ -442,6 +459,42 @@ async def update_identity(request: IdentityUpdateRequest, user=Depends(verify_to
     except Exception as e:
         logger.error("Error updating identity config: %s", e)
         raise HTTPException(status_code=500, detail="Failed to update identity config")
+
+@app.post("/api/config/confirm-credential")
+async def confirm_credential(request: ConfirmCredentialRequest, user=Depends(verify_token)):
+    """
+    Confirm identity credentials (PC name, user, location) after first install.
+    Sets sync_enabled = true so ERP syncing begins with the confirmed values.
+    Subsequent calls re-confirm (e.g. after alias drift is detected).
+    """
+    try:
+        ok = db_manager.confirm_credential(
+            device_alias = request.device_alias.strip(),
+            user_alias   = request.user_alias.strip(),
+            location     = request.location.strip(),
+        )
+        return {"success": ok}
+    except Exception as e:
+        logger.error("confirm_credential endpoint error: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to confirm credential")
+
+@app.get("/api/config/credential-status")
+async def credential_status(user=Depends(verify_token)):
+    """
+    Returns whether credentials have been confirmed and whether they've drifted
+    since confirmation (i.e., alias was changed without re-confirming).
+    """
+    try:
+        config = db_manager.get_identity_config()
+        return {
+            "confirmed":          config.get("credential_confirmed", False),
+            "drifted":            config.get("credential_drifted", False),
+            "needs_confirmation": not config.get("credential_confirmed", False) or config.get("credential_drifted", False),
+            "sync_enabled":       db_manager.is_sync_enabled(),
+        }
+    except Exception as e:
+        logger.error("credential_status error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal error")
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -465,6 +518,7 @@ async def get_config(user=Depends(verify_token)):
         # ── User-saved settings ───────────────────────────────────────────────
         "api_key":               config_manager.get("api_key", ""),
         "sync_interval_seconds": config_manager.get("sync_interval_seconds", 300),
+        "screenshot_interval":   config_manager.get("screenshot_interval", 10),
         "base_url":              config_manager.get("base_url", ""),
         "url_app_activity":      config_manager.get("url_app_activity", ""),
         "url_browser":           config_manager.get("url_browser", ""),
@@ -485,6 +539,7 @@ async def update_config(config: ConfigRequest, user=Depends(verify_token)):
     _fields = [
         ("api_key",               config.api_key),
         ("sync_interval_seconds", config.sync_interval_seconds),
+        ("screenshot_interval",   config.screenshot_interval),
         ("base_url",              config.base_url),          # ← NEW
         ("url_app_activity",      config.url_app_activity),
         ("url_browser",           config.url_browser),

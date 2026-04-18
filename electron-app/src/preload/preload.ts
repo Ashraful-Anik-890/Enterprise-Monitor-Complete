@@ -53,6 +53,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateIdentity: (payload: { device_alias?: string; user_alias?: string }) =>
     ipcRenderer.invoke('api:updateIdentity', payload),
 
+  // ── Location & Credential Confirmation ────────────────────────────────────────
+  confirmCredential: (payload: { device_alias: string; user_alias: string; location: string }) =>
+    ipcRenderer.invoke('api:confirmCredential', payload),
+
+  getCredentialStatus: () =>
+    ipcRenderer.invoke('api:getCredentialStatus'),
+
+
   // ── Video ─────────────────────────────────────────────────────────────────
   toggleVideoRecording: () => ipcRenderer.invoke('api:toggleVideoRecording'),
   getVideoStatus: () => ipcRenderer.invoke('api:getVideoStatus'),

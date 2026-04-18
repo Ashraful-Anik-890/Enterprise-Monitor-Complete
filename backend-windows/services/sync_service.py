@@ -87,10 +87,16 @@ class SyncService:
                 "pcName":     config.get("device_alias") or self._fallback_hostname,
                 "macAddress": config.get("mac_address", ""),
                 "userName":   config.get("user_alias") or config.get("os_user", ""),
+                "location":   config.get("location", ""),
             }
         except Exception as e:
             logger.warning("Could not read identity config: %s — using fallback", e)
-            return {"pcName": self._fallback_hostname, "macAddress": "", "userName": ""}
+            return {
+                "pcName":     self._fallback_hostname,
+                "macAddress": "",
+                "userName":   "",
+                "location":   "",
+            }
 
     # ─── LIFECYCLE ───────────────────────────────────────────────────────────
 
@@ -127,6 +133,8 @@ class SyncService:
     def trigger_sync_now(self) -> dict:
         logger.info("Manual sync triggered")
         try:
+            if not self.db_manager.is_sync_enabled():
+                return {"success": False, "error": "Sync disabled — confirm credentials first"}
             self._is_syncing = True
             self._abort_cycle = False
             identity = self._get_identity()
@@ -157,6 +165,15 @@ class SyncService:
             total_synced_this_cycle = 0
 
             try:
+                if not self.db_manager.is_sync_enabled():
+                    logger.debug("SyncService: sync disabled (credentials not confirmed) — skipping cycle")
+                    interval = int(self.config_manager.get("sync_interval_seconds", DEFAULT_SYNC_INTERVAL))
+                    for _ in range(interval):
+                        if not self.is_running:
+                            return
+                        time.sleep(1)
+                    continue
+
                 self._is_syncing = True
                 # v3: Reset abort flag at the start of every cycle
                 self._abort_cycle = False
@@ -386,6 +403,7 @@ class SyncService:
                 "pcName":       identity["pcName"],
                 "macAddress":   identity["macAddress"],
                 "userName":     identity["userName"],
+                "location":     identity["location"],
                 "appName":      rec.get("app_name") or "Unknown",
                 "windowsTitle": rec.get("window_title") or "",
                 "startTime":    start_dt.isoformat(),
@@ -414,6 +432,7 @@ class SyncService:
                 "pcName":      identity["pcName"],
                 "macAddress":  identity["macAddress"],
                 "userName":    identity["userName"],
+                "location":    identity["location"],
                 "browserName": rec.get("browser_name") or "",
                 "url":         rec.get("url") or "",
                 "pageTitle":   rec.get("page_title") or "",
@@ -446,6 +465,7 @@ class SyncService:
                 "pcName":         identity["pcName"],
                 "macAddress":     identity["macAddress"],
                 "userName":       identity["userName"],
+                "location":       identity["location"],
                 "contentType":    rec.get("content_type") or "text",
                 "contentPreview": rec.get("content_preview") or "",
                 "timestamp":      self._normalize_timestamp(rec.get("timestamp") or ""),
@@ -477,6 +497,7 @@ class SyncService:
                 "pcName":      identity["pcName"],
                 "macAddress":  identity["macAddress"],
                 "userName":    identity["userName"],
+                "location":    identity["location"],
                 "application": rec.get("application") or "",
                 "windowTitle": rec.get("window_title") or "",
                 "content":     rec.get("content") or "",
@@ -510,6 +531,7 @@ class SyncService:
                 "pcName":       identity["pcName"],
                 "macAddress":   identity["macAddress"],
                 "userName":     identity["userName"],
+                "location":     identity["location"],
                 "timestamp":    self._normalize_timestamp(rec.get("timestamp") or ""),
                 "activeWindow": rec.get("active_window") or "",
                 "activeApp":    rec.get("active_app") or "",
@@ -547,6 +569,7 @@ class SyncService:
                 "pcName":          identity["pcName"],
                 "macAddress":      identity["macAddress"],
                 "userName":        identity["userName"],
+                "location":        identity["location"],
                 "timestamp":       rec.get("timestamp") or "",
                 "durationSeconds": int(rec.get("duration_seconds") or 0),
                 "syncTime":        datetime.now(timezone.utc).isoformat(),

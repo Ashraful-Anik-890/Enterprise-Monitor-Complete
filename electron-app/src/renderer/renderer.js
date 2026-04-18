@@ -149,6 +149,8 @@ function setupEventListeners() {
   // Identity
   document.getElementById('update-device-alias-btn').addEventListener('click', () => updateIdentityAlias('device'));
   document.getElementById('update-user-alias-btn').addEventListener('click', () => updateIdentityAlias('user'));
+  document.getElementById('update-location-btn')?.addEventListener('click', () => updateIdentityAlias('location'));
+  document.getElementById('confirm-credential-btn')?.addEventListener('click', handleConfirmCredential);
 
   // Credentials modal
   document.getElementById('modal-cancel-btn').addEventListener('click', closeCredentialsModal);
@@ -521,9 +523,26 @@ async function loadStatistics() {
   try {
     const stats = await window.electronAPI.getStatistics({ date: currentDate });
     document.getElementById('stat-screenshots').textContent = stats.total_screenshots ?? 0;
-    document.getElementById('stat-hours').textContent = (stats.active_hours_today ?? 0).toFixed(1);
-    document.getElementById('stat-apps').textContent = stats.apps_tracked ?? 0;
-    document.getElementById('stat-clipboard').textContent = stats.clipboard_events ?? 0;
+    document.getElementById('stat-hours').textContent       = (stats.active_hours_today ?? 0).toFixed(1);
+    document.getElementById('stat-apps').textContent        = stats.apps_tracked ?? 0;
+    document.getElementById('stat-clipboard').textContent   = stats.clipboard_events ?? 0;
+
+    // Show archived badge if stats come from daily_summary fallback
+    ['stat-screenshots','stat-hours','stat-apps','stat-clipboard'].forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const badge = el.parentElement.querySelector('.archived-badge');
+      if (stats.archived) {
+        if (!badge) {
+          const b = document.createElement('span');
+          b.className = 'archived-badge';
+          b.textContent = 'Archived';
+          el.parentElement.appendChild(b);
+        }
+      } else {
+        if (badge) badge.remove();
+      }
+    });
   } catch (err) {
     console.error('Failed to load statistics:', err);
   }
@@ -603,54 +622,141 @@ function updateTzBadge() {
 async function loadIdentity() {
   try {
     const identity = await window.electronAPI.getIdentity();
+
     const deviceLabel = document.querySelector('#identity-section .identity-card:first-child .identity-label');
-    const userLabel = document.querySelector('#identity-section .identity-card:nth-child(2) .identity-label');
+    const userLabel   = document.querySelector('#identity-section .identity-card:nth-child(2) .identity-label');
     if (deviceLabel) deviceLabel.textContent = identity.device_alias || identity.machine_id;
-    if (userLabel) userLabel.textContent = identity.user_alias || identity.os_user;
-    const mid = document.getElementById('identity-machine-id');
-    const osu = document.getElementById('identity-os-user');
-    const mac = document.getElementById('display-mac-address');
+    if (userLabel)   userLabel.textContent   = identity.user_alias   || identity.os_user;
+
+    const mid     = document.getElementById('identity-machine-id');
+    const osu     = document.getElementById('identity-os-user');
+    const mac     = document.getElementById('display-mac-address');
     const logUser = document.getElementById('identity-login-user');
-    if (mid) mid.textContent = `Raw: ${identity.machine_id}`;
-    if (osu) osu.textContent = `Raw: ${identity.os_user}`;
-    if (mac) mac.textContent = identity.mac_address || 'Unavailable';
+    const locDisp = document.getElementById('identity-location-display');
+
+    if (mid)     mid.textContent     = `Raw: ${identity.machine_id}`;
+    if (osu)     osu.textContent     = `Raw: ${identity.os_user}`;
+    if (mac)     mac.textContent     = identity.mac_address || 'Unavailable';
     if (logUser) logUser.textContent = identity.login_username || 'Unknown';
-    const di = document.getElementById('device-alias-input');
-    const ui = document.getElementById('user-alias-input');
-    if (di) di.value = identity.device_alias || '';
-    if (ui) ui.value = identity.user_alias || '';
-    if (di) di.placeholder = identity.machine_id;
-    if (ui) ui.placeholder = identity.os_user;
+    if (locDisp) locDisp.textContent = identity.location || 'Not set';
+
+    const di  = document.getElementById('device-alias-input');
+    const ui  = document.getElementById('user-alias-input');
+    const loc = document.getElementById('location-input');
+    if (di)  { di.value  = identity.device_alias || ''; di.placeholder  = identity.machine_id; }
+    if (ui)  { ui.value  = identity.user_alias   || ''; ui.placeholder  = identity.os_user; }
+    if (loc) { loc.value = identity.location     || ''; }
+
+    // Update confirm-credential button state
+    _updateConfirmBtn(identity);
   } catch (err) {
     console.error('Failed to load identity:', err);
   }
 }
 
+function _updateConfirmBtn(identity) {
+  const btn = document.getElementById('confirm-credential-btn');
+  if (!btn) return;
+
+  if (identity.credential_drifted) {
+    btn.className = 'state-drifted';
+    btn.textContent = '⚠️ Re-Confirm Credential';
+    btn.disabled = false;
+  } else if (!identity.credential_confirmed) {
+    btn.className = 'state-unconfirmed';
+    btn.textContent = '🔒 Confirm Credential';
+    btn.disabled = false;
+  } else {
+    btn.className = 'state-confirmed';
+    btn.textContent = '✅ Credential Confirmed';
+    btn.disabled = true;
+  }
+}
+
+async function handleConfirmCredential() {
+  const btn = document.getElementById('confirm-credential-btn');
+  const deviceAlias = (document.getElementById('device-alias-input')?.value || '').trim();
+  const userAlias   = (document.getElementById('user-alias-input')?.value   || '').trim();
+  const location    = (document.getElementById('location-input')?.value     || '').trim();
+
+  if (!deviceAlias || !userAlias) {
+    showIdentityFeedback('Enter Device Name and User Alias before confirming.', 'error');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Confirming…';
+
+  try {
+    const result = await window.electronAPI.confirmCredential({
+      device_alias: deviceAlias,
+      user_alias:   userAlias,
+      location:     location,
+    });
+    if (result.success) {
+      btn.className   = 'state-confirmed';
+      btn.textContent = '✅ Credential Confirmed';
+      btn.disabled    = true;
+      showIdentityFeedback('Credentials confirmed. Syncing is now active.', 'success');
+      // Refresh identity display
+      await loadIdentity();
+    } else {
+      btn.disabled = false;
+      _updateConfirmBtn({ credential_confirmed: false });
+      showIdentityFeedback(result.error || 'Confirmation failed.', 'error');
+    }
+  } catch (err) {
+    btn.disabled = false;
+    _updateConfirmBtn({ credential_confirmed: false });
+    showIdentityFeedback('Request failed.', 'error');
+  }
+}
+
 async function updateIdentityAlias(which) {
-  const inputId = which === 'device' ? 'device-alias-input' : 'user-alias-input';
-  const btnId = which === 'device' ? 'update-device-alias-btn' : 'update-user-alias-btn';
-  const input = document.getElementById(inputId);
-  const btn = document.getElementById(btnId);
+  const inputIdMap = {
+    device:   'device-alias-input',
+    user:     'user-alias-input',
+    location: 'location-input',
+  };
+  const btnIdMap = {
+    device:   'update-device-alias-btn',
+    user:     'update-user-alias-btn',
+    location: 'update-location-btn',
+  };
+  const labelMap = {
+    device:   'Device',
+    user:     'User',
+    location: 'Location',
+  };
+
+  const input = document.getElementById(inputIdMap[which]);
+  const btn   = document.getElementById(btnIdMap[which]);
   if (!input || !btn) return;
 
   const val = input.value.trim();
-  if (!val) { showIdentityFeedback('Alias cannot be empty.', 'error'); return; }
+  if (!val) { showIdentityFeedback('Value cannot be empty.', 'error'); return; }
 
-  btn.disabled = true;
+  btn.disabled    = true;
   btn.textContent = '…';
 
   try {
-    const payload = which === 'device' ? { device_alias: val } : { user_alias: val };
+    const payload = {};
+    if (which === 'device')   payload.device_alias = val;
+    if (which === 'user')     payload.user_alias   = val;
+    if (which === 'location') payload.location     = val;
+
     const result = await window.electronAPI.updateIdentity(payload);
     if (result.success) {
-      showIdentityFeedback(`${which === 'device' ? 'Device' : 'User'} alias updated.`, 'success');
+      showIdentityFeedback(`${labelMap[which]} alias updated.`, 'success');
+      // If alias changed after confirmation, button may need to turn yellow again
+      await loadIdentity();
     } else {
       showIdentityFeedback(result.error || 'Update failed.', 'error');
     }
   } catch (err) {
     showIdentityFeedback('Request failed.', 'error');
   } finally {
-    btn.disabled = false;
+    btn.disabled    = false;
     btn.textContent = 'Update';
   }
 }
@@ -985,20 +1091,65 @@ async function resumeMonitoring() {
 
 // ─── CHARTS ──────────────────────────────────────────────────
 function initializeCharts() {
+  if (typeof Chart === 'undefined') {
+    // Chart.js not ready — retry when the load event fires
+    document.addEventListener('chartjs-ready', function onReady() {
+      document.removeEventListener('chartjs-ready', onReady);
+      initializeCharts();
+    });
+    // Also try a simple poll as ultimate fallback
+    setTimeout(() => {
+      if (typeof Chart !== 'undefined' && !charts.appUsage) initializeCharts();
+    }, 3000);
+    return;
+  }
+
   const appCtx = document.getElementById('appUsageChart');
-  const tlCtx = document.getElementById('timelineChart');
+  const tlCtx  = document.getElementById('timelineChart');
   if (!appCtx || !tlCtx) return;
+  if (charts.appUsage) return; // already initialized
 
   charts.appUsage = new Chart(appCtx.getContext('2d'), {
     type: 'doughnut',
-    data: { labels: [], datasets: [{ data: [], backgroundColor: ['#667eea', '#764ba2', '#f0a500', '#28a745', '#dc3545', '#17a2b8', '#fd7e14'] }] },
-    options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } } } },
+    data: {
+      labels: [],
+      datasets: [{
+        data: [],
+        backgroundColor: ['#667eea','#f0a500','#28a745','#e94560','#17a2b8','#764ba2','#fd7e14'],
+        borderWidth: 2,
+        borderColor: 'rgba(255,255,255,0.8)'
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { position: 'right', labels: { font: { size: 11 }, boxWidth: 12, padding: 10 } } },
+      cutout: '68%'
+    },
   });
 
   charts.timeline = new Chart(tlCtx.getContext('2d'), {
     type: 'bar',
-    data: { labels: [], datasets: [{ label: 'Active (min)', data: [], backgroundColor: 'rgba(102,126,234,0.7)', borderRadius: 4 }] },
-    options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } },
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Active (min)',
+        data: [],
+        backgroundColor: 'rgba(102,126,234,0.75)',
+        borderColor: '#667eea',
+        borderWidth: 1,
+        borderRadius: 5
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 11 } } },
+        y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.04)' }, ticks: { font: { size: 11 } } }
+      }
+    },
   });
 }
 

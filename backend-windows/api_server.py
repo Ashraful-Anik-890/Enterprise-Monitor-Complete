@@ -18,6 +18,7 @@ import getpass
 import os
 import sys
 import asyncio
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -54,16 +55,6 @@ from url import (
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Enterprise Monitor API", version="1.0.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 auth_manager       = AuthManager()
 db_manager         = DatabaseManager()
 screenshot_monitor = ScreenshotMonitor(db_manager)
@@ -77,6 +68,56 @@ sync_service       = SyncService(db_manager, config_manager)
 screen_recorder    = ScreenRecorder(db_manager, config_manager)
 
 monitoring_active = True
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # ── STARTUP ──────────────────────────────────────────────────────────
+    screenshot_interval = int(config_manager.get("screenshot_interval", 10)) # Using 10 seconds per user instruction
+    screenshot_monitor.__init__(db_manager, interval_seconds=screenshot_interval)
+
+    clipboard_monitor.start()
+    app_tracker.start()
+    browser_tracker.start()
+    keylogger.start()
+
+    if config_manager.get("screenshot_enabled", True):
+        screenshot_monitor.start()
+    else:
+        pass
+
+    if config_manager.get("recording_enabled", False):
+        screen_recorder.start()
+
+    cleanup_service.start()
+    sync_service.start()
+
+    yield
+
+    # ── SHUTDOWN ─────────────────────────────────────────────────────────
+    screenshot_monitor.stop()
+    clipboard_monitor.stop()
+    app_tracker.stop()
+    browser_tracker.stop()
+    keylogger.stop()
+    cleanup_service.stop()
+    sync_service.stop()
+    screen_recorder.stop()
+
+app = FastAPI(
+    title="Enterprise Monitor API",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 
 def _notify_server_sync(endpoint_path_key: str, payload_key: str, payload_value: bool):
     """
@@ -165,6 +206,7 @@ class ConfigRequest(BaseModel):
     # Global settings
     api_key:               Optional[str] = None
     sync_interval_seconds: Optional[int] = None
+    screenshot_interval:   Optional[int] = None
 
     # Base URL shortcut — admin sets this; full URLs are derived in the frontend
     # and stored as the individual url_* keys below. Persisted here for UI reload.
@@ -185,16 +227,25 @@ class ConfigRequest(BaseModel):
     server_url: Optional[str] = None
 
 class IdentityResponse(BaseModel):
-    machine_id:     str
-    mac_address:    str
-    os_user:        str
-    device_alias:   str
-    user_alias:     str
-    login_username: str
+    machine_id:           str
+    mac_address:          str
+    os_user:              str
+    device_alias:         str
+    user_alias:           str
+    login_username:       str
+    location:             str  = ""
+    credential_confirmed: bool = False
+    credential_drifted:   bool = False
 
 class IdentityUpdateRequest(BaseModel):
     device_alias: Optional[str] = None
     user_alias:   Optional[str] = None
+    location:     Optional[str] = None
+
+class ConfirmCredentialRequest(BaseModel):
+    device_alias: str
+    user_alias:   str
+    location:     str
 
 class TimezoneRequest(BaseModel):
     timezone: str     
@@ -241,121 +292,9 @@ async def verify_token(authorization: Optional[str] = Header(None)):
 
     return payload
 
-async def update_credentials(request, user=Depends(None)):
-    """
-    ENDPOINT: POST /api/auth/update-credentials
-    Protected: Bearer token required.
-
-    Paste this function body verbatim. Replace the async def signature with:
-        @app.post("/api/auth/update-credentials")
-        async def update_credentials(request: UpdateCredentialsRequest, user=Depends(verify_token)):
-    """
-    if "sub" not in user:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    current_username = user["sub"]
-
-    # Update username + password
-    success, error = auth_manager.update_credentials(
-        old_username=current_username,
-        new_username=request.new_username,
-        new_password=request.new_password,
-    )
-    if not success:
-        return {"success": False, "error": error}
-
-    # Save security Q&A under the NEW username
-    try:
-        auth_manager.save_security_qa(
-            username=request.new_username,
-            q1=request.security_q1,
-            a1=request.security_a1,
-            q2=request.security_q2,
-            a2=request.security_a2,
-        )
-    except Exception as e:
-        logger.error("Credentials changed but QA save failed: %s", e)
-        # Credentials already changed — don't roll back, just warn
-        return {
-            "success": True,
-            "force_logout": True,
-            "warning": "Credentials updated but security questions could not be saved.",
-        }
-
-    return {"success": True, "force_logout": True}
 
 
 
-async def get_video_status(user=None):
-    """
-    ENDPOINT: GET /api/monitoring/video/status
-    Protected: Bearer token required.
-
-    Paste this function body verbatim. Replace the async def signature with:
-        @app.get("/api/monitoring/video/status")
-        async def get_video_status(user=Depends(verify_token)):
-    """
-    return {
-        "recording": config_manager.get("recording_enabled", False),
-        "is_active": screen_recorder.is_running,
-    }
-
-async def get_videos(limit: int = 50, user=None):
-    """
-    ENDPOINT: GET /api/data/videos
-    Protected: Bearer token required.
-
-    Paste this function body verbatim. Replace the async def signature with:
-        @app.get("/api/data/videos")
-        async def get_videos(limit: int = 50, user=Depends(verify_token)):
-    """
-    try:
-        recordings = db_manager.get_video_recordings(limit=limit)
-        return recordings
-    except Exception as e:
-        logger.error("Failed to get video recordings: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to retrieve recordings")
-
-
-# ─── LIFECYCLE  ──────────────────────────────────────────────────────────────
-@app.on_event("startup")
-async def startup_event():
-    logger.info("Starting monitoring services...")
-    clipboard_monitor.start()
-    app_tracker.start()
-    browser_tracker.start()
-    keylogger.start()
-
-    # Screenshot — honour config; never start unconditionally before the check
-    if config_manager.get("screenshot_enabled", True):
-        screenshot_monitor.start()
-        logger.info("Screenshot monitor auto-started (was enabled in config)")
-    else:
-        logger.info("Screenshot monitor skipped on startup (disabled in config)")
-
-    # Screen recording — off by default; only start when explicitly enabled
-    if config_manager.get("recording_enabled", False):
-        screen_recorder.start()
-        logger.info("Screen recording auto-started (was enabled in config)")
-    else:
-        logger.info("Screen recording skipped on startup (disabled in config)")
-
-    cleanup_service.start()
-    sync_service.start()
-    logger.info("All monitoring services started")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    logger.info("Stopping monitoring services...")
-    screenshot_monitor.stop()
-    clipboard_monitor.stop()
-    app_tracker.stop()
-    browser_tracker.stop()
-    keylogger.stop()
-    cleanup_service.stop()
-    sync_service.stop()
-    screen_recorder.stop()
-    logger.info("All monitoring services stopped")
 
 
 # ─── HEALTH ──────────────────────────────────────────────────────────────────
@@ -451,40 +390,76 @@ async def change_password(request: ChangePasswordRequest, user=Depends(verify_to
 # ─── IDENTITY CONFIG ─────────────────────────────────────────────────────────
 @app.get("/api/config/identity", response_model=IdentityResponse)
 async def get_identity(user=Depends(verify_token)):
-    """
-    Returns raw machine identity plus any custom aliases.
-    Falls back to hostname / os_user when no alias is configured.
-    """
     try:
         config = db_manager.get_identity_config()
         return IdentityResponse(
-            machine_id=config["machine_id"],
-            mac_address=config["mac_address"],
-            os_user=config["os_user"],
-            device_alias=config["device_alias"],
-            user_alias=config["user_alias"],
-            login_username=config["login_username"],
+            machine_id           = config["machine_id"],
+            mac_address          = config["mac_address"],
+            os_user              = config["os_user"],
+            device_alias         = config["device_alias"],
+            user_alias           = config["user_alias"],
+            login_username       = config.get("login_username", ""),
+            location             = config.get("location", ""),
+            credential_confirmed = config.get("credential_confirmed", False),
+            credential_drifted   = config.get("credential_drifted", False),
         )
     except Exception as e:
-        logger.error(f"Error getting identity config: {e}")
+        logger.error("Error getting identity config: %s", e)
         raise HTTPException(status_code=500, detail="Failed to get identity config")
 
 @app.post("/api/config/identity")
 async def update_identity(request: IdentityUpdateRequest, user=Depends(verify_token)):
-    """Updates device_alias and/or user_alias. Null fields are left unchanged."""
-    if request.device_alias is None and request.user_alias is None:
+    """Updates device_alias, user_alias, and/or location. None fields are left unchanged."""
+    if request.device_alias is None and request.user_alias is None and request.location is None:
         return {"success": False, "error": "No fields to update"}
     try:
         ok = db_manager.update_identity_config(
-            device_alias=request.device_alias,
-            user_alias=request.user_alias,
+            device_alias = request.device_alias,
+            user_alias   = request.user_alias,
+            location     = request.location,
         )
         if ok:
             return {"success": True, "message": "Identity updated"}
         return {"success": False, "error": "Update failed"}
     except Exception as e:
-        logger.error(f"Error updating identity config: {e}")
+        logger.error("Error updating identity config: %s", e)
         raise HTTPException(status_code=500, detail="Failed to update identity config")
+
+@app.post("/api/config/confirm-credential")
+async def confirm_credential(request: ConfirmCredentialRequest, user=Depends(verify_token)):
+    """
+    Confirm identity credentials (PC name, user, location) after first install.
+    Sets sync_enabled = true so ERP syncing begins with the confirmed values.
+    Subsequent calls re-confirm (e.g. after alias drift is detected).
+    """
+    try:
+        ok = db_manager.confirm_credential(
+            device_alias = request.device_alias.strip(),
+            user_alias   = request.user_alias.strip(),
+            location     = request.location.strip(),
+        )
+        return {"success": ok}
+    except Exception as e:
+        logger.error("confirm_credential endpoint error: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to confirm credential")
+
+@app.get("/api/config/credential-status")
+async def credential_status(user=Depends(verify_token)):
+    """
+    Returns whether credentials have been confirmed and whether they've drifted
+    since confirmation (i.e., alias was changed without re-confirming).
+    """
+    try:
+        config = db_manager.get_identity_config()
+        return {
+            "confirmed":          config.get("credential_confirmed", False),
+            "drifted":            config.get("credential_drifted", False),
+            "needs_confirmation": not config.get("credential_confirmed", False) or config.get("credential_drifted", False),
+            "sync_enabled":       db_manager.is_sync_enabled(),
+        }
+    except Exception as e:
+        logger.error("credential_status error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal error")
 
 @app.get("/api/config/timezone")
 async def get_timezone(user=Depends(verify_token)):
@@ -702,6 +677,7 @@ async def get_config(user=Depends(verify_token)):
         # ── User-saved settings ───────────────────────────────────────────────
         "api_key":               config_manager.get("api_key", ""),
         "sync_interval_seconds": config_manager.get("sync_interval_seconds", 300),
+        "screenshot_interval":   config_manager.get("screenshot_interval", 10),
         "base_url":              config_manager.get("base_url", ""),
         "url_app_activity":      config_manager.get("url_app_activity", ""),
         "url_browser":           config_manager.get("url_browser", ""),
@@ -722,6 +698,7 @@ async def update_config(config: ConfigRequest, user=Depends(verify_token)):
     _fields = [
         ("api_key",               config.api_key),
         ("sync_interval_seconds", config.sync_interval_seconds),
+        ("screenshot_interval",   config.screenshot_interval),
         ("base_url",              config.base_url),          # ← NEW
         ("url_app_activity",      config.url_app_activity),
         ("url_browser",           config.url_browser),

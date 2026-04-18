@@ -38,10 +38,24 @@ hiddenimports = [
     'Quartz',
     'ApplicationServices',
 
-    # passlib / jose
+    # passlib / jose — passlib.handlers.* must be listed explicitly because
+    # passlib loads them by string name at runtime (PyInstaller static scan misses them)
     'jose',
     'jose.jwt',
     'jose.backends',
+    'passlib',
+    'passlib.context',
+    'passlib.handlers',
+    'passlib.handlers.bcrypt',
+    'passlib.handlers.sha2_crypt',
+    'passlib.handlers.md5_crypt',
+    'passlib.handlers.des_crypt',
+    'passlib.utils',
+    'passlib.utils.binary',
+    'passlib.utils.decor',
+    'passlib.crypto',
+    'passlib.crypto.digest',
+    'bcrypt',
 
     # NumPy / OpenCV internals
     'numpy.core._methods',
@@ -50,7 +64,7 @@ hiddenimports = [
 ]
 
 # Collect full packages that PyInstaller misses
-for pkg in ('cv2', 'mss', 'pynput'):
+for pkg in ('cv2', 'mss', 'pynput', 'passlib'):
     tmp = collect_all(pkg)
     datas    += tmp[0]
     binaries += tmp[1]
