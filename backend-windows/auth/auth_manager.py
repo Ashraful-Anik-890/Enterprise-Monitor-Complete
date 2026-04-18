@@ -17,10 +17,16 @@ import logging
 from pathlib import Path
 import json
 import re
+import secrets
+from passlib.context import CryptContext
+
+_pwd_context = CryptContext(
+    schemes=["bcrypt"],
+    deprecated="auto",
+)
 
 logger = logging.getLogger(__name__)
 
-SECRET_KEY = "your-secret-key-change-this-in-production"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 5
 
@@ -31,14 +37,55 @@ class AuthManager:
         self.users_file = Path.home() / "AppData" / "Local" / "EnterpriseMonitor" / "users.json"
         self.security_qa_file = self.users_file.parent / "security_qa.json"
         self.users_file.parent.mkdir(parents=True, exist_ok=True)
+        self._secret_key = self._get_or_create_secret_key()
         self._initialize_users()
 
+    def _get_or_create_secret_key(self) -> str:
+        """
+        BUG-02 FIX: Per-installation JWT signing secret.
+
+        Generates a cryptographically random 64-hex-character secret on first run
+        and persists it to .jwt_secret in the data directory.  Subsequent runs
+        read the same value, so existing tokens remain valid across restarts.
+
+        This means every installation has a unique secret — a token forged on one
+        machine is NOT valid on any other machine.
+        """
+        key_file = self.users_file.parent / ".jwt_secret"
+        if key_file.exists():
+            try:
+                secret = key_file.read_text(encoding="utf-8").strip()
+                if len(secret) >= 32:
+                    return secret
+            except Exception as e:
+                logger.warning("Could not read .jwt_secret (%s) — regenerating", e)
+
+        secret = secrets.token_hex(32)          # 256-bit random secret
+        try:
+            key_file.write_text(secret, encoding="utf-8")
+            # Restrict permissions on POSIX (macOS/Linux)
+            import os, stat
+            try:
+                os.chmod(str(key_file), stat.S_IRUSR | stat.S_IWUSR)
+            except OSError:
+                pass                            # Windows — skip chmod
+            logger.info("New JWT secret generated and stored: %s", key_file)
+        except Exception as e:
+            logger.error("Could not persist JWT secret: %s — using ephemeral secret", e)
+
+        return secret
+
     def _initialize_users(self):
+        """
+        BUG-01 FIX: Default password is now stored as a bcrypt hash.
+        """
         if not self.users_file.exists():
-            default_users = {"admin": "Admin@123"}
-            with open(self.users_file, 'w') as f:
+            default_users = {
+                "admin": _pwd_context.hash("Admin@123")   # CHANGED — was "Admin@123"
+            }
+            with open(self.users_file, "w") as f:
                 json.dump(default_users, f)
-            logger.info("Initialized default admin user")
+            logger.info("Initialised default admin user (bcrypt hashed)")
 
     def _load_users(self):
         try:
@@ -80,7 +127,7 @@ class AuthManager:
 
         # Apply: remove old key, insert new
         del users[old_username]
-        users[new_username] = new_password
+        users[new_username] = _pwd_context.hash(new_password)
 
         try:
             with open(self.users_file, 'w') as f:
@@ -155,17 +202,41 @@ class AuthManager:
 
 
     def verify_credentials(self, username: str, password: str) -> bool:
-        """Verify username and password. Returns True if valid."""
+        """
+        BUG-01 FIX: Verify using bcrypt.  Migrates plain-text legacy entries on
+        first successful login so existing deployments upgrade transparently.
+        """
         users = self._load_users()
         if username not in users:
             return False
-        return password == users[username]
+
+        stored = users[username]
+
+        # ── Detect legacy plain-text entry ───────────────────────────────────────
+        # bcrypt hashes always start with "$2b$" or "$2a$".
+        # A plain-text password (e.g. "Admin@123") never starts with "$2".
+        if not stored.startswith("$2"):
+            # Legacy plain-text comparison
+            if password != stored:
+                return False
+            # ── Migrate to bcrypt on first valid login ────────────────────────
+            users[username] = _pwd_context.hash(password)
+            try:
+                with open(self.users_file, "w") as f:
+                    json.dump(users, f, indent=2)
+                logger.info("Migrated plain-text password to bcrypt for user: %s", username)
+            except Exception as e:
+                logger.error("Failed to migrate password for %s: %s", username, e)
+            return True
+
+        # ── Standard bcrypt verification ─────────────────────────────────────────
+        return _pwd_context.verify(password, stored)
 
     def create_token(self, username: str) -> str:
         """Create a signed JWT access token."""
         expires = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         payload = {"sub": username, "exp": expires}
-        return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+        return jwt.encode(payload, self._secret_key, algorithm=ALGORITHM)
 
     def verify_token(self, token: str) -> dict | None:
         """
@@ -179,7 +250,7 @@ class AuthManager:
         Callers must check: `if payload is None → 401`
         """
         try:
-            return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            return jwt.decode(token, self._secret_key, algorithms=[ALGORITHM])
         except ExpiredSignatureError:
             # Token is structurally valid but past its exp claim.
             # Treat as unauthenticated — do NOT crash the server.
@@ -206,12 +277,12 @@ class AuthManager:
         return True, ""
 
     def change_password(self, username: str, new_password: str):
-        """Change password after validating strength."""
+        """Change password — always stores as bcrypt hash."""
         valid, error = self.validate_password(new_password)
         if not valid:
             raise ValueError(error)
         users = self._load_users()
-        users[username] = new_password
-        with open(self.users_file, 'w') as f:
-            json.dump(users, f)
-        logger.info(f"Password changed for user: {username}")
+        users[username] = _pwd_context.hash(new_password)   # CHANGED — was plain text
+        with open(self.users_file, "w") as f:
+            json.dump(users, f, indent=2)
+        logger.info("Password changed (bcrypt) for user: %s", username)

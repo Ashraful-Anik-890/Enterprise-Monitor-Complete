@@ -18,9 +18,10 @@ from typing import Optional
 from jose import JWTError, jwt
 from jose.exceptions import ExpiredSignatureError
 
-logger = logging.getLogger(__name__)
+import secrets
+# No passlib — using plain-text for macOS to avoid bundling issues
 
-SECRET_KEY = "your-secret-key-change-this-in-production"
+logger = logging.getLogger(__name__)
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 5
 
@@ -32,13 +33,39 @@ class AuthManager:
         self.users_file = BASE_DIR / "users.json"
         self.security_qa_file = BASE_DIR / "security_qa.json"
         BASE_DIR.mkdir(parents=True, exist_ok=True)
+        self._secret_key = self._get_or_create_secret_key()
         self._initialize_users()
+
+    def _get_or_create_secret_key(self) -> str:
+        key_file = self.users_file.parent / ".jwt_secret"
+        if key_file.exists():
+            try:
+                secret = key_file.read_text(encoding="utf-8").strip()
+                if len(secret) >= 32:
+                    return secret
+            except Exception as e:
+                logger.warning("Could not read .jwt_secret (%s) — regenerating", e)
+
+        secret = secrets.token_hex(32)          # 256-bit random secret
+        try:
+            key_file.write_text(secret, encoding="utf-8")
+            import os, stat
+            try:
+                os.chmod(str(key_file), stat.S_IRUSR | stat.S_IWUSR)
+            except OSError:
+                pass
+            logger.info("New JWT secret generated and stored: %s", key_file)
+        except Exception as e:
+            logger.error("Could not persist JWT secret: %s — using ephemeral secret", e)
+
+        return secret
 
     def _initialize_users(self) -> None:
         if not self.users_file.exists():
             with open(self.users_file, "w") as f:
+                # Store default admin password as plain text to avoid bcrypt dependency issues
                 json.dump({"admin": "Admin@123"}, f)
-            logger.info("Initialized default admin user")
+            logger.info("Initialized default admin user (plain text)")
 
     def _load_users(self) -> dict[str, str]:
         try:
@@ -68,11 +95,14 @@ class AuthManager:
     # ─── CREDENTIALS ─────────────────────────────────────────────────────────
 
     def verify_credentials(self, username: str, password: str) -> bool:
-        """Verify username and password. Returns True if valid."""
+        """Verify username and password. Plain text comparison to avoid bcrypt issues."""
         users = self._load_users()
         if username not in users:
             return False
-        return password == users[username]
+            
+        stored = users[username]
+        # Direct comparison - no encryption as per user request/environment needs
+        return password == stored
 
     def change_password(self, username: str, new_password: str) -> None:
         valid, err = self.validate_password(new_password)
@@ -81,7 +111,7 @@ class AuthManager:
         users = self._load_users()
         users[username] = new_password
         self._save_users(users)
-        logger.info("Password changed for user: %s", username)
+        logger.info("Password changed for user: %s (plain text)", username)
 
     def update_credentials(self, old_username: str, new_username: str, new_password: str) -> tuple:
         """Change both username and password atomically. Returns (True, '') or (False, error)."""
@@ -128,12 +158,12 @@ class AuthManager:
     def create_token(self, username: str) -> str:
         expires = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         payload = {"sub": username, "exp": expires}
-        return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+        return jwt.encode(payload, self._secret_key, algorithm=ALGORITHM)
 
     def verify_token(self, token: str) -> Optional[dict]:
         """Verify JWT token. Returns payload dict or None on any failure — never raises."""
         try:
-            return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            return jwt.decode(token, self._secret_key, algorithms=[ALGORITHM])
         except ExpiredSignatureError:
             logger.warning("Token has expired")
             return None
