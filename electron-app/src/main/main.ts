@@ -29,7 +29,7 @@ import Store from 'electron-store';
 const store = new Store();
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
-const IS_MAC = process.platform === 'darwin';
+const IS_MAC = process.platform !== 'win32';
 
 const EM_DIR = IS_MAC
   ? path.join(os.homedir(), 'Library', 'Application Support', 'EnterpriseMonitor')

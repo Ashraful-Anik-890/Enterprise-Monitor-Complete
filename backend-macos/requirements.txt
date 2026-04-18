@@ -40,10 +40,10 @@ tzdata
 
 # ── macOS TCC permission checks ──────────────────────────────────────────────
 # CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess
-pyobjc-framework-Quartz
+# pyobjc-framework-Quartz
 
 # AXIsProcessTrusted
-pyobjc-framework-ApplicationServices
+# pyobjc-framework-ApplicationServices
 
 # ── Build (not a runtime dep — used only when packaging) ─────────────────────
 pyinstaller
