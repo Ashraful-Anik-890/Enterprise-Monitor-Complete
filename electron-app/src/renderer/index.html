@@ -1541,6 +1541,42 @@
       .header-actions { flex-direction: column; align-items: stretch; }
       .btn { width: 100%; }
     }
+    /* ── Password Toggle ─────────────────────────────────────────────────────── */
+    .password-input-wrapper {
+      position: relative;
+      width: 100%;
+    }
+
+    .password-input-wrapper input {
+      padding-right: 40px !important;
+    }
+
+    .password-toggle {
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 16px;
+      color: #666;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px;
+      transition: color 0.2s, transform 0.1s;
+      z-index: 10;
+      user-select: none;
+    }
+
+    .password-toggle:hover {
+      color: #667eea;
+    }
+
+    .password-toggle:active {
+      transform: translateY(-50%) scale(0.9);
+    }
   </style>
 </head>
 
@@ -1566,8 +1602,13 @@
         </div>
         <div class="form-group">
           <label for="password">Password</label>
-          <input type="password" id="password" name="password" required autocomplete="current-password"
-            placeholder="Enter password">
+          <div class="password-input-wrapper">
+            <input type="password" id="password" name="password" required autocomplete="current-password"
+              placeholder="Enter password">
+            <button type="button" class="password-toggle" id="password-toggle" title="Show/Hide Password">
+              👁️
+            </button>
+          </div>
         </div>
         <button class="btn" id="login-btn">Login</button>
         <a href="#" id="forgot-password-link"
@@ -1906,12 +1947,18 @@
       </div>
       <div class="form-group">
         <label>New Password</label>
-        <input type="password" id="modal-new-password" placeholder="Enter new password" autocomplete="new-password">
+        <div class="password-input-wrapper">
+          <input type="password" id="modal-new-password" placeholder="Enter new password" autocomplete="new-password">
+          <button type="button" class="password-toggle" id="modal-new-password-toggle" title="Show/Hide Password">👁️</button>
+        </div>
         <div class="password-hint">8–16 chars · 1 uppercase · 1 lowercase · 1 symbol</div>
       </div>
       <div class="form-group">
         <label>Confirm Password</label>
-        <input type="password" id="modal-confirm-password" placeholder="Confirm new password">
+        <div class="password-input-wrapper">
+          <input type="password" id="modal-confirm-password" placeholder="Confirm new password">
+          <button type="button" class="password-toggle" id="modal-confirm-password-toggle" title="Show/Hide Password">👁️</button>
+        </div>
       </div>
 
       <hr class="modal-divider">
@@ -2015,7 +2062,10 @@
         <div class="sc-global-row">
           <div class="sc-field-half">
             <label class="sc-label">API Key <span class="sc-opt">(optional — all endpoints)</span></label>
-            <input type="password" id="sc-api-key" placeholder="Leave blank if not required" class="sc-input" />
+            <div class="password-input-wrapper">
+              <input type="password" id="sc-api-key" placeholder="Leave blank if not required" class="sc-input" />
+              <button type="button" class="password-toggle" id="sc-api-key-toggle" title="Show/Hide API Key">👁️</button>
+            </div>
           </div>
           <div class="sc-field-half">
             <label class="sc-label">Sync Interval (seconds)</label>
@@ -2292,7 +2342,10 @@ POST Notification (when toggled locally):
       </div>
       <div class="form-group">
         <label>Password</label>
-        <input type="password" id="quit-password" placeholder="Admin password" autocomplete="current-password">
+        <div class="password-input-wrapper">
+          <input type="password" id="quit-password" placeholder="Admin password" autocomplete="current-password">
+          <button type="button" class="password-toggle" id="quit-password-toggle" title="Show/Hide Password">👁️</button>
+        </div>
       </div>
       <div id="quit-auth-error" class="error" style="display:none; margin-bottom:10px;"></div>
       <div class="modal-actions" style="display:flex; gap:10px; margin-top:16px;">
@@ -2340,12 +2393,18 @@ POST Notification (when toggled locally):
         <hr class="modal-divider">
         <div class="form-group">
           <label>New Password</label>
-          <input type="password" id="fp-new-password" placeholder="New password">
+          <div class="password-input-wrapper">
+            <input type="password" id="fp-new-password" placeholder="New password">
+            <button type="button" class="password-toggle" id="fp-new-password-toggle" title="Show/Hide Password">👁️</button>
+          </div>
           <div class="password-hint">8–16 chars · 1 uppercase · 1 lowercase · 1 symbol</div>
         </div>
         <div class="form-group">
-          <label>Confirm New Password</label>
-          <input type="password" id="fp-confirm-password" placeholder="Confirm new password">
+          <label>Confirm Password</label>
+          <div class="password-input-wrapper">
+            <input type="password" id="fp-confirm-password" placeholder="Confirm new password">
+            <button type="button" class="password-toggle" id="fp-confirm-password-toggle" title="Show/Hide Password">👁️</button>
+          </div>
         </div>
         <div id="fp-step2-error" class="error" style="display:none;"></div>
         <div id="fp-step2-success" style="display:none; color:#27ae60; font-size:13px; margin-bottom:8px;"></div>

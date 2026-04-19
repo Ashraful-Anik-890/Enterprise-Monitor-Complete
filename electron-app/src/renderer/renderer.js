@@ -199,6 +199,37 @@ function setupEventListeners() {
 
   // Auto-Update IPC listeners
   setupUpdateListeners();
+
+  // Password Visibility Toggle
+  initPasswordToggles();
+}
+
+function initPasswordToggles() {
+  const toggles = [
+    { inputId: 'password', toggleId: 'password-toggle' },
+    { inputId: 'modal-new-password', toggleId: 'modal-new-password-toggle' },
+    { inputId: 'modal-confirm-password', toggleId: 'modal-confirm-password-toggle' },
+    { inputId: 'sc-api-key', toggleId: 'sc-api-key-toggle' },
+    { inputId: 'quit-password', toggleId: 'quit-password-toggle' },
+    { inputId: 'fp-new-password', toggleId: 'fp-new-password-toggle' },
+    { inputId: 'fp-confirm-password', toggleId: 'fp-confirm-password-toggle' }
+  ];
+
+  toggles.forEach(({ inputId, toggleId }) => {
+    const toggleBtn = document.getElementById(toggleId);
+    const input = document.getElementById(inputId);
+    if (toggleBtn && input) {
+      toggleBtn.addEventListener('click', () => {
+        if (input.type === 'password') {
+          input.type = 'text';
+          toggleBtn.textContent = '🔒'; // Icon to hide
+        } else {
+          input.type = 'password';
+          toggleBtn.textContent = '👁️'; // Icon to show
+        }
+      });
+    }
+  });
 }
 
 // ─── LOGIN / LOGOUT ──────────────────────────────────────────
