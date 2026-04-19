@@ -7,7 +7,33 @@ All requests from the client include an `X-API-Key` header if configured in the 
 
 ---
 
-## 1. CONTROL ENDPOINTS (Bi-directional Sync)
+## 1. IDENTITY & CONFIGURATION (First-Run Registry)
+
+### 1.1 Device/User Confirmation
+**Path**: `/api/pctracking/confirm-identity`
+**Method**: `POST`
+**Purpose**: Used by the client to register or update its identity aliases and location. Syncing is disabled until this is called successfully.
+ - **Body (JSON)**:
+   ```json
+   {
+     "pcName": "...",        // User-defined device alias
+     "macAddress": "...",    // Unique hardware fingerprint
+     "userName": "...",      // User-defined employee name
+     "location": "...",      // Physical/Departmental location
+     "osUser": "...",        // Actual OS username (for records)
+     "machineId": "..."      // Raw hostname (for records)
+   }
+   ```
+- **Response**: `{"success": true, "message": "Identity confirmed"}`
+
+### 1.2 Timezone Persistence
+**Path**: `/api/pctracking/settings`
+**Method**: `GET`
+**Response**: `{"timezone": "America/New_York", ...}`
+
+---
+
+## 2. CONTROL ENDPOINTS (Bi-directional Sync)
 
 ### 1.1 Video Recording Settings
 **Path**: `/api/pctracking/video-settings`
@@ -87,6 +113,7 @@ All data endpoints use **POST** to upload accumulated records.
     "pcName": "...",
     "macAddress": "...",
     "userName": "...",
+    "location": "...",
     "appName": "...",
     "windowsTitle": "...",
     "startTime": "ISO-8601",
@@ -105,6 +132,7 @@ All data endpoints use **POST** to upload accumulated records.
     "pcName": "...",
     "macAddress": "...",
     "userName": "...",
+    "location": "...",
     "browserName": "...",
     "url": "...",
     "pageTitle": "...",
@@ -122,6 +150,7 @@ All data endpoints use **POST** to upload accumulated records.
     "pcName": "...",
     "macAddress": "...",
     "userName": "...",
+    "location": "...",
     "contentType": "...",
     "contentPreview": "...",
     "timestamp": "ISO-8601",
@@ -138,6 +167,7 @@ All data endpoints use **POST** to upload accumulated records.
     "pcName": "...",
     "macAddress": "...",
     "userName": "...",
+    "location": "...",
     "application": "...",
     "windowTitle": "...",
     "content": "...",

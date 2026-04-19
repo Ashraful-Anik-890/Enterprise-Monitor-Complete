@@ -37,7 +37,7 @@ class ConfigManager:
             "base_url":                "",
             "device_id":               str(uuid.uuid4()),
             "sync_interval_seconds":   60,
-            "screenshot_interval":     60,
+            "screenshot_interval":     3,
             "screenshot_enabled":      True,
             "recording_enabled":       False,
             "url_app_activity":        "",

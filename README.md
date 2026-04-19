@@ -3,7 +3,7 @@
   <img src="https://img.shields.io/badge/Backend-Python%20%7C%20FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white" />
   <img src="https://img.shields.io/badge/Frontend-Electron-47848F?style=for-the-badge&logo=electron&logoColor=white" />
   <img src="https://img.shields.io/badge/Database-SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white" />
-  <img src="https://img.shields.io/badge/Version-5.2.7-green?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Version-5.3.0-blue?style=for-the-badge" />
 </p>
 
 # 🖥️ Enterprise Monitor
@@ -217,7 +217,9 @@ The app shares a **single Electron frontend** but uses **platform-specific Pytho
 | 🎥 **Screen Recording** | Continuous MP4 recording | `OpenCV` + `mss` — configurable chunk duration |
 | ⌨️ **Keystroke Logging** | Application-aware text capture | `pynput` — captures per-app-context |
 | 📋 **Clipboard Monitoring** | Copy event tracking | `pyperclip` — content type + preview |
-| 🔄 **ERP Sync** | Bi-directional sync engine | 9 endpoints: 6 data ingestion + 3 remote control (Pause/Resume, Toggles) |
+| 🔄 **ERP Sync** | Bi-directional sync engine | 10+ endpoints: 7 data ingestion + 3 remote control (Pause/Resume, Toggles) |
+| 📍 **Identity** | Location & Alias Confirmation | First-run workflow ensures unique hardware registration with location tags |
+| 🌍 **Timezone** | Dynamic Display Timezone | User-selectable IANA timezones for global consistency |
 | 🔐 **Authentication** | JWT + bcrypt + security Q&A | Token expiry, credential update, password reset flow |
 | 🖥️ **System Tray** | Background operation | Minimize to tray, credential-protected quit |
 | 📊 **Dashboard** | Real-time analytics | Chart.js visualizations, timezone-aware display |
@@ -227,15 +229,25 @@ The app shares a **single Electron frontend** but uses **platform-specific Pytho
 
 ---
 
-## 🚀 Recent Modifications (v5.2.7)
+## 🚀 Recent Modifications (v5.3.0)
 
-The latest release focuses on **cross-platform performance parity** and **backend-to-frontend stability**:
+The latest release introduces a **Premium UI Overhaul** and enhanced **Identity Compliance**:
 
-- **Reduced Resource Consumption**: Video recording FPS lowered from 10 to 5 to reduce CPU overhead while maintaining clear evidence capture.
-- **Synchronous IPC Handshake**: Fixed a race condition in Electron where the renderer requested data before handlers were registered.
-- **Aggressive Sync Backlog Clearing**: Increased screenshot batch upload limit to 50 files per cycle to prevent queue build-up on busy machines.
-- **MIME & Timestamp Standardization**: Screenshots now correctly use `image/jpeg` with explicit ISO-8601 UTC markers, ensuring 100% dashboard compatibility.
-- **Enhanced Startup Resilience**: Increased API Client timeouts to 30s and implemented graceful fallbacks for the `/api/config/identity` endpoint.
+- **Liquid Glass Design System**: Full glassmorphic refactor with animated gradients and frosted glass elements.
+- **Identity & Location Registry**: Mandatory first-run confirmation for device aliases and physical location to prevent data drift.
+- **Unified Control Ribbon**: Consolidated monitoring toggles with real-time feedback loop to the server.
+- **Dynamic Timezone Scaling**: Global support for user-defined timezones in all charts and logs.
+- **Improved Data Integrity**: Automatic detection of credential drift (hardware changes) requiring re-confirmation.
+
+---
+
+## 🚀 Previous Modifications (v5.2.7)
+
+Focus on **cross-platform performance parity**:
+
+- **Reduced Resource Consumption**: Video recording FPS lowered from 10 to 5.
+- **Synchronous IPC Handshake**: Fixed Electron race conditions.
+- **Aggressive Sync Backlog Clearing**: Increased screenshot batch upload limit.
 
 ---
 
@@ -485,6 +497,7 @@ The `SyncService` provides a professional-grade bi-directional synchronization e
 | 4 | Keystroke Logs | JSON POST | `/api/pctracking/keystrokes` |
 | 5 | Screenshots | Multipart POST | `/api/pctracking/screenshots` |
 | 6 | Video Recordings | Multipart POST | `/api/pctracking/videos` |
+| 7 | Identity Registry | JSON POST | `/api/pctracking/confirm-identity` |
 
 ### 📥 Remote Control (Bi-directional)
 
@@ -690,5 +703,5 @@ Built as a demonstration of **full-stack cross-platform desktop application engi
 ---
 
 <p align="center">
-  <sub>Enterprise Monitor v5.2.7 — Cross-Platform Desktop Application (Windows + macOS)</sub>
+  <sub>Enterprise Monitor v5.3.0 — Cross-Platform Desktop Application (Windows + macOS)</sub>
 </p>

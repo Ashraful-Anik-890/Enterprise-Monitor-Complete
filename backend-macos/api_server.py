@@ -658,7 +658,36 @@ async def resume_monitoring(user=Depends(verify_token)):
     return {"success": True, "message": "Monitoring resumed"}
 
 
-# ── Screenshots ───────────────────────────────────────────────────────────────
+# ── Internal auto-pause endpoints (no JWT — localhost-only, called by Electron idle tracker) ──
+# ⚙️  IDLE THRESHOLD: The 10-minute idle timeout is controlled on the Electron side.
+#     To change it, edit IDLE_PAUSE_THRESHOLD_SECS in electron-app/src/main/main.ts.
+#     These endpoints have no timeout logic of their own — they just act on the command.
+@app.post("/api/internal/monitoring/pause")
+async def internal_pause_monitoring(request: Request):
+    """
+    Called by the Electron idle-tracker when the user has been inactive
+    for IDLE_PAUSE_THRESHOLD_SECS seconds.  No JWT required — access is
+    restricted to 127.0.0.1 by the host check below (uvicorn already binds
+    exclusively to 127.0.0.1 so no external traffic can reach this).
+    """
+    if request.client.host not in ("127.0.0.1", "::1"):
+        raise HTTPException(status_code=403, detail="Internal endpoint — localhost only")
+    logger.info("Auto-pause triggered by Electron idle tracker (no JWT)")
+    return await pause_monitoring(user={"sub": "_idle_system"})
+
+
+@app.post("/api/internal/monitoring/resume")
+async def internal_resume_monitoring(request: Request):
+    """
+    Called by the Electron idle-tracker when the user returns (idle time
+    drops below threshold).  No JWT required — localhost-only.
+    """
+    if request.client.host not in ("127.0.0.1", "::1"):
+        raise HTTPException(status_code=403, detail="Internal endpoint — localhost only")
+    logger.info("Auto-resume triggered by Electron idle tracker (no JWT)")
+    return await resume_monitoring(user={"sub": "_idle_system"})
+
+
 @app.get("/api/data/screenshots", response_model=List[ScreenshotInfo])
 async def get_screenshots_data(limit: int = 50, offset: int = 0, user=Depends(verify_token)):
     """Electron calls /api/data/screenshots — was missing on macOS."""

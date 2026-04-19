@@ -94,6 +94,18 @@ let updateDownloaded = false;
 let updatePendingVersion: string | null = null;
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─── Idle Auto-Pause Tracker ──────────────────────────────────────────────────
+// ⚙️  HOW TO CHANGE THE IDLE TIMEOUT:
+//     Edit IDLE_PAUSE_THRESHOLD_SECS below and rebuild the Electron app.
+//     Formula: seconds = minutes × 60.  E.g. 15 min → 15 * 60 = 900.
+const IDLE_PAUSE_THRESHOLD_SECS = 10 * 60; // 10 minutes
+
+// True only when WE auto-paused due to idle. Distinguishes from an admin's
+// manual pause so auto-resume cannot accidentally un-pause a deliberate pause.
+let isAutoPaused = false;
+// ─────────────────────────────────────────────────────────────────────────────
+
+
 // ── 401 helpers ───────────────────────────────────────────────────────────────
 function is401(error: any): boolean {
   return error?.response?.status === 401;
@@ -368,6 +380,59 @@ function showMainWindow(): void {
   mainWindow?.focus();
 }
 
+// ─── Idle Auto-Pause Tracker ──────────────────────────────────────────────────
+/**
+ * Polls powerMonitor.getSystemIdleTime() every 10 seconds.
+ *
+ * Auto-PAUSE  — fires when idleSeconds ≥ IDLE_PAUSE_THRESHOLD_SECS and we
+ *               are not already auto-paused.  Calls the internal (no-JWT)
+ *               endpoint so an expired token can never trigger a force-logout.
+ *
+ * Auto-RESUME — fires when idleSeconds < IDLE_PAUSE_THRESHOLD_SECS and we
+ *               were the ones who caused the pause (isAutoPaused === true).
+ *               This guard ensures a manual admin pause is never reversed by
+ *               someone just moving the mouse.
+ *
+ * ⚙️  To change the timeout: edit IDLE_PAUSE_THRESHOLD_SECS at the top of
+ *     this file.  No backend changes needed.
+ */
+function startIdleTracker(): void {
+  const POLL_MS = 10_000; // check every 10 seconds
+
+  setInterval(async () => {
+    if (!apiClient || !backendProcess) return; // backend not ready yet
+
+    const idleSeconds = powerMonitor.getSystemIdleTime();
+
+    if (idleSeconds >= IDLE_PAUSE_THRESHOLD_SECS && !isAutoPaused) {
+      isAutoPaused = true;
+      console.log(`[idle-tracker] User idle for ${idleSeconds}s — auto-pausing monitoring`);
+      try {
+        await apiClient.post('/api/internal/monitoring/pause', {});
+      } catch (err: any) {
+        // Non-fatal: backend may be temporarily unavailable. Log and retry next cycle.
+        console.warn('[idle-tracker] Auto-pause request failed (will retry):', err.message);
+        isAutoPaused = false; // Reset so the next poll tries again
+      }
+      return;
+    }
+
+    if (idleSeconds < IDLE_PAUSE_THRESHOLD_SECS && isAutoPaused) {
+      isAutoPaused = false;
+      console.log(`[idle-tracker] User returned (idle=${idleSeconds}s) — auto-resuming monitoring`);
+      try {
+        await apiClient.post('/api/internal/monitoring/resume', {});
+      } catch (err: any) {
+        console.warn('[idle-tracker] Auto-resume request failed (will retry):', err.message);
+        isAutoPaused = true; // Reset so the next poll tries again
+      }
+    }
+  }, POLL_MS);
+
+  console.log(`[idle-tracker] Started — threshold: ${IDLE_PAUSE_THRESHOLD_SECS}s (${IDLE_PAUSE_THRESHOLD_SECS / 60} min), poll: ${POLL_MS / 1000}s`);
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 // ─── PATCH D — Auto-Updater Setup ────────────────────────────────────────────
 function setupAutoUpdater(): void {
   if (!app.isPackaged) {
@@ -585,6 +650,7 @@ if (!gotTheLock) {
     const isHiddenStartup = process.argv.includes('--hidden') || (IS_MAC && app.getLoginItemSettings().wasOpenedAsHidden);
     createWindow(!isHiddenStartup);
     startBackendHealthCheck();
+    startIdleTracker(); // Silent auto-pause when user is idle for IDLE_PAUSE_THRESHOLD_SECS
 
     // ─── PATCH E (Part 2) — Send post-update notification to renderer ─────
     if (justUpdated) {

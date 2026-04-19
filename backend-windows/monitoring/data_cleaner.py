@@ -32,7 +32,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 SYNCED_RETENTION_HOURS  = 2    # records already on the server
-UNSYNCED_RETENTION_DAYS = 7    # records not yet synced
+UNSYNCED_RETENTION_DAYS = 3    # records not yet synced
 
 HEARTBEAT_SECONDS   = 300      # wake up every 5 minutes to check
 CLEANUP_INTERVAL_H  = 2        # run actual cleanup every 2 hours

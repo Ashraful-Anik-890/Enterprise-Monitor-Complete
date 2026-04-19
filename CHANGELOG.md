@@ -6,6 +6,21 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [5.3.0] — 2026-04-18
+
+### Added
+- **Liquid Glass Design System** — Full UI refactor with a premium glassmorphic aesthetic, animated gradient backgrounds, and frosted glass components.
+- **Identity Confirmation Workflow** — New first-run experience that requires admins to verify device/user aliases and specify a physical location before syncing begins.
+- **Location Tracking** — Added `location` mapping to all monitoring telemetry, allowing for departmental or office-based data filtering.
+- **Consolidated Control Ribbon** — Replaced fragmented control buttons with a unified, responsive ribbon for Monitoring, Screenshots, and Video toggles.
+- **Dynamic Timezone Support** — Users can now select and persist their display timezone, which is reflected across all dashboard charts and log timestamps.
+- **Real-time Settings Sync** — Local monitoring toggles now trigger immediate status updates to the remote ERP server for bi-directional state reflection.
+
+### Improved
+- **Dashboard Responsiveness** — Refactored the identity section and control layouts to prevent overlapping on small windows.
+- **Chart.js Scaling** — Improved canvas sizing logic to ensure visualizations remain sharp and well-proportioned across different resolutions.
+- **Sync Reachability Logic** — Added atomic port polling and reachability flags to provide clearer network status in the UI.
+
 ## [5.2.7] — 2026-04-02
 
 ### Changed
