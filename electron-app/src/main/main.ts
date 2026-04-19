@@ -98,7 +98,7 @@ let updatePendingVersion: string | null = null;
 // ⚙️  HOW TO CHANGE THE IDLE TIMEOUT:
 //     Edit IDLE_PAUSE_THRESHOLD_SECS below and rebuild the Electron app.
 //     Formula: seconds = minutes × 60.  E.g. 15 min → 15 * 60 = 900.
-const IDLE_PAUSE_THRESHOLD_SECS = 10 * 60; // 10 minutes
+const IDLE_PAUSE_THRESHOLD_SECS = 5 * 60; // 5 minutes
 
 // True only when WE auto-paused due to idle. Distinguishes from an admin's
 // manual pause so auto-resume cannot accidentally un-pause a deliberate pause.

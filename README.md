@@ -703,5 +703,5 @@ Built as a demonstration of **full-stack cross-platform desktop application engi
 ---
 
 <p align="center">
-  <sub>Enterprise Monitor v5.3.0 — Cross-Platform Desktop Application (Windows + macOS)</sub>
+  <sub>Enterprise Monitor v5.3.0 — Cross-Platform Desktop Application (Windows + macOS) Linux side is under Development</sub>
 </p>

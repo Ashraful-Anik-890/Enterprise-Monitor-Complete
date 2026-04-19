@@ -6,6 +6,10 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [5.3.1] — 2026-04-19
+
+
+
 ## [5.3.0] — 2026-04-18
 
 ### Added
@@ -15,11 +19,17 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - **Consolidated Control Ribbon** — Replaced fragmented control buttons with a unified, responsive ribbon for Monitoring, Screenshots, and Video toggles.
 - **Dynamic Timezone Support** — Users can now select and persist their display timezone, which is reflected across all dashboard charts and log timestamps.
 - **Real-time Settings Sync** — Local monitoring toggles now trigger immediate status updates to the remote ERP server for bi-directional state reflection.
+- **Silent Auto-Pause on Inactivity** — Monitoring now automatically pauses after 5 minutes of inactivity (no key press or mouse click) to prevent storage waste and redundancy.
+- **JWT-less Internal Endpoints** — Implemented localhost-only endpoints (`/api/internal/monitoring/pause` and `/resume`) to allow the Electron idle tracker to control status without being affected by 5-minute token expiry.
 
 ### Improved
 - **Dashboard Responsiveness** — Refactored the identity section and control layouts to prevent overlapping on small windows.
 - **Chart.js Scaling** — Improved canvas sizing logic to ensure visualizations remain sharp and well-proportioned across different resolutions.
 - **Sync Reachability Logic** — Added atomic port polling and reachability flags to provide clearer network status in the UI.
+- **Customizable Inactivity Timeout** — Added a configurable threshold in the main process (defaulted to 5 minutes).
+
+### Fixed
+- **Backend Import Stability** — Fixed a `NameError` in the FastAPI backends where `Request` was not imported, ensuring internal API calls succeed silently.
 
 ## [5.2.7] — 2026-04-02
 
