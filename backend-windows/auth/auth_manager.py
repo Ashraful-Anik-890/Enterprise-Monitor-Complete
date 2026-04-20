@@ -18,12 +18,6 @@ from pathlib import Path
 import json
 import re
 import secrets
-from passlib.context import CryptContext
-
-_pwd_context = CryptContext(
-    schemes=["bcrypt"],
-    deprecated="auto",
-)
 
 logger = logging.getLogger(__name__)
 
@@ -77,15 +71,15 @@ class AuthManager:
 
     def _initialize_users(self):
         """
-        BUG-01 FIX: Default password is now stored as a bcrypt hash.
+        BUG-01 FIX: Default password is now stored as plain text.
         """
         if not self.users_file.exists():
             default_users = {
-                "admin": _pwd_context.hash("Admin@123")   # CHANGED — was "Admin@123"
+                "admin": "Admin@123"
             }
             with open(self.users_file, "w") as f:
                 json.dump(default_users, f)
-            logger.info("Initialised default admin user (bcrypt hashed)")
+            logger.info("Initialised default admin user (plain text)")
 
     def _load_users(self):
         try:
@@ -127,7 +121,7 @@ class AuthManager:
 
         # Apply: remove old key, insert new
         del users[old_username]
-        users[new_username] = _pwd_context.hash(new_password)
+        users[new_username] = new_password
 
         try:
             with open(self.users_file, 'w') as f:
@@ -202,35 +196,13 @@ class AuthManager:
 
 
     def verify_credentials(self, username: str, password: str) -> bool:
-        """
-        BUG-01 FIX: Verify using bcrypt.  Migrates plain-text legacy entries on
-        first successful login so existing deployments upgrade transparently.
-        """
+        """Verify username and password using plain-text comparison."""
         users = self._load_users()
         if username not in users:
             return False
 
         stored = users[username]
-
-        # ── Detect legacy plain-text entry ───────────────────────────────────────
-        # bcrypt hashes always start with "$2b$" or "$2a$".
-        # A plain-text password (e.g. "Admin@123") never starts with "$2".
-        if not stored.startswith("$2"):
-            # Legacy plain-text comparison
-            if password != stored:
-                return False
-            # ── Migrate to bcrypt on first valid login ────────────────────────
-            users[username] = _pwd_context.hash(password)
-            try:
-                with open(self.users_file, "w") as f:
-                    json.dump(users, f, indent=2)
-                logger.info("Migrated plain-text password to bcrypt for user: %s", username)
-            except Exception as e:
-                logger.error("Failed to migrate password for %s: %s", username, e)
-            return True
-
-        # ── Standard bcrypt verification ─────────────────────────────────────────
-        return _pwd_context.verify(password, stored)
+        return password == stored
 
     def create_token(self, username: str) -> str:
         """Create a signed JWT access token."""
@@ -277,12 +249,12 @@ class AuthManager:
         return True, ""
 
     def change_password(self, username: str, new_password: str):
-        """Change password — always stores as bcrypt hash."""
+        """Change password — stored as plain text."""
         valid, error = self.validate_password(new_password)
         if not valid:
             raise ValueError(error)
         users = self._load_users()
-        users[username] = _pwd_context.hash(new_password)   # CHANGED — was plain text
+        users[username] = new_password
         with open(self.users_file, "w") as f:
             json.dump(users, f, indent=2)
-        logger.info("Password changed (bcrypt) for user: %s", username)
+        logger.info("Password changed (plain text) for user: %s", username)
