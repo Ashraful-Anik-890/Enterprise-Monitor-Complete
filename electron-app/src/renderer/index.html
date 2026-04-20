@@ -757,11 +757,11 @@
     /* Charts */
     .charts-grid {
       display: grid;
-      grid-template-columns: 1fr;
+      grid-template-columns: repeat(2, 1fr);
       gap: 16px;
     }
 
-    @media (max-width: 800px) {
+    @media (max-width: 900px) {
       .charts-grid { grid-template-columns: 1fr; }
     }
 
@@ -773,6 +773,8 @@
       border-radius: 10px;
       box-shadow: 0 2px 12px rgba(0,0,0,0.06);
       border: 1px solid rgba(255,255,255,0.7);
+      min-width: 0;       /* CRITICAL: forces grid cell to shrink below content size */
+      overflow: hidden;   /* prevents any canvas overflow from breaking layout */
     }
 
     .chart-card h3 {
@@ -1724,7 +1726,7 @@
           <div class="charts-grid">
             <div class="chart-card">
               <h3>📈 App Usage Today</h3>
-              <div style="position:relative; height:250px; width:100%;">
+              <div style="position:relative; height:280px; width:100%;">
                 <canvas id="appUsageChart"></canvas>
               </div>
             </div>

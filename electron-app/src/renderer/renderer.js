@@ -1123,7 +1123,7 @@ function initializeCharts() {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { position: 'right', labels: { font: { size: 11 }, boxWidth: 12, padding: 10 } } },
+      plugins: { legend: { position: 'left', labels: { font: { size: 11 }, boxWidth: 12, padding: 14 } } },
       cutout: '68%'
     },
   });
