@@ -679,8 +679,8 @@ async function handleConfirmCredential() {
   const userAlias   = (document.getElementById('user-alias-input')?.value   || '').trim();
   const location    = (document.getElementById('location-input')?.value     || '').trim();
 
-  if (!deviceAlias || !userAlias) {
-    showIdentityFeedback('Enter Device Name and User Alias before confirming.', 'error');
+  if (!deviceAlias || !userAlias || !location) {
+    showIdentityFeedback('Enter Device Name, User Alias, and Location before confirming.', 'error');
     return;
   }
 

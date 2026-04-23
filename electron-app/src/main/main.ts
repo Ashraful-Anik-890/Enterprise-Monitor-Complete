@@ -267,23 +267,11 @@ async function killBackend(): Promise<void> {
   if (!backendProcess || backendKilled) return;
   backendKilled = true;
 
-  const token = store.get('authToken') as string | undefined;
-  let tokenValid = false;
-  if (token) {
-    try {
-      const payloadB64 = token.split('.')[1];
-      if (payloadB64) {
-        const { exp } = JSON.parse(Buffer.from(payloadB64, 'base64').toString('utf-8')) as { exp?: number };
-        tokenValid = !!exp && (exp * 1000 > Date.now());
-      }
-    } catch { /* malformed token — treat as expired */ }
-  }
-
-  if (tokenValid && apiClient) {
-    console.log('[main] Requesting graceful backend shutdown via /api/shutdown...');
+  if (apiClient) {
+    console.log('[main] Requesting graceful backend shutdown via /api/internal/shutdown...');
     try {
       await Promise.race([
-        apiClient.post('/api/shutdown', {}, token!),
+        apiClient.post('/api/internal/shutdown', {}),
         new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
       ]);
       console.log('[main] Backend acknowledged graceful shutdown');
@@ -296,8 +284,6 @@ async function killBackend(): Promise<void> {
     } catch (err: any) {
       console.warn('[main] Graceful shutdown failed or timed out:', err.message);
     }
-  } else if (token && !tokenValid) {
-    console.log('[main] JWT token expired — skipping graceful HTTP shutdown, proceeding to force-kill');
   }
 
   if (backendProcess && !backendExited) {

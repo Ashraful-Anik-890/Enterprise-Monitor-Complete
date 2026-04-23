@@ -254,13 +254,17 @@ class DatabaseManager:
 
         credential_confirmed = rows.get("credential_confirmed", "false") == "true"
 
-        # Detect post-confirmation drift (alias/user changed without re-confirming)
-        confirmed_device = rows.get("confirmed_device_alias", "")
-        confirmed_user   = rows.get("confirmed_user_alias", "")
-        current_device   = rows.get("device_alias", "")
-        current_user     = rows.get("user_alias", "")
+        # Detect post-confirmation drift (alias/user/location changed without re-confirming)
+        confirmed_device   = rows.get("confirmed_device_alias", "")
+        confirmed_user     = rows.get("confirmed_user_alias", "")
+        confirmed_location = rows.get("confirmed_location", "")
+        current_device     = rows.get("device_alias", "")
+        current_user       = rows.get("user_alias", "")
+        current_location   = rows.get("location", "")
         credential_drifted = credential_confirmed and (
-            current_device != confirmed_device or current_user != confirmed_user
+            current_device != confirmed_device or 
+            current_user != confirmed_user or
+            current_location != confirmed_location
         )
 
         return {
@@ -330,6 +334,7 @@ class DatabaseManager:
                     ("sync_enabled",          "true"),
                     ("confirmed_device_alias", device_alias),   # drift baseline
                     ("confirmed_user_alias",   user_alias),     # drift baseline
+                    ("confirmed_location",     location),       # drift baseline
                 ]
                 for key, value in pairs:
                     self._conn.execute(

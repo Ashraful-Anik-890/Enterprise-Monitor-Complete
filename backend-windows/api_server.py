@@ -656,7 +656,37 @@ async def resume_monitoring(user=Depends(verify_token)):
     return {"success": True, "message": "Monitoring resumed"}
 
 
-# ── Internal auto-pause endpoints (no JWT — localhost-only, called by Electron idle tracker) ──
+# ── Internal auto-pause/shutdown endpoints (no JWT — localhost-only, called by Electron) ──
+@app.post("/api/internal/shutdown")
+async def internal_shutdown(request: Request):
+    """Localhost-only graceful shutdown. Electron calls this if JWT is expired."""
+    if request.client.host not in ("127.0.0.1", "::1"):
+        raise HTTPException(status_code=403, detail="Internal endpoint only")
+    logger.info("Graceful shutdown requested via /api/internal/shutdown")
+    try:
+        await shutdown_event()
+    except Exception as exc:
+        logger.error("Error during shutdown_event: %s", exc)
+
+    _local_appdata = os.environ.get("LOCALAPPDATA") or os.path.join(
+        os.path.expanduser("~"), "AppData", "Local"
+    )
+    _port_file = os.path.join(_local_appdata, "EnterpriseMonitor", "port.info")
+    try:
+        if os.path.exists(_port_file):
+            os.unlink(_port_file)
+            logger.info("port.info cleaned up during internal shutdown")
+    except OSError:
+        pass
+
+    async def _delayed_exit():
+        await asyncio.sleep(0.5)
+        logger.info("Exiting process after internal shutdown")
+        os._exit(0)
+    asyncio.get_event_loop().create_task(_delayed_exit())
+    return {"success": True, "message": "Shutting down"}
+
+
 # ⚙️  IDLE THRESHOLD: The 10-minute idle timeout is controlled on the Electron side.
 #     To change it, edit IDLE_PAUSE_THRESHOLD_SECS in electron-app/src/main/main.ts.
 #     These endpoints have no timeout logic of their own — they just act on the command.

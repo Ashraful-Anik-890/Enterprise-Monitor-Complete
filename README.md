@@ -104,6 +104,12 @@ This project demonstrates deep expertise in **systems programming**, **cross-pla
   <img src="resources/Mac dev dashboard.png" alt="macOS Dashboard" width="700" />
 </p>
 
+#### Brawser Tracekr (macOS)
+
+<p align="center">
+  <img src="resources/mac dev brawser.png" alt="macOS Browser" width="700" />
+</p>
+
 #### Screenshots Gallery (macOS)
 > Periodic screen captures displayed in a grid view with timestamps and active application context.
 
