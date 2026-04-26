@@ -223,7 +223,7 @@ The app shares a **single Electron frontend** but uses **platform-specific Pytho
 | 🎥 **Screen Recording** | Continuous MP4 recording | `OpenCV` + `mss` — configurable chunk duration |
 | ⌨️ **Keystroke Logging** | Application-aware text capture | `pynput` — captures per-app-context |
 | 📋 **Clipboard Monitoring** | Copy event tracking | `pyperclip` — content type + preview |
-| 🔄 **ERP Sync** | Bi-directional sync engine | 10+ endpoints: 7 data ingestion + 3 remote control (Pause/Resume, Toggles) |
+| 🔄 **ERP Sync** | Bi-directional sync engine | 10+ endpoints: 7 data ingestion + 3 remote control + device status reporting |
 | 📍 **Identity** | Location & Alias Confirmation | First-run workflow ensures unique hardware registration with location tags |
 | 🌍 **Timezone** | Dynamic Display Timezone | User-selectable IANA timezones for global consistency |
 | 🔐 **Authentication** | JWT + bcrypt + security Q&A | Token expiry, credential update, password reset flow |
@@ -232,6 +232,8 @@ The app shares a **single Electron frontend** but uses **platform-specific Pytho
 | 🛡️ **Anti-Tamper** | Credential-gated exit | Users cannot quit without admin password (Cmd+Q intercepted on macOS) |
 | 📦 **Installer** | One-click deployment | NSIS (Windows) / DMG (macOS) with cleanup hooks |
 | 🍎 **TCC Permissions** | macOS privacy compliance | Proactive permission prompting at first run with System Settings deeplinks |
+| 💤 **Power Management** | Device status lifecycle | Auto-pause, sleep, shutdown, graceful-off — reported to ERP dashboard |
+| 🔑 **MAC Identity** | Physical NIC detection | Stable hardware fingerprint via `ifconfig en0` (macOS) / `getmac` (Windows) |
 
 ---
 
@@ -244,6 +246,10 @@ The latest release introduces a **Premium UI Overhaul** and enhanced **Identity 
 - **Unified Control Ribbon**: Consolidated monitoring toggles with real-time feedback loop to the server.
 - **Dynamic Timezone Scaling**: Global support for user-defined timezones in all charts and logs.
 - **Improved Data Integrity**: Automatic detection of credential drift (hardware changes) requiring re-confirmation.
+- **Device Status Reporting**: Live status (`ACTIVE`, `PAUSED`, `AUTO_PAUSED`, `SLEEP`, `SHUTDOWN`, `GRACEFUL_OFF`) synced to ERP server for admin dashboard visibility.
+- **Power Management Events**: `powerMonitor` integration reports sleep, resume, and system shutdown events.
+- **MAC Address Sanitization**: Physical NIC detection replaces volatile `uuid.getnode()` — soft migration, no existing device disruption.
+- **Sync Marker Reset**: Admin endpoint to force full data re-upload after server-side DB reset.
 
 ---
 

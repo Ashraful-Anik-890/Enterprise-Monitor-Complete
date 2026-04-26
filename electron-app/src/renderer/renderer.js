@@ -363,6 +363,8 @@ function openServerConfigModal() {
       { id: 'sc-url-monitoring-settings', val: cfg.url_monitoring_settings, path: cfg.path_monitoring_settings },
       { id: 'sc-url-screenshot-settings', val: cfg.url_screenshot_settings, path: cfg.path_screenshot_settings },
       { id: 'sc-url-video-settings', val: cfg.url_video_settings, path: cfg.path_video_settings },
+      { id: 'sc-url-device-status', val: cfg.url_device_status, path: cfg.path_device_status },
+      { id: 'sc-url-confirm-identity', val: cfg.url_confirm_identity, path: cfg.path_confirm_identity },
     ];
 
     urlFields.forEach(({ id, val, path }) => {
@@ -405,6 +407,7 @@ function applyBaseUrl() {
     'sc-url-app', 'sc-url-browser', 'sc-url-clipboard', 'sc-url-keystrokes',
     'sc-url-screenshots', 'sc-url-videos', 'sc-url-monitoring-settings',
     'sc-url-screenshot-settings', 'sc-url-video-settings',
+    'sc-url-device-status', 'sc-url-confirm-identity',
   ];
 
   urlInputIds.forEach(id => {
@@ -432,6 +435,8 @@ async function handleSaveServerConfig() {
     { id: 'sc-url-monitoring-settings', key: 'url_monitoring_settings', label: 'Monitoring Settings' },
     { id: 'sc-url-screenshot-settings', key: 'url_screenshot_settings', label: 'Screenshot Settings' },
     { id: 'sc-url-video-settings', key: 'url_video_settings', label: 'Video Settings' },
+    { id: 'sc-url-device-status', key: 'url_device_status', label: 'Device Status' },
+    { id: 'sc-url-confirm-identity', key: 'url_confirm_identity', label: 'Confirm Identity' },
   ];
 
   const payload = {

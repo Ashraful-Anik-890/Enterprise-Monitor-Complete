@@ -39,7 +39,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Dict, List, Any
 
-from url import PATH_VIDEO_SETTINGS, PATH_SCREENSHOT_SETTINGS, PATH_MONITORING_SETTINGS
+from url import PATH_VIDEO_SETTINGS, PATH_SCREENSHOT_SETTINGS, PATH_MONITORING_SETTINGS, PATH_DEVICE_STATUS
 import requests
 
 logger = logging.getLogger(__name__)
@@ -77,6 +77,8 @@ class SyncService:
         self._consecutive_failures:   int  = 0
         # ── v3: per-cycle abort flag ─────────────────────────────────────────
         self._abort_cycle: bool = False
+        # ── v5.3.0: device status for ERP reporting ─────────────────────────
+        self._device_status: str = "ACTIVE"
 
     # ─── IDENTITY ────────────────────────────────────────────────────────────
 
@@ -97,6 +99,19 @@ class SyncService:
                 "userName":   "",
                 "location":   "",
             }
+
+    def set_device_status(self, status: str) -> None:
+        """Set the device status for ERP reporting. Called by api_server on state changes."""
+        valid = {"ACTIVE", "PAUSED", "AUTO_PAUSED", "SLEEP", "SHUTDOWN", "GRACEFUL_OFF"}
+        if status in valid:
+            self._device_status = status
+            logger.info("Device status set to: %s", status)
+        else:
+            logger.warning("Invalid device status '%s' — ignoring", status)
+
+    def get_device_status(self) -> str:
+        """Returns the current device status string."""
+        return self._device_status
 
     # ─── LIFECYCLE ───────────────────────────────────────────────────────────
 
@@ -180,7 +195,9 @@ class SyncService:
                 identity = self._get_identity()
 
                 # Status syncs
-                if self._sync_video_status(identity):
+                if self._sync_device_status(identity):
+                    cycle_reached_server = True
+                if not self._abort_cycle and self._sync_video_status(identity):
                     cycle_reached_server = True
                 if not self._abort_cycle and self._sync_screenshot_status(identity):
                     cycle_reached_server = True
@@ -589,6 +606,41 @@ class SyncService:
         return len(synced_ids)
 
     # ─── STATUS SYNCS (bi-directional remote control) ────────────────────────
+
+    def _sync_device_status(self, identity: dict) -> bool:
+        """POST current device status to the ERP server for the admin dashboard."""
+        url = self.config_manager.get("url_device_status", "").strip()
+        if not url:
+            base_url = self.config_manager.get("base_url", "").strip()
+            if not base_url:
+                return False
+            url = f"{base_url.rstrip('/')}{PATH_DEVICE_STATUS}"
+
+        payload = {
+            "pcName":     identity["pcName"],
+            "macAddress": identity["macAddress"],
+            "userName":   identity["userName"],
+            "status":     self._device_status,
+            "timestamp":  datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            resp = requests.post(
+                url, json=payload,
+                headers={**self._auth_headers(), "Content-Type": "application/json"},
+                timeout=REQUEST_TIMEOUT_JSON,
+            )
+            if resp.ok:
+                logger.debug("Device status '%s' synced to server", self._device_status)
+                return True
+            if resp.status_code in HARD_ABORT_STATUSES:
+                self._abort_cycle = True
+            return False
+        except requests.exceptions.ConnectionError:
+            self._abort_cycle = True
+            return False
+        except Exception as e:
+            logger.debug("Device status sync failed: %s", e)
+            return False
 
     def _sync_video_status(self, identity: dict) -> bool:
         if self._is_cooldown_active():

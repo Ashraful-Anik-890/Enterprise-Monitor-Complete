@@ -2260,6 +2260,52 @@ POST Notification (when toggled locally):
           </details>
         </div>
 
+        <!-- ── 10. Device Status ────────────────────────────────────────── -->
+        <div class="sc-type-block">
+          <div class="sc-type-label">
+            <span class="sc-icon">💤</span>
+            <span>Device Status</span>
+            <span class="sc-badge json-badge">POST JSON</span>
+          </div>
+          <input type="url" id="sc-url-device-status"
+            placeholder="https://api.example.com/api/pctracking/device-status" class="sc-input sc-url-input" />
+          <p class="sc-base-url-hint">Endpoint to report device power states (Auto-Paused, Sleep, Shutdown).</p>
+          <details class="sc-demo">
+            <summary>📋 Demo Format (POST)</summary>
+            <pre class="sc-demo-pre">POST Notification:
+{
+  "pcName": "DESKTOP-ABC123",
+  "macAddress": "00:1B:44:11:3A:B7",
+  "userName": "jdoe",
+  "status": "AUTO_PAUSED"
+}</pre>
+          </details>
+        </div>
+
+        <!-- ── 11. Confirm Identity ─────────────────────────────────────── -->
+        <div class="sc-type-block">
+          <div class="sc-type-label">
+            <span class="sc-icon">🔒</span>
+            <span>Confirm Identity</span>
+            <span class="sc-badge json-badge">POST JSON</span>
+          </div>
+          <input type="url" id="sc-url-confirm-identity"
+            placeholder="https://api.example.com/api/pctracking/confirm-identity" class="sc-input sc-url-input" />
+          <p class="sc-base-url-hint">Endpoint to register hardware identity during first-run confirmation.</p>
+          <details class="sc-demo">
+            <summary>📋 Demo Format (POST)</summary>
+            <pre class="sc-demo-pre">POST Notification:
+{
+  "pcName": "DESKTOP-ABC123",
+  "macAddress": "00:1B:44:11:3A:B7",
+  "userName": "jdoe",
+  "location": "Main Office",
+  "osUser": "johndoe",
+  "machineId": "DESKTOP-ABC123"
+}</pre>
+          </details>
+        </div>
+
         <!-- Feedback -->
         <div id="server-config-error"
           style="display:none;color:#e74c3c;font-size:13px;margin-top:12px;text-align:center;"></div>

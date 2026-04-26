@@ -170,6 +170,44 @@ def _notify_server_sync(endpoint_path_key: str, payload_key: str, payload_value:
         logger.error(f"Failed to notify remote server for {payload_key}: {e}")
 
 
+def _notify_server_confirm_identity():
+    """
+    v5.3.0: POST confirmed identity to the ERP server so the device is
+    registered/updated in the admin dashboard. Fire-and-forget — called
+    from a background thread after local confirm_credential succeeds.
+    """
+    try:
+        from url import PATH_CONFIRM_IDENTITY
+
+        config = db_manager.get_identity_config()
+        url = config_manager.get("url_confirm_identity", "").strip()
+        if not url:
+            base_url = config_manager.get("base_url", "").strip()
+            if not base_url:
+                return
+            url = f"{base_url.rstrip('/')}{PATH_CONFIRM_IDENTITY}"
+
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        api_key = config_manager.get("api_key", "").strip()
+        if api_key:
+            headers["X-API-Key"] = api_key
+
+        payload = {
+            "pcName":     config.get("device_alias") or socket.gethostname(),
+            "macAddress": config.get("mac_address", ""),
+            "userName":   config.get("user_alias") or config.get("os_user", ""),
+            "location":   config.get("location", ""),
+            "osUser":     config.get("os_user", ""),
+            "machineId":  config.get("machine_id", ""),
+        }
+        resp = requests.post(url, json=payload, headers=headers, timeout=10)
+        if resp.ok:
+            logger.info("Identity confirmed on remote server: %s", payload.get("pcName"))
+        else:
+            logger.warning("Remote confirm-identity returned %d: %s", resp.status_code, resp.text[:200])
+    except Exception as e:
+        logger.error("Failed to notify remote server for confirm-identity: %s", e)
+
 # ─── PYDANTIC MODELS ─────────────────────────────────────────────────────────
 class LoginRequest(BaseModel):
     username: str
@@ -222,6 +260,8 @@ class ConfigRequest(BaseModel):
     url_monitoring_settings: Optional[str] = None
     url_screenshot_settings: Optional[str] = None
     url_video_settings:      Optional[str] = None
+    url_device_status:       Optional[str] = None
+    url_confirm_identity:    Optional[str] = None
 
     # Legacy — kept for backward compatibility with old installs
     server_url: Optional[str] = None
@@ -431,6 +471,9 @@ async def confirm_credential(request: ConfirmCredentialRequest, user=Depends(ver
     Confirm identity credentials (PC name, user, location) after first install.
     Sets sync_enabled = true so ERP syncing begins with the confirmed values.
     Subsequent calls re-confirm (e.g. after alias drift is detected).
+
+    v5.3.0: Also notifies the remote ERP server via POST /api/pctracking/confirm-identity
+    so the device is registered/updated in the admin dashboard.
     """
     try:
         ok = db_manager.confirm_credential(
@@ -438,6 +481,12 @@ async def confirm_credential(request: ConfirmCredentialRequest, user=Depends(ver
             user_alias   = request.user_alias.strip(),
             location     = request.location.strip(),
         )
+        if ok:
+            # Notify remote ERP server of identity confirmation (fire-and-forget)
+            threading.Thread(
+                target=_notify_server_confirm_identity,
+                daemon=True,
+            ).start()
         return {"success": ok}
     except Exception as e:
         logger.error("confirm_credential endpoint error: %s", e)
@@ -601,6 +650,7 @@ async def pause_monitoring(user=Depends(verify_token)):
     browser_tracker.pause()
     keylogger.pause()
     screen_recorder.pause()
+    sync_service.set_device_status("PAUSED")
     logger.info("Monitoring paused manually")
     
     # Inform remote server
@@ -644,6 +694,7 @@ async def resume_monitoring(user=Depends(verify_token)):
     app_tracker.resume()
     browser_tracker.resume()
     keylogger.resume()
+    sync_service.set_device_status("ACTIVE")
     logger.info("Monitoring resumed manually")
     
     # Inform remote server
@@ -663,6 +714,7 @@ async def internal_shutdown(request: Request):
     if request.client.host not in ("127.0.0.1", "::1"):
         raise HTTPException(status_code=403, detail="Internal endpoint only")
     logger.info("Graceful shutdown requested via /api/internal/shutdown")
+    sync_service.set_device_status("SHUTDOWN")
     try:
         await shutdown_event()
     except Exception as exc:
@@ -701,6 +753,7 @@ async def internal_pause_monitoring(request: Request):
     if request.client.host not in ("127.0.0.1", "::1"):
         raise HTTPException(status_code=403, detail="Internal endpoint — localhost only")
     logger.info("Auto-pause triggered by Electron idle tracker (no JWT)")
+    sync_service.set_device_status("AUTO_PAUSED")
     return await pause_monitoring(user={"sub": "_idle_system"})
 
 
@@ -713,7 +766,37 @@ async def internal_resume_monitoring(request: Request):
     if request.client.host not in ("127.0.0.1", "::1"):
         raise HTTPException(status_code=403, detail="Internal endpoint — localhost only")
     logger.info("Auto-resume triggered by Electron idle tracker (no JWT)")
+    sync_service.set_device_status("ACTIVE")
     return await resume_monitoring(user={"sub": "_idle_system"})
+
+
+# ── Device Status (internal, no JWT) ─────────────────────────────────────────
+@app.post("/api/internal/device-status")
+async def internal_set_device_status(request: Request):
+    """Localhost-only endpoint for Electron to set device status (sleep/shutdown/etc)."""
+    if request.client.host not in ("127.0.0.1", "::1"):
+        raise HTTPException(status_code=403, detail="Internal endpoint — localhost only")
+    body = await request.json()
+    status = body.get("status", "")
+    sync_service.set_device_status(status)
+    return {"success": True, "status": sync_service.get_device_status()}
+
+
+@app.get("/api/device/status")
+async def get_device_status(user=Depends(verify_token)):
+    """Returns the current device operational status for the Electron renderer."""
+    return {"status": sync_service.get_device_status()}
+
+
+# ── Sync marker reset ────────────────────────────────────────────────────────
+@app.post("/api/sync/reset-markers")
+async def reset_sync_markers(user=Depends(verify_token)):
+    """
+    Resets all synced flags to 0 across all data tables.
+    Used after a server-side DB reset to force full re-upload.
+    """
+    total = db_manager.reset_sync_markers()
+    return {"success": True, "rows_reset": total}
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 @app.get("/api/config")
@@ -732,6 +815,9 @@ async def get_config(user=Depends(verify_token)):
         "path_videos":       PATH_VIDEOS,
         "path_monitoring_settings": PATH_MONITORING_SETTINGS,
         "path_screenshot_settings": PATH_SCREENSHOT_SETTINGS,
+        "path_video_settings":      PATH_VIDEO_SETTINGS,
+        "path_device_status":       PATH_DEVICE_STATUS,
+        "path_confirm_identity":    PATH_CONFIRM_IDENTITY,
 
         # ── User-saved settings ───────────────────────────────────────────────
         "api_key":               config_manager.get("api_key", ""),
@@ -747,6 +833,8 @@ async def get_config(user=Depends(verify_token)):
         "url_monitoring_settings": config_manager.get("url_monitoring_settings", ""),
         "url_screenshot_settings": config_manager.get("url_screenshot_settings", ""),
         "url_video_settings":      config_manager.get("url_video_settings", ""),
+        "url_device_status":       config_manager.get("url_device_status", ""),
+        "url_confirm_identity":    config_manager.get("url_confirm_identity", ""),
         # legacy
         "server_url":            config_manager.get("server_url", ""),
         "screenshot_enabled":    config_manager.get("screenshot_enabled", True),
@@ -768,6 +856,8 @@ async def update_config(config: ConfigRequest, user=Depends(verify_token)):
         ("url_monitoring_settings", config.url_monitoring_settings),
         ("url_screenshot_settings", config.url_screenshot_settings),
         ("url_video_settings",      config.url_video_settings),
+        ("url_device_status",       config.url_device_status),
+        ("url_confirm_identity",    config.url_confirm_identity),
         ("server_url",            config.server_url),
     ]
     for key, value in _fields:

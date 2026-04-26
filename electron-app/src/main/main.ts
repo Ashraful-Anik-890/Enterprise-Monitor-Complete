@@ -658,6 +658,28 @@ if (!gotTheLock) {
     powerMonitor.on('shutdown', () => {
       console.log('[main] powerMonitor: system shutdown/restart/logout detected');
       isSystemShutdown = true;
+      // Report GRACEFUL_OFF to backend (fire-and-forget — system is shutting down)
+      if (apiClient) {
+        apiClient.post('/api/internal/device-status', { status: 'GRACEFUL_OFF' })
+          .catch(() => { /* system shutting down, ignore errors */ });
+      }
+    });
+
+    // ── v5.3.0: Sleep/Resume device status reporting ────────────────────────
+    powerMonitor.on('suspend', () => {
+      console.log('[main] powerMonitor: system entering sleep/hibernate');
+      if (apiClient) {
+        apiClient.post('/api/internal/device-status', { status: 'SLEEP' })
+          .catch(() => { /* going to sleep, ignore errors */ });
+      }
+    });
+
+    powerMonitor.on('resume', () => {
+      console.log('[main] powerMonitor: system resumed from sleep/hibernate');
+      if (apiClient) {
+        apiClient.post('/api/internal/device-status', { status: 'ACTIVE' })
+          .catch(() => { /* just woke up, ignore errors */ });
+      }
     });
   });
 }
@@ -1096,6 +1118,28 @@ function setupIpcHandlers(): void {
     } catch (error: any) {
       if (is401(error)) return handleAuthExpired();
       return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('api:resetSyncMarkers', async () => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.post('/api/sync/reset-markers', {}, token);
+      return response.data;
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('api:getDeviceStatus', async () => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.get('/api/device/status', token);
+      return response.data;
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      return { status: 'UNKNOWN' };
     }
   });
 

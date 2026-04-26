@@ -81,6 +81,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── Sync ──────────────────────────────────────────────────────────────────
   getSyncStatus: () => ipcRenderer.invoke('api:getSyncStatus'),
   triggerSync: () => ipcRenderer.invoke('api:triggerSync'),
+  resetSyncMarkers: () => ipcRenderer.invoke('api:resetSyncMarkers'),
+
+  // ── Device Status ─────────────────────────────────────────────────────────
+  getDeviceStatus: () => ipcRenderer.invoke('api:getDeviceStatus'),
+
 
   // ── App control ───────────────────────────────────────────────────────────
   openFolder: (filepath: string) => ipcRenderer.invoke('app:openFolder', filepath),

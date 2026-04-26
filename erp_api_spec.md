@@ -188,3 +188,40 @@ All data endpoints use **POST** to upload accumulated records.
 - **Fields**: `pcName`, `macAddress`, `userName`, `timestamp`, `durationSeconds`, `syncTime`
 - **File Field**: `file` (MP4)
 
+---
+
+## 3. DEVICE STATUS REPORTING (v5.3.0)
+
+### 3.1 Device Status
+**Path**: `/api/pctracking/device-status`
+**Method**: `POST`
+**Purpose**: Reports the client's current operational state so the admin dashboard can display live device status.
+
+- **Body (JSON)**:
+  ```json
+  {
+    "pcName": "Marketing-PC-01",
+    "macAddress": "00:0a:95:9d:68:16",
+    "userName": "John Doe",
+    "status": "ACTIVE",
+    "timestamp": "2026-04-26T04:00:00+00:00"
+  }
+  ```
+
+- **Valid `status` values**:
+
+| Status | Meaning | Triggered When |
+|--------|---------|----------------|
+| `ACTIVE` | Device online, monitoring running | App start, user returns from idle, resume from sleep |
+| `PAUSED` | Admin manually paused monitoring | Admin clicks "Pause" in dashboard |
+| `AUTO_PAUSED` | System auto-paused (inactivity) | 5 min no keyboard/mouse activity |
+| `SLEEP` | Machine entered sleep/hibernate | OS suspend event detected |
+| `SHUTDOWN` | App shutting down normally | Admin quits via authenticated quit |
+| `GRACEFUL_OFF` | System powering off/restarting | OS shutdown/restart signal detected |
+
+- **Server-side requirements**:
+  1. Store the latest `status` and `timestamp` per device (keyed by `macAddress`)
+  2. Display in the admin dashboard "Status" column
+  3. **Recommended**: If no status update received in 10+ minutes, auto-mark as `OFFLINE`
+
+- **Response**: `{"success": true}`

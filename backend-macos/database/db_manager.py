@@ -22,6 +22,8 @@ import logging
 import socket
 import getpass
 import uuid
+import subprocess
+import re
 import os
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -236,14 +238,10 @@ class DatabaseManager:
             cursor.execute("SELECT key, value FROM device_config")
             rows = {r["key"]: r["value"] for r in cursor.fetchall()}
 
-        # Use stored MAC; compute and persist only on first run
+        # Use stored MAC; compute and persist only on first run (soft migration)
         stored_mac = rows.get("mac_address", "")
         if not stored_mac:
-            import uuid
-            stored_mac = ':'.join(
-                '{:02x}'.format((uuid.getnode() >> ele) & 0xff)
-                for ele in reversed(range(0, 8 * 6, 8))
-            )
+            stored_mac = self._get_physical_mac()
             with self._lock:
                 self._conn.execute(
                     "INSERT INTO device_config (key, value) VALUES ('mac_address', ?) "
@@ -1064,6 +1062,69 @@ class DatabaseManager:
             except Exception as exc:
                 logger.error("cleanup_old_data: %s", exc)
                 self._conn.rollback()
+
+    # ─── MAC ADDRESS DETECTION (macOS) ────────────────────────────────────────
+
+    @staticmethod
+    def _get_physical_mac() -> str:
+        """
+        Returns the MAC address of the primary physical NIC on macOS.
+
+        Strategy: Read `ifconfig en0` (built-in Wi-Fi/Ethernet), then fall back
+        to en1, then to uuid.getnode(). This avoids picking up virtual NICs
+        (VPN, Docker, Parallels) that cause duplicate MAC entries on the server.
+        """
+        for iface in ("en0", "en1"):
+            try:
+                output = subprocess.check_output(
+                    ["ifconfig", iface], stderr=subprocess.DEVNULL, text=True,
+                )
+                match = re.search(r"ether\s+([0-9a-f:]{17})", output)
+                if match:
+                    mac = match.group(1)
+                    logger.info("Physical MAC from %s: %s", iface, mac)
+                    return mac
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                continue
+
+        # Fallback: uuid.getnode() — volatile but better than nothing
+        logger.warning("Could not read physical NIC MAC — falling back to uuid.getnode()")
+        return ':'.join(
+            '{:02x}'.format((uuid.getnode() >> ele) & 0xff)
+            for ele in reversed(range(0, 8 * 6, 8))
+        )
+
+    # ─── SYNC MARKER RESET ───────────────────────────────────────────────────
+
+    def reset_sync_markers(self) -> int:
+        """
+        Resets all `synced` / `is_synced` flags to 0 across every data table.
+        Used by the admin to force a full re-upload after a server-side DB reset.
+        Returns the total number of rows affected.
+        """
+        tables_synced   = ["screenshots", "app_activity", "clipboard_events",
+                           "browser_activity", "text_logs"]
+        tables_is_synced = ["video_recordings"]
+        total = 0
+        with self._lock:
+            try:
+                for tbl in tables_synced:
+                    self._conn.execute(f"UPDATE {tbl} SET synced = 0 WHERE synced = 1")
+                    total += self._conn.execute(
+                        f"SELECT changes()"
+                    ).fetchone()[0]
+                for tbl in tables_is_synced:
+                    self._conn.execute(f"UPDATE {tbl} SET is_synced = 0 WHERE is_synced = 1")
+                    total += self._conn.execute(
+                        f"SELECT changes()"
+                    ).fetchone()[0]
+                self._conn.commit()
+                logger.info("reset_sync_markers: %d rows reset across all tables", total)
+            except Exception as exc:
+                logger.error("reset_sync_markers failed: %s", exc)
+                self._conn.rollback()
+                total = 0
+        return total
 
     def close(self) -> None:
         """Explicitly close the persistent connection (call on process shutdown)."""
