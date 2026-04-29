@@ -51,6 +51,8 @@ from url import (
     PATH_VIDEO_SETTINGS,
     PATH_SCREENSHOT_SETTINGS,
     PATH_MONITORING_SETTINGS,
+    PATH_DEVICE_STATUS,
+    PATH_CONFIRM_IDENTITY,
 )
 
 logger = logging.getLogger(__name__)

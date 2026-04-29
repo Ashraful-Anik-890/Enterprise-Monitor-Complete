@@ -7,19 +7,19 @@
   <title>Enterprise Monitor</title>
   <script>
     // Load Chart.js — version-locked CDN with inline fallback
-    (function() {
+    (function () {
       function loadScript(src, cb) {
         var s = document.createElement('script');
         s.src = src;
         s.onload = cb;
-        s.onerror = function() { console.error('[chartjs] Failed to load: ' + src); cb(null); };
+        s.onerror = function () { console.error('[chartjs] Failed to load: ' + src); cb(null); };
         document.head.appendChild(s);
       }
       // Primary CDN
-      loadScript('https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js', function(ok) {
+      loadScript('https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js', function (ok) {
         if (!ok) {
           // Fallback CDN
-          loadScript('https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js', function() {});
+          loadScript('https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js', function () { });
         }
         window._chartJsReady = true;
         document.dispatchEvent(new Event('chartjs-ready'));
@@ -39,24 +39,41 @@
       color: #fff;
       animation: pulse-yellow 2s infinite;
     }
+
     #confirm-credential-btn.state-drifted {
       background: linear-gradient(135deg, #e67e22, #c0392b);
       color: #fff;
       animation: pulse-yellow 2s infinite;
     }
+
     #confirm-credential-btn.state-confirmed {
       background: linear-gradient(135deg, #28a745, #20c997);
       color: #fff;
       cursor: default;
     }
+
     @keyframes pulse-yellow {
-      0%,100% { box-shadow: 0 0 0 0 rgba(240,165,0,0.5); }
-      50% { box-shadow: 0 0 0 5px rgba(240,165,0,0); }
+
+      0%,
+      100% {
+        box-shadow: 0 0 0 0 rgba(240, 165, 0, 0.5);
+      }
+
+      50% {
+        box-shadow: 0 0 0 5px rgba(240, 165, 0, 0);
+      }
     }
+
     .archived-badge {
-      display:inline-block; background:#fff3cd; color:#856404;
-      font-size:11px; font-weight:600; padding:2px 8px; border-radius:10px;
-      margin-left:8px; vertical-align:middle;
+      display: inline-block;
+      background: #fff3cd;
+      color: #856404;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 10px;
+      margin-left: 8px;
+      vertical-align: middle;
     }
 
     /* ── GLASSMORPHISM BASE ── */
@@ -72,27 +89,45 @@
     body::before {
       content: '';
       position: fixed;
-      width: 600px; height: 600px;
-      background: radial-gradient(circle, rgba(102,126,234,0.15) 0%, transparent 70%);
-      top: -200px; right: -200px;
+      width: 600px;
+      height: 600px;
+      background: radial-gradient(circle, rgba(102, 126, 234, 0.15) 0%, transparent 70%);
+      top: -200px;
+      right: -200px;
       border-radius: 50%;
       animation: floatOrb 12s ease-in-out infinite;
-      pointer-events: none; z-index: 0;
+      pointer-events: none;
+      z-index: 0;
     }
+
     body::after {
       content: '';
       position: fixed;
-      width: 500px; height: 500px;
-      background: radial-gradient(circle, rgba(233,69,96,0.12) 0%, transparent 70%);
-      bottom: -150px; left: -150px;
+      width: 500px;
+      height: 500px;
+      background: radial-gradient(circle, rgba(233, 69, 96, 0.12) 0%, transparent 70%);
+      bottom: -150px;
+      left: -150px;
       border-radius: 50%;
       animation: floatOrb 15s ease-in-out infinite reverse;
-      pointer-events: none; z-index: 0;
+      pointer-events: none;
+      z-index: 0;
     }
+
     @keyframes floatOrb {
-      0%,100% { transform: translate(0,0) scale(1); }
-      33% { transform: translate(30px,-20px) scale(1.05); }
-      66% { transform: translate(-20px,30px) scale(0.95); }
+
+      0%,
+      100% {
+        transform: translate(0, 0) scale(1);
+      }
+
+      33% {
+        transform: translate(30px, -20px) scale(1.05);
+      }
+
+      66% {
+        transform: translate(-20px, 30px) scale(0.95);
+      }
     }
 
     /* ═══════════════════════════════════════
@@ -316,26 +351,26 @@
 
     /* Glass card mixin */
     .glass {
-      background: rgba(255,255,255,0.92);
+      background: rgba(255, 255, 255, 0.92);
       backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
-      border: 1px solid rgba(255,255,255,0.6);
+      border: 1px solid rgba(255, 255, 255, 0.6);
       border-radius: 12px;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04);
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08), 0 1px 4px rgba(0, 0, 0, 0.04);
     }
 
     .header {
-      background: rgba(15,23,42,0.92);
+      background: rgba(15, 23, 42, 0.92);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
       padding: 12px 18px;
       border-radius: 12px;
       margin-bottom: 10px;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.25);
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
       display: flex;
       justify-content: space-between;
       align-items: center;
-      border: 1px solid rgba(255,255,255,0.12);
+      border: 1px solid rgba(255, 255, 255, 0.12);
       flex-wrap: wrap;
       gap: 12px;
     }
@@ -432,14 +467,14 @@
 
     /* Controls bar */
     .dashboard-controls {
-      background: rgba(255,255,255,0.88);
+      background: rgba(255, 255, 255, 0.88);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       padding: 10px 16px;
       border-radius: 10px;
       margin-bottom: 8px;
-      border: 1px solid rgba(255,255,255,0.6);
-      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+      border: 1px solid rgba(255, 255, 255, 0.6);
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
       display: flex;
       justify-content: flex-start;
       align-items: center;
@@ -457,7 +492,7 @@
     .control-divider {
       width: 1px;
       height: 20px;
-      background: rgba(0,0,0,0.1);
+      background: rgba(0, 0, 0, 0.1);
       margin: 0 4px;
     }
 
@@ -467,13 +502,13 @@
       grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
       gap: 10px;
       padding: 10px;
-      background: rgba(255,255,255,0.8);
+      background: rgba(255, 255, 255, 0.8);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-      border: 1px solid rgba(255,255,255,0.5);
+      border: 1px solid rgba(255, 255, 255, 0.5);
       border-radius: 12px;
       margin-bottom: 10px;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
       align-items: stretch;
     }
 
@@ -482,8 +517,8 @@
       grid-template-columns: auto 1fr auto;
       align-items: center;
       gap: 12px;
-      background: rgba(248,250,255,0.9);
-      border: 1px solid rgba(102,126,234,0.1);
+      background: rgba(248, 250, 255, 0.9);
+      border: 1px solid rgba(102, 126, 234, 0.1);
       border-radius: 10px;
       padding: 10px 14px;
       transition: all 0.2s ease;
@@ -491,8 +526,8 @@
 
     .identity-card:hover {
       background: #fff;
-      border-color: rgba(102,126,234,0.3);
-      box-shadow: 0 4px 12px rgba(102,126,234,0.08);
+      border-color: rgba(102, 126, 234, 0.3);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.08);
     }
 
     .identity-icon {
@@ -508,7 +543,8 @@
     .identity-info {
       display: flex;
       flex-direction: column;
-      min-width: 0; /* Allow truncation */
+      min-width: 0;
+      /* Allow truncation */
     }
 
     .identity-label {
@@ -534,7 +570,8 @@
       display: flex;
       gap: 6px;
       width: 100%;
-      grid-column: span 3; /* Push to next line in card grid on narrow widths or use child layout */
+      grid-column: span 3;
+      /* Push to next line in card grid on narrow widths or use child layout */
       margin-top: 4px;
     }
 
@@ -552,7 +589,7 @@
     .identity-input:focus {
       outline: none;
       border-color: #667eea;
-      box-shadow: 0 0 0 3px rgba(102,126,234,0.1);
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
     }
 
     .btn-identity-update {
@@ -570,7 +607,7 @@
 
     .btn-identity-update:hover {
       transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(102,126,234,0.2);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
     }
 
     .btn-identity-update:disabled {
@@ -602,20 +639,20 @@
 
     /* Tabs – glass card */
     .tabs {
-      background: rgba(255,255,255,0.9);
+      background: rgba(255, 255, 255, 0.9);
       backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
       border-radius: 12px;
-      border: 1px solid rgba(255,255,255,0.65);
+      border: 1px solid rgba(255, 255, 255, 0.65);
       margin-bottom: 0;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.07);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.07);
       overflow: hidden;
     }
 
     .tab-buttons {
       display: flex;
-      border-bottom: 1px solid rgba(0,0,0,0.06);
-      background: rgba(248,250,255,0.85);
+      border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+      background: rgba(248, 250, 255, 0.85);
     }
 
     .tab-button {
@@ -641,15 +678,20 @@
 
     .tab-button:hover:not(.active) {
       color: #555;
-      background: rgba(240,242,248,0.8);
+      background: rgba(240, 242, 248, 0.8);
     }
 
     .tab-content {
       padding: 16px;
     }
 
-    .tab-pane { display: none; }
-    .tab-pane.active { display: block; }
+    .tab-pane {
+      display: none;
+    }
+
+    .tab-pane.active {
+      display: block;
+    }
 
     /* Sub-tabs */
     .sub-tab-bar {
@@ -661,7 +703,7 @@
 
     .sub-tab-btn {
       padding: 6px 14px;
-      background: rgba(240,242,248,0.9);
+      background: rgba(240, 242, 248, 0.9);
       border: none;
       border-radius: 20px;
       cursor: pointer;
@@ -676,10 +718,17 @@
       color: #fff;
     }
 
-    .sub-tab-btn:hover:not(.active) { background: #dde0f0; }
+    .sub-tab-btn:hover:not(.active) {
+      background: #dde0f0;
+    }
 
-    .sub-tab-pane { display: none; }
-    .sub-tab-pane.active { display: block; }
+    .sub-tab-pane {
+      display: none;
+    }
+
+    .sub-tab-pane.active {
+      display: block;
+    }
 
     /* Stat cards */
     .stats-grid {
@@ -690,19 +739,31 @@
     }
 
     .stat-card {
-      background: rgba(255,255,255,0.9);
+      background: rgba(255, 255, 255, 0.9);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       padding: 16px 20px;
       border-radius: 10px;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
       border-left: 4px solid #667eea;
-      border-top: 1px solid rgba(255,255,255,0.8);
+      border-top: 1px solid rgba(255, 255, 255, 0.8);
     }
-    .stat-card:nth-child(1) { border-left-color: #667eea; }
-    .stat-card:nth-child(2) { border-left-color: #f0a500; }
-    .stat-card:nth-child(3) { border-left-color: #28a745; }
-    .stat-card:nth-child(4) { border-left-color: #e94560; }
+
+    .stat-card:nth-child(1) {
+      border-left-color: #667eea;
+    }
+
+    .stat-card:nth-child(2) {
+      border-left-color: #f0a500;
+    }
+
+    .stat-card:nth-child(3) {
+      border-left-color: #28a745;
+    }
+
+    .stat-card:nth-child(4) {
+      border-left-color: #e94560;
+    }
 
     .stat-card h3 {
       color: #777;
@@ -762,19 +823,23 @@
     }
 
     @media (max-width: 900px) {
-      .charts-grid { grid-template-columns: 1fr; }
+      .charts-grid {
+        grid-template-columns: 1fr;
+      }
     }
 
     .chart-card {
-      background: rgba(255,255,255,0.9);
+      background: rgba(255, 255, 255, 0.9);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       padding: 16px;
       border-radius: 10px;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
-      border: 1px solid rgba(255,255,255,0.7);
-      min-width: 0;       /* CRITICAL: forces grid cell to shrink below content size */
-      overflow: hidden;   /* prevents any canvas overflow from breaking layout */
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.7);
+      min-width: 0;
+      /* CRITICAL: forces grid cell to shrink below content size */
+      overflow: hidden;
+      /* prevents any canvas overflow from breaking layout */
     }
 
     .chart-card h3 {
@@ -1217,10 +1282,10 @@
       bottom: 0;
       left: 0;
       right: 0;
-      background: rgba(10,12,28,0.88);
+      background: rgba(10, 12, 28, 0.88);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-      border-top: 1px solid rgba(255,255,255,0.08);
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
       color: rgba(255, 255, 255, 0.4);
       font-size: 11.5px;
       padding: 7px 20px;
@@ -1241,11 +1306,11 @@
 
     .tz-select {
       padding: 6px 8px;
-      border: 1px solid rgba(102,126,234,0.3);
+      border: 1px solid rgba(102, 126, 234, 0.3);
       border-radius: 6px;
       font-size: 12px;
       color: #444;
-      background: rgba(248,250,255,0.9);
+      background: rgba(248, 250, 255, 0.9);
       cursor: pointer;
       max-width: 170px;
       transition: border-color 0.2s;
@@ -1518,30 +1583,76 @@
 
     /* ── RESPONSIVENESS OVERRIDES ── */
     @media (max-width: 1024px) {
-      .identity-section { grid-template-columns: repeat(2, 1fr); }
+      .identity-section {
+        grid-template-columns: repeat(2, 1fr);
+      }
     }
 
     @media (max-width: 900px) {
-      .header-actions { justify-content: flex-start; }
-      .header-buttons .btn { padding: 8px 12px; font-size: 12px; }
-      .dashboard-controls { flex-direction: column; align-items: stretch; }
-      .control-group { justify-content: space-between; width: 100%; }
-      .control-divider { display: none; }
+      .header-actions {
+        justify-content: flex-start;
+      }
+
+      .header-buttons .btn {
+        padding: 8px 12px;
+        font-size: 12px;
+      }
+
+      .dashboard-controls {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .control-group {
+        justify-content: space-between;
+        width: 100%;
+      }
+
+      .control-divider {
+        display: none;
+      }
     }
 
     @media (max-width: 650px) {
-      .identity-section { grid-template-columns: 1fr; }
-      .identity-card { grid-template-columns: auto 1fr; }
-      .identity-input-group { grid-column: span 2; }
-      .header-title h1 { font-size: 17px; }
-      .btn-warning { width: 100%; }
+      .identity-section {
+        grid-template-columns: 1fr;
+      }
+
+      .identity-card {
+        grid-template-columns: auto 1fr;
+      }
+
+      .identity-input-group {
+        grid-column: span 2;
+      }
+
+      .header-title h1 {
+        font-size: 17px;
+      }
+
+      .btn-warning {
+        width: 100%;
+      }
     }
 
     @media (max-width: 480px) {
-      .stats-grid { grid-template-columns: 1fr; }
-      .tab-button { padding: 10px 5px; font-size: 11px; }
-      .header-actions { flex-direction: column; align-items: stretch; }
-      .btn { width: 100%; }
+      .stats-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .tab-button {
+        padding: 10px 5px;
+        font-size: 11px;
+      }
+
+      .header-actions {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .btn {
+        width: 100%;
+      }
     }
   </style>
 </head>
@@ -1613,32 +1724,55 @@
       <div class="control-group">
         <label style="font-size:13px;font-weight:700;color:#64748B;">TZ:</label>
         <select id="timezone-select" class="tz-select" title="Display timezone for all timestamps">
-          <optgroup label="— UTC —"><option value="UTC">UTC (Universal)</option></optgroup>
-          <optgroup label="South Asia"><option value="Asia/Dhaka">Dhaka (UTC+6)</option><option value="Asia/Kolkata">Kolkata (UTC+5:30)</option><option value="Asia/Karachi">Karachi (UTC+5)</option></optgroup>
-          <optgroup label="East / SE Asia"><option value="Asia/Singapore">Singapore (UTC+8)</option><option value="Asia/Shanghai">Beijing / Shanghai (UTC+8)</option><option value="Asia/Tokyo">Tokyo (UTC+9)</option><option value="Asia/Bangkok">Bangkok (UTC+7)</option></optgroup>
-          <optgroup label="Europe"><option value="Europe/London">London (UTC+0/+1)</option><option value="Europe/Paris">Paris (UTC+1/+2)</option><option value="Europe/Moscow">Moscow (UTC+3)</option></optgroup>
-          <optgroup label="Americas"><option value="America/New_York">New York (UTC-5)</option><option value="America/Chicago">Chicago (UTC-6)</option><option value="America/Los_Angeles">Los Angeles (UTC-8)</option></optgroup>
+          <optgroup label="— UTC —">
+            <option value="UTC">UTC (Universal)</option>
+          </optgroup>
+          <optgroup label="South Asia">
+            <option value="Asia/Dhaka">Dhaka (UTC+6)</option>
+            <option value="Asia/Kolkata">Kolkata (UTC+5:30)</option>
+            <option value="Asia/Karachi">Karachi (UTC+5)</option>
+          </optgroup>
+          <optgroup label="East / SE Asia">
+            <option value="Asia/Singapore">Singapore (UTC+8)</option>
+            <option value="Asia/Shanghai">Beijing / Shanghai (UTC+8)</option>
+            <option value="Asia/Tokyo">Tokyo (UTC+9)</option>
+            <option value="Asia/Bangkok">Bangkok (UTC+7)</option>
+          </optgroup>
+          <optgroup label="Europe">
+            <option value="Europe/London">London (UTC+0/+1)</option>
+            <option value="Europe/Paris">Paris (UTC+1/+2)</option>
+            <option value="Europe/Moscow">Moscow (UTC+3)</option>
+          </optgroup>
+          <optgroup label="Americas">
+            <option value="America/New_York">New York (UTC-5)</option>
+            <option value="America/Chicago">Chicago (UTC-6)</option>
+            <option value="America/Los_Angeles">Los Angeles (UTC-8)</option>
+          </optgroup>
         </select>
         <span id="tz-badge" class="tz-badge"></span>
         <div class="control-divider"></div>
-        <input type="date" id="date-picker" style="padding:7px 10px;border:2px solid #e8eaf0;border-radius:7px;font-size:13px;">
+        <input type="date" id="date-picker"
+          style="padding:7px 10px;border:2px solid #e8eaf0;border-radius:7px;font-size:13px;">
         <button class="btn-success" id="search-btn">Search</button>
         <button class="btn-secondary" id="today-btn">Today</button>
         <div class="control-divider"></div>
-        <button id="server-config-btn" onclick="openServerConfigModal()" style="padding:7px 14px;font-size:13px;background:linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">
+        <button id="server-config-btn" onclick="openServerConfigModal()"
+          style="padding:7px 14px;font-size:13px;background:linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">
           ⚙ Config Server API
         </button>
       </div>
 
       <!-- Right side: Mac Address, Status, Controls -->
       <div class="control-group" style="margin-left: auto;">
-        <small style="color:#64748B;font-size:12px;font-weight:700;">MAC: <span id="display-mac-address" style="color:#1E293B;">Loading...</span></small>
+        <small style="color:#64748B;font-size:12px;font-weight:700;">MAC: <span id="display-mac-address"
+            style="color:#1E293B;">Loading...</span></small>
         <div class="status-badge" id="status-badge">
           <span class="status-indicator active" id="status-indicator"></span>
           <span id="status-text">Active</span>
         </div>
         <button class="btn-danger" id="pause-btn" style="padding:6px 12px;font-size:13px;">Pause</button>
-        <button class="btn-success" id="resume-btn" style="padding:6px 12px;font-size:13px;display:none;">Resume</button>
+        <button class="btn-success" id="resume-btn"
+          style="padding:6px 12px;font-size:13px;display:none;">Resume</button>
       </div>
     </div>
 
@@ -1681,9 +1815,7 @@
       </div>
 
       <!-- Compact confirm button on the far right -->
-      <button id="confirm-credential-btn"
-              title="Confirm device identity before syncing starts"
-              style="padding:7px 14px; font-size:13px; font-weight:600; border:none; border-radius:7px;
+      <button id="confirm-credential-btn" title="Confirm device identity before syncing starts" style="padding:7px 14px; font-size:13px; font-weight:600; border:none; border-radius:7px;
                      cursor:pointer; white-space:nowrap; transition:background 0.2s, color 0.2s; flex-shrink:0;">
         🔒 Confirm Credential
       </button>
@@ -1836,7 +1968,8 @@
 
         <!-- ── SCREEN RECORDING TAB ── -->
         <div id="screen-recording-tab" class="tab-pane">
-          <h2 style="font-size:20px; font-weight:700; color:#1E293B; margin-bottom:16px;">🎥 Screen Recording Controls</h2>
+          <h2 style="font-size:20px; font-weight:700; color:#1E293B; margin-bottom:16px;">🎥 Screen Recording Controls
+          </h2>
           <div class="toggle-row">
             <div>
               <div class="toggle-label">Screen Recording</div>
@@ -1966,9 +2099,8 @@
     <div class="modal-box sc-modal-box">
 
       <div class="sc-header">
-        <h2>⚙ Configure Server APIs</h2>
+        <h2>Configure Server APIs</h2>
       </div>
-
       <!-- LOCKED BANNER — visible only when DYNAMIC_API_ENABLED = False -->
       <div id="sc-locked-banner" style="display:none;" class="sc-locked-banner">
         <span class="sc-lock-icon">🔒</span>
@@ -1983,10 +2115,9 @@
       <!-- DYNAMIC BODY — visible only when DYNAMIC_API_ENABLED = True -->
       <div id="sc-dynamic-body">
 
-        <div class="sc-intro">
-          <p>Configure individual endpoint URLs, or use the <strong>Base URL</strong>
-            shortcut below to populate all 9 at once.
-            Leave a field blank to skip syncing that data type.</p>
+        <div class="sc-intro"><br>
+          <p>Auto Configure individual 11-endpoint by entering <strong>Base URL</strong><br>
+          </p>
         </div>
 
         <!-- Base URL Shortcut row -->
@@ -1994,7 +2125,9 @@
           <div class="sc-base-url-field">
             <label class="sc-label">
               Base URL
-              <span class="sc-opt">(optional shortcut — sets all 9 endpoints at once)</span>
+              <span class="sc-opt">(optional shortcut — sets all 11 endpoints at once)
+
+              </span>
             </label>
             <div class="sc-base-url-controls">
               <input type="url" id="sc-base-url" placeholder="https://api.company.com"
@@ -2005,8 +2138,7 @@
               </button>
             </div>
             <p class="sc-base-url-hint">
-              After clicking Apply, the full URLs appear in the fields below.
-              You can still edit individual fields manually.
+
             </p>
           </div>
         </div>
@@ -2030,7 +2162,6 @@
         <!-- ── 1. App Activity ─────────────────────────────────────────────── -->
         <div class="sc-type-block">
           <div class="sc-type-label">
-            <span class="sc-icon">🖥</span>
             <span>App Activity</span>
             <span class="sc-badge json-badge">POST JSON</span>
           </div>
@@ -2055,7 +2186,6 @@
         <!-- ── 2. Browser Activity ─────────────────────────────────────────── -->
         <div class="sc-type-block">
           <div class="sc-type-label">
-            <span class="sc-icon">🌐</span>
             <span>Browser Activity</span>
             <span class="sc-badge json-badge">POST JSON</span>
           </div>
@@ -2079,7 +2209,6 @@
         <!-- ── 3. Clipboard ────────────────────────────────────────────────── -->
         <div class="sc-type-block">
           <div class="sc-type-label">
-            <span class="sc-icon">📋</span>
             <span>Clipboard Events</span>
             <span class="sc-badge json-badge">POST JSON</span>
           </div>
@@ -2102,7 +2231,6 @@
         <!-- ── 4. Keystrokes ───────────────────────────────────────────────── -->
         <div class="sc-type-block">
           <div class="sc-type-label">
-            <span class="sc-icon">⌨</span>
             <span>Keystrokes / Text Logs</span>
             <span class="sc-badge json-badge">POST JSON</span>
           </div>
@@ -2126,7 +2254,6 @@
         <!-- ── 5. Screenshots ──────────────────────────────────────────────── -->
         <div class="sc-type-block">
           <div class="sc-type-label">
-            <span class="sc-icon">📸</span>
             <span>Screenshots</span>
             <span class="sc-badge file-badge">POST multipart/form-data</span>
           </div>
@@ -2156,7 +2283,6 @@ Response: HTTP 200/201 with any body.</pre>
         <!-- ── 6. Videos ───────────────────────────────────────────────────── -->
         <div class="sc-type-block">
           <div class="sc-type-label">
-            <span class="sc-icon">🎥</span>
             <span>Screen Recordings</span>
             <span class="sc-badge file-badge">POST multipart/form-data</span>
           </div>
@@ -2188,7 +2314,6 @@ Response: HTTP 200/201 with any body.</pre>
         <!-- ── 7. Overall Monitoring Settings ───────────────────────────────── -->
         <div class="sc-type-block">
           <div class="sc-type-label">
-            <span class="sc-icon">⚙</span>
             <span>Monitoring Settings</span>
             <span class="sc-badge json-badge">GET JSON</span>
           </div>
@@ -2213,7 +2338,6 @@ POST Notification (when toggled locally):
         <!-- ── 8. Screenshot Settings ────────────────────────────────────── -->
         <div class="sc-type-block">
           <div class="sc-type-label">
-            <span class="sc-icon">🖼</span>
             <span>Screenshot Settings</span>
             <span class="sc-badge json-badge">GET JSON</span>
           </div>
@@ -2238,7 +2362,6 @@ POST Notification (when toggled locally):
         <!-- ── 9. Video Settings ────────────────────────────────────────── -->
         <div class="sc-type-block">
           <div class="sc-type-label">
-            <span class="sc-icon">🎥</span>
             <span>Video Settings</span>
             <span class="sc-badge json-badge">GET JSON</span>
           </div>
@@ -2263,12 +2386,11 @@ POST Notification (when toggled locally):
         <!-- ── 10. Device Status ────────────────────────────────────────── -->
         <div class="sc-type-block">
           <div class="sc-type-label">
-            <span class="sc-icon">💤</span>
             <span>Device Status</span>
             <span class="sc-badge json-badge">POST JSON</span>
           </div>
-          <input type="url" id="sc-url-device-status"
-            placeholder="https://api.example.com/api/pctracking/device-status" class="sc-input sc-url-input" />
+          <input type="url" id="sc-url-device-status" placeholder="https://api.example.com/api/pctracking/device-status"
+            class="sc-input sc-url-input" />
           <p class="sc-base-url-hint">Endpoint to report device power states (Auto-Paused, Sleep, Shutdown).</p>
           <details class="sc-demo">
             <summary>📋 Demo Format (POST)</summary>
@@ -2285,7 +2407,6 @@ POST Notification (when toggled locally):
         <!-- ── 11. Confirm Identity ─────────────────────────────────────── -->
         <div class="sc-type-block">
           <div class="sc-type-label">
-            <span class="sc-icon">🔒</span>
             <span>Confirm Identity</span>
             <span class="sc-badge json-badge">POST JSON</span>
           </div>

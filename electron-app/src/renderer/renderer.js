@@ -374,7 +374,15 @@ function openServerConfigModal() {
       if (path) el.placeholder = `https://your-server.com${path}`;
     });
 
-  }).catch(() => { });
+  }).catch(err => {
+    console.error('Failed to get config:', err);
+    if (errorEl) {
+      errorEl.textContent = 'Failed to load configuration. Backend might be offline.';
+      errorEl.style.display = 'block';
+    }
+    document.getElementById('sc-dynamic-body').style.display = 'none';
+    saveBtn.style.display = 'none';
+  });
 }
 
 function closeServerConfigModal() {
@@ -445,9 +453,12 @@ async function handleSaveServerConfig() {
     base_url: document.getElementById('sc-base-url').value.trim(),
   };
 
+  let hasAtLeastOneEndpoint = false;
+
   for (const f of urlFields) {
     const val = document.getElementById(f.id).value.trim();
     if (val) {
+      hasAtLeastOneEndpoint = true;
       try { new URL(val); }
       catch {
         errorEl.textContent = `${f.label}: invalid URL — must start with https://`;
@@ -456,6 +467,12 @@ async function handleSaveServerConfig() {
       }
     }
     payload[f.key] = val;
+  }
+
+  if (!payload.base_url && !hasAtLeastOneEndpoint) {
+    errorEl.textContent = 'Please enter a Base URL or at least one endpoint URL.';
+    errorEl.style.display = 'block';
+    return;
   }
 
   saveBtn.disabled = true;
