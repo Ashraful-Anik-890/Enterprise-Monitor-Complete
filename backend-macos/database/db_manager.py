@@ -74,6 +74,10 @@ class DatabaseManager:
             conn   = self._conn
             cursor = conn.cursor()
 
+            # Check if this is a brand new database BEFORE creating tables
+            cursor.execute("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='screenshots'")
+            is_fresh_install = cursor.fetchone()[0] == 0
+
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS screenshots (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -155,6 +159,12 @@ class DatabaseManager:
                     value TEXT
                 )
             ''')
+
+            # Seed the default sync state based on installation type
+            if is_fresh_install:
+                cursor.execute("INSERT OR IGNORE INTO device_config (key, value) VALUES ('sync_enabled', 'false')")
+            else:
+                cursor.execute("INSERT OR IGNORE INTO device_config (key, value) VALUES ('sync_enabled', 'true')")
 
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS daily_summary (

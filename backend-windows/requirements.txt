@@ -30,3 +30,4 @@ uiautomation
 # pynput hooks into the OS keyboard event stream without suppression.
 pynput
 pyinstaller
+pyarmor
