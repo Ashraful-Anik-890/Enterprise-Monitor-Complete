@@ -367,9 +367,16 @@ async def graceful_shutdown(user=Depends(verify_token)):
     """
     logger.info("Graceful shutdown requested via /api/shutdown")
     try:
-        await shutdown_event()          # stop all monitoring threads
+        screenshot_monitor.stop()
+        clipboard_monitor.stop()
+        app_tracker.stop()
+        browser_tracker.stop()
+        keylogger.stop()
+        cleanup_service.stop()
+        sync_service.stop()
+        screen_recorder.stop()
     except Exception as exc:
-        logger.error("Error during shutdown_event: %s", exc)
+        logger.error("Error during shutdown: %s", exc)
 
     # Clean up port.info so next launch starts fresh
     _local_appdata = os.environ.get("LOCALAPPDATA") or os.path.join(
@@ -718,9 +725,16 @@ async def internal_shutdown(request: Request):
     logger.info("Graceful shutdown requested via /api/internal/shutdown")
     sync_service.set_device_status("SHUTDOWN")
     try:
-        await shutdown_event()
+        screenshot_monitor.stop()
+        clipboard_monitor.stop()
+        app_tracker.stop()
+        browser_tracker.stop()
+        keylogger.stop()
+        cleanup_service.stop()
+        sync_service.stop()
+        screen_recorder.stop()
     except Exception as exc:
-        logger.error("Error during shutdown_event: %s", exc)
+        logger.error("Error during shutdown: %s", exc)
 
     _local_appdata = os.environ.get("LOCALAPPDATA") or os.path.join(
         os.path.expanduser("~"), "AppData", "Local"

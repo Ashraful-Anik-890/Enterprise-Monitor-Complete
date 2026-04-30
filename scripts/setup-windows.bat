@@ -77,76 +77,77 @@ IF NOT DEFINED PYTHON_EXE (
 echo   [OK] Python: !PYTHON_EXE!
 
 :: ─────────────────────────────────────────────────────────────────────────────
-:: STEP 2 — BUILD WITH PYINSTALLER (ONEDIR)
+:: STEP 1b — CLEANUP
 :: ─────────────────────────────────────────────────────────────────────────────
 echo.
-echo [2/5] Building backend (onedir)...
+echo [1b/5] Cleaning build environment...
+
+cd /d "%BACKEND_DIR%"
+if exist dist rmdir /s /q dist
+if exist build rmdir /s /q build
+if exist dist_obf rmdir /s /q dist_obf
+if exist __pycache__ rmdir /s /q __pycache__
+echo   [OK] Backend build folders cleared
+
+echo   [OK] Workspace is clean
+
+:: ─────────────────────────────────────────────────────────────────────────────
+:: STEP 2a — OBFUSCATE WITH PYARMOR
+:: ─────────────────────────────────────────────────────────────────────────────
+echo.
+echo [2a/5] Obfuscating Python source with PyArmor...
 
 cd /d "%BACKEND_DIR%"
 
-IF EXIST "enterprise_monitor_backend.spec" (
-    echo   [INFO] Using enterprise_monitor_backend.spec
-    "!PYTHON_EXE!" -m PyInstaller enterprise_monitor_backend.spec
-) ELSE (
-    echo   [INFO] No .spec found, using inline flags (onedir)
-    "!PYTHON_EXE!" -m PyInstaller ^
-        --onedir ^
-        --noconsole ^
-        --name enterprise_monitor_backend ^
-        --hidden-import=uvicorn.logging ^
-        --hidden-import=uvicorn.loops ^
-        --hidden-import=uvicorn.loops.auto ^
-        --hidden-import=uvicorn.protocols ^
-        --hidden-import=uvicorn.protocols.http ^
-        --hidden-import=uvicorn.protocols.http.auto ^
-        --hidden-import=uvicorn.protocols.websockets ^
-        --hidden-import=uvicorn.protocols.websockets.auto ^
-        --hidden-import=uvicorn.lifespan ^
-        --hidden-import=uvicorn.lifespan.on ^
-        --hidden-import=anyio ^
-        --hidden-import=anyio.backends.asyncio ^
-        --hidden-import=anyio._backends._asyncio ^
-        --hidden-import=multipart ^
-        --hidden-import=pynput.keyboard._win32 ^
-        --hidden-import=pynput.mouse._win32 ^
-        --hidden-import=win32api ^
-        --hidden-import=win32con ^
-        --hidden-import=win32gui ^
-        --hidden-import=win32process ^
-        --hidden-import=cv2 ^
-        --hidden-import=mss ^
-        --hidden-import=mss.windows ^
-        --hidden-import=numpy ^
-        --hidden-import=numpy.core._methods ^
-        --hidden-import=numpy.lib.format ^
-        --hidden-import=passlib ^
-        --hidden-import=passlib.handlers.bcrypt ^
-        --hidden-import=passlib.handlers.sha2_crypt ^
-        --hidden-import=jose ^
-        --hidden-import=jose.jwt ^
-        --hidden-import=jose.backends ^
-        --collect-all=cv2 ^
-        --collect-all=mss ^
-        --collect-all=uiautomation ^
-        main.py
-)
+:: Clean previous
+if exist dist_obf rmdir /s /q dist_obf
+mkdir dist_obf
+
+:: Copy everything to staging area EXCEPT build folders
+echo   Staging source files...
+robocopy . dist_obf /E /NJH /NJS /NDL /NC /NS /MT /XF .DS_Store /XD dist dist_obf build __pycache__
+
+:: Obfuscate only the sensitive modules (under 32KB trial limit)
+:: These will overwrite the plain-text versions in the dist_obf folder
+echo   Obfuscating sensitive modules...
+"!PYTHON_EXE!" -m pyarmor.cli gen --output dist_obf --recursive ^
+    main.py url.py auth\ monitoring\ utils\
+
 
 IF %ERRORLEVEL% NEQ 0 (
-    echo.
-    echo [ERROR] PyInstaller build FAILED. Read the output above carefully.
-    echo   Common fixes:
-    echo     Missing package : "!PYTHON_EXE!" -m pip install ^<package-name^>
-    echo     Stale cache     : delete backend-windows\build\ and retry
+    echo [ERROR] PyArmor obfuscation FAILED.
     pause
     EXIT /B 1
 )
 
-IF NOT EXIST "%EXE_SRC%" (
-    echo [ERROR] Build succeeded but EXE missing: %EXE_SRC%
+echo   [OK] Obfuscation complete: %BACKEND_DIR%\dist_obf
+
+:: ─────────────────────────────────────────────────────────────────────────────
+:: STEP 2b — BUILD PYINSTALLER FROM OBFUSCATED OUTPUT
+:: ─────────────────────────────────────────────────────────────────────────────
+echo.
+echo [2b/5] Building backend from obfuscated source...
+
+cd /d "%BACKEND_DIR%\dist_obf"
+
+:: Copy the spec file into obfuscated dir (paths are relative)
+copy /Y "%BACKEND_DIR%\enterprise_monitor_backend.spec" .
+
+:: Run PyInstaller on obfuscated main.py
+"!PYTHON_EXE!" -m PyInstaller enterprise_monitor_backend.spec
+
+IF %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] PyInstaller build FAILED on obfuscated source.
     pause
     EXIT /B 1
 )
-echo   [OK] Built: %DIST_DIR%
+
+:: Move output back to expected location
+IF EXIST "%BACKEND_DIR%\dist" RMDIR /S /Q "%BACKEND_DIR%\dist"
+MOVE "dist" "%BACKEND_DIR%\dist"
+
+cd /d "%BACKEND_DIR%"
+echo   [OK] Protected binary built: %DIST_DIR%
 
 :: ─────────────────────────────────────────────────────────────────────────────
 :: STEP 3 — CLEANUP STALE TASK SCHEDULER (from previous script versions)

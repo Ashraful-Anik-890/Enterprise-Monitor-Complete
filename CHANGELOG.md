@@ -6,9 +6,12 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [5.3.0] — 2026-04-18
+## [5.3.0] — 2026-04-30
 
 ### Added
+- **PyArmor Obfuscation Integration** — Successfully integrated professional code obfuscation into the build pipeline for both macOS and Windows, securing the source code while maintaining compatibility with the 32KB trial license.
+- **Hybrid Staging Pipeline** — Implemented a staging-based build workflow that selectively obfuscates sensitive core logic (`auth`, `monitoring`, `utils`) while keeping large boilerplate files plain-text to bypass trial limitations.
+- **Universal Asset Copying** — Replaced platform-specific shell commands (`xcopy`/`cp`) with a cross-platform Node.js script in `package.json` for consistent renderer asset distribution across all environments.
 - **Liquid Glass Design System** — Full UI refactor with a premium glassmorphic aesthetic, animated gradient backgrounds, and frosted glass components.
 - **Identity Confirmation Workflow** — New first-run experience that requires admins to verify device/user aliases and specify a physical location before syncing begins.
 - **Location Tracking** — Added `location` mapping to all monitoring telemetry, allowing for departmental or office-based data filtering.
@@ -22,6 +25,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - **Sync Marker Reset** — New `POST /api/sync/reset-markers` endpoint resets all `synced` flags to `0`, enabling admin-triggered full data re-upload after a server-side DB reset.
 
 ### Improved
+- **Cross-Platform Build Parity** — Unified the `setup-macos.sh` and `setup-windows.bat` scripts to use identical logic for workspace cleanup, source staging, and obfuscation.
+- **Dependency Mapping** — Hardened PyInstaller `.spec` files with explicit `hiddenimports` and `collect_all` loops for all 3rd-party dependencies (pyperclip, PIL, pydantic, etc.) that become invisible to static analysis after obfuscation.
+- **Build Robustness** — Refined automated cleanup logic to prevent premature deletion of required Electron assets, ensuring the backend and frontend builds can run sequentially without directory conflicts.
 - **Dashboard Responsiveness** — Refactored the identity section and control layouts to prevent overlapping on small windows.
 - **Chart.js Scaling** — Improved canvas sizing logic to ensure visualizations remain sharp and well-proportioned across different resolutions.
 - **Sync Reachability Logic** — Added atomic port polling and reachability flags to provide clearer network status in the UI.
@@ -29,8 +35,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - **MAC Address Detection** — Replaced volatile `uuid.getnode()` with platform-specific physical NIC detection (`ifconfig en0` on macOS, `getmac /v` on Windows) to prevent duplicate device entries. Uses soft migration — existing stored MACs are never overwritten.
 
 ### Fixed
+- **PyInstaller Dependency Crashes** — Resolved multiple `ModuleNotFoundError` and `ImportError` (e.g., `pyperclip`, `PIL.Image`) in the packaged binaries by forcing explicit package collection in the build specification.
+- **Electron build:mac Error** — Fixed a `xcopy: command not found` error on macOS by transitioning the asset-copying pipeline to a Node-native implementation.
 - **Backend Import Stability** — Fixed a `NameError` in the FastAPI backends where `Request` was not imported, ensuring internal API calls succeed silently.
 - **Post-Reset Data Loss** — Fixed missing browser/clipboard data after server DB resets by providing a "Re-sync All Data" mechanism to reset local sync markers.
+- **"Install on Restart" Bug** — Fixed an issue where deferred updates would not trigger correctly upon system restart or unauthenticated quits by persisting the pending version flag and extending the `before-quit` handler to consistently process pending updates.
+- **Shutdown Event Bug** — Fixed an issue causing `NameError: 'shutdown_event' is not defined` during graceful app termination by replacing the undefined function with explicit service `stop()` calls in the Windows and macOS backend APIs.
+
+### Changed
+- **Default Credentials** — Updated the default admin credentials in `auth_manager.py` across both platforms to `tahmiditpark` / `Tahmid@1241`.
 
 ## [5.2.7] — 2026-04-02
 

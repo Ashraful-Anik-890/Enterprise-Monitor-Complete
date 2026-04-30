@@ -58,47 +58,80 @@ fi
 NODE_VERSION=$(node --version)
 echo "  [OK] Node.js $NODE_VERSION"
 
-# ── STEP 1: Install Python Dependencies ─────────────────────────────────────
+# ── STEP 1: Clean build environment ──────────────────────────────────────────
+
+echo "[1/4] Cleaning build environment..."
+
+# Clean backend artifacts
+cd "$BACKEND_DIR"
+rm -rf dist build dist_obf __pycache__ .pyarmor
+echo "  [OK] Backend build folders cleared"
+
+echo "  [OK] Workspace is clean"
+
+# ── STEP 1a: Dependencies ───────────────────────────────────────────────────
 
 echo ""
-echo "[1/4] Installing Python dependencies..."
+echo "[1a/4] Installing Python dependencies..."
+cd "$BACKEND_DIR"
 "$PYTHON_BIN" -m pip install -r "$BACKEND_DIR/requirements.txt"
 echo "  [OK] All dependencies installed"
 
-# ── STEP 2: Build Backend with PyInstaller ──────────────────────────────────
+# ── STEP 1b: Obfuscate with PyArmor ─────────────────────────────────────────
 
 echo ""
-echo "[2/4] Building backend with PyInstaller (onedir, arm64)..."
+echo "[1b/4] Obfuscating Python source with PyArmor..."
 
 cd "$BACKEND_DIR"
 
-if [ -d "$BACKEND_DIR/build" ]; then
-    echo "  Cleaning previous build..."
-    rm -rf "$BACKEND_DIR/build"
-fi
-if [ -d "$DIST_DIR" ]; then
-    echo "  Cleaning previous dist..."
-    rm -rf "$DIST_DIR"
-fi
+# Clean previous
+rm -rf dist_obf
+mkdir -p dist_obf
 
-if [ -f "enterprise_monitor_backend_mac.spec" ]; then
-    echo "  Using enterprise_monitor_backend_mac.spec"
-    "$PYTHON_BIN" -m PyInstaller enterprise_monitor_backend_mac.spec --noconfirm
+# Detect PyArmor module name
+PYARMOR_MODULE=""
+if "$PYTHON_BIN" -m pyarmor.cli --version >/dev/null 2>&1; then
+    PYARMOR_MODULE="pyarmor.cli"
+elif "$PYTHON_BIN" -m pyarmor --version >/dev/null 2>&1; then
+    PYARMOR_MODULE="pyarmor"
 else
-    echo "  [ERROR] enterprise_monitor_backend_mac.spec not found"
+    echo "[ERROR] PyArmor is not available for $PYTHON_BIN."
+    echo "  Fix: $PYTHON_BIN -m pip install --upgrade pyarmor"
     exit 1
 fi
 
-if [ ! -d "$DIST_DIR" ]; then
-    echo ""
-    echo "[ERROR] Build failed — dist directory not found: $DIST_DIR"
-    echo "  Common fixes:"
-    echo "    Missing package:  pip3 install <package-name>"
-    echo "    Stale cache:      rm -rf build/ dist/ and retry"
+echo "  Staging source files..."
+# Copy everything to staging area EXCEPT build artifacts and the staging folder itself
+rsync -a --exclude='dist_obf' --exclude='dist' --exclude='build' --exclude='__pycache__' ./ dist_obf/
+
+# Obfuscate only the sensitive modules (under 32KB trial limit)
+# These will overwrite the plain-text versions in the dist_obf folder
+echo "  Obfuscating sensitive modules..."
+"$PYTHON_BIN" -m "$PYARMOR_MODULE" gen --output dist_obf --recursive \
+    main.py url.py auth/ monitoring/ utils/
+
+
+
+if [ $? -ne 0 ]; then
+    echo "[ERROR] PyArmor obfuscation failed"
     exit 1
 fi
 
-echo "  [OK] Backend built: $DIST_DIR"
+echo "  [OK] Obfuscation complete"
+
+# Build PyInstaller from obfuscated output
+cd "$BACKEND_DIR/dist_obf"
+cp "$BACKEND_DIR/enterprise_monitor_backend_mac.spec" .
+
+# Fix the spec file path references (now running from dist_obf)
+"$PYTHON_BIN" -m PyInstaller enterprise_monitor_backend_mac.spec --noconfirm
+
+# Move dist back to expected location
+rm -rf "$BACKEND_DIR/dist"
+mv dist "$BACKEND_DIR/dist"
+
+cd "$BACKEND_DIR"
+echo "  [OK] Protected binary: $DIST_DIR"
 
 # ── STEP 3: Electron App ────────────────────────────────────────────────────
 

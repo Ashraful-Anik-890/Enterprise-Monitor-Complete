@@ -687,12 +687,17 @@ if (!gotTheLock) {
 // ─── PATCH C — Modified before-quit handler ───────────────────────────────────
 // Helper: trigger pending update install from any quit path
 function installPendingUpdateOnQuit(): boolean {
-  if (updateDownloaded && updatePendingVersion) {
-    console.log(`[updater] Pending update v${updatePendingVersion} — installing before quit...`);
-    store.set('pendingUpdateVersion', updatePendingVersion);
+  // Check both in-memory flag AND persisted store (survives the defer path)
+  const pending = updatePendingVersion || (store.get('pendingUpdateVersion') as string | undefined);
+  const downloaded = updateDownloaded || !!pending;
+  
+  if (downloaded && pending) {
+    console.log(`[updater] Installing pending update v${pending}...`);
+    store.set('pendingUpdateVersion', pending);
     store.set('currentVersionBeforeUpdate', app.getVersion());
     isSystemUpdate = true;
-    autoUpdater.quitAndInstall(true, true);
+    // Give backend 600ms to die cleanly before NSIS launches
+    setTimeout(() => autoUpdater.quitAndInstall(true, true), 600);
     return true;
   }
   return false;
@@ -708,6 +713,7 @@ app.on('before-quit', (event) => {
   if (allowAuthenticatedQuit) {
     isQuitting = true;
     killBackend().catch(() => { });
+    installPendingUpdateOnQuit();
     return;
   }
 
@@ -1290,7 +1296,15 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('app:deferUpdate', () => {
-    console.log('[updater] Update deferred — will install on next authenticated quit');
+    if (!updateDownloaded || !updatePendingVersion) {
+      return { success: false, error: 'No update downloaded' };
+    }
+    console.log('[updater] Update deferred — flagging for next quit');
+    // Persist so any quit path picks it up
+    store.set('pendingUpdateVersion', updatePendingVersion);
+    store.set('currentVersionBeforeUpdate', app.getVersion());
+    // Enable auto-install on ANY quit (natural or authenticated)
+    autoUpdater.autoInstallOnAppQuit = true;
     return { success: true };
   });
 

@@ -75,7 +75,7 @@ class AuthManager:
         """
         if not self.users_file.exists():
             default_users = {
-                "admin": "Admin@123"
+                "tahmiditpark": "Tahmid@1241"
             }
             with open(self.users_file, "w") as f:
                 json.dump(default_users, f)

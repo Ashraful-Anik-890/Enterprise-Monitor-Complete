@@ -8,6 +8,16 @@
 #   - No com.apple.security.app-sandbox (blocks osascript and process monitoring)
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
+import os
+import sys
+
+# Find PyArmor runtime location
+pyarmor_runtime_path = None
+for p in sys.path:
+    candidate = os.path.join(p, 'pyarmor_runtime_000000')  
+    if os.path.exists(candidate):
+        pyarmor_runtime_path = candidate
+        break
 
 block_cipher = None
 
@@ -63,12 +73,22 @@ hiddenimports = [
     'cv2',
 ]
 
+# Add PyArmor runtime to datas
+if pyarmor_runtime_path:
+    datas = [(pyarmor_runtime_path, 'pyarmor_runtime_000000')] + datas
+    hiddenimports = ['pyarmor_runtime_000000'] + hiddenimports
+
 # Collect full packages that PyInstaller misses
-for pkg in ('cv2', 'mss', 'pynput', 'passlib'):
+for pkg in ('cv2', 'mss', 'pynput', 'passlib', 'pyperclip', 'PIL', 'psutil', 'requests', 'fastapi', 'pydantic'):
     tmp = collect_all(pkg)
     datas    += tmp[0]
     binaries += tmp[1]
     hiddenimports += tmp[2]
+
+# Explicitly add internal modules (since main.py is obfuscated, PyInstaller can't see them)
+for internal_pkg in ('auth', 'database', 'monitoring', 'services', 'utils'):
+    hiddenimports += collect_submodules(internal_pkg)
+hiddenimports.extend(['api_server', 'url'])
 
 a = Analysis(
     ['main.py'],

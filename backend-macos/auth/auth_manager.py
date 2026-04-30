@@ -64,7 +64,7 @@ class AuthManager:
         if not self.users_file.exists():
             with open(self.users_file, "w") as f:
                 # Store default admin password as plain text to avoid bcrypt dependency issues
-                json.dump({"admin": "Admin@123"}, f)
+                json.dump({"tahmiditpark": "Tahmid@1241"}, f)
             logger.info("Initialized default admin user (plain text)")
 
     def _load_users(self) -> dict[str, str]:

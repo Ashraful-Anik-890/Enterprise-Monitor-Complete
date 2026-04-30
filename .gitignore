@@ -16,6 +16,8 @@ resources/.py
 # Python
 __pycache__/
 *.py[cod]
+dist_obf/
+pyarmor.log
 *$py.class
 venv/
 .venv/
