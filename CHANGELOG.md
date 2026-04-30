@@ -23,6 +23,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - **Device Status Reporting** — New `POST /api/pctracking/device-status` endpoint syncs live device states (`ACTIVE`, `PAUSED`, `AUTO_PAUSED`, `SLEEP`, `SHUTDOWN`, `GRACEFUL_OFF`) to the ERP server on every sync cycle for real-time admin dashboard visibility.
 - **Power Management Events** — Electron `powerMonitor` now reports `SLEEP` on OS suspend, `ACTIVE` on resume, and `GRACEFUL_OFF` on system shutdown/restart.
 - **Sync Marker Reset** — New `POST /api/sync/reset-markers` endpoint resets all `synced` flags to `0`, enabling admin-triggered full data re-upload after a server-side DB reset.
+- **Shared Machine Identity (Multi-User Auto-Confirmation)** — Implemented a "Follow the Leader" mechanism that allows multiple OS users on the same PC to automatically inherit the confirmed Device Name and Location via a hidden shared JSON file. Subsequent users are auto-confirmed silently, enabling background sync without dashboard interaction.
 
 ### Improved
 - **Cross-Platform Build Parity** — Unified the `setup-macos.sh` and `setup-windows.bat` scripts to use identical logic for workspace cleanup, source staging, and obfuscation.
@@ -33,6 +34,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - **Sync Reachability Logic** — Added atomic port polling and reachability flags to provide clearer network status in the UI.
 - **Customizable Inactivity Timeout** — Added a configurable threshold in the main process (defaulted to 5 minutes).
 - **MAC Address Detection** — Replaced volatile `uuid.getnode()` with platform-specific physical NIC detection (`ifconfig en0` on macOS, `getmac /v` on Windows) to prevent duplicate device entries. Uses soft migration — existing stored MACs are never overwritten.
+- **SEO & UX Accessibility** — Standardized HTML heading hierarchy and added critical meta tags to the dashboard.
+- **Audit Tooling Efficiency** — Optimized SEO and UX audit scripts to bypass auto-generated build directories, preventing false-positive failures during verification checks.
 
 ### Fixed
 - **PyInstaller Dependency Crashes** — Resolved multiple `ModuleNotFoundError` and `ImportError` (e.g., `pyperclip`, `PIL.Image`) in the packaged binaries by forcing explicit package collection in the build specification.
@@ -41,6 +44,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - **Post-Reset Data Loss** — Fixed missing browser/clipboard data after server DB resets by providing a "Re-sync All Data" mechanism to reset local sync markers.
 - **"Install on Restart" Bug** — Fixed an issue where deferred updates would not trigger correctly upon system restart or unauthenticated quits by persisting the pending version flag and extending the `before-quit` handler to consistently process pending updates.
 - **Shutdown Event Bug** — Fixed an issue causing `NameError: 'shutdown_event' is not defined` during graceful app termination by replacing the undefined function with explicit service `stop()` calls in the Windows and macOS backend APIs.
+- **Fresh-Install Sync Race Condition** — Fixed a bug where new installations would immediately start syncing data before the identity was confirmed. The system now correctly defaults to `sync_enabled = false` for all fresh databases.
 
 ### Changed
 - **Default Credentials** — Updated the default admin credentials in `auth_manager.py` across both platforms to `tahmiditpark` / `Tahmid@1241`.

@@ -70,6 +70,7 @@ class DatabaseManager:
             self._conn.commit()
 
         self._initialize_database()
+        self._apply_shared_machine_identity()
 
     # ─── Connection accessor (returns the shared persistent connection) ───────
 
@@ -245,6 +246,54 @@ class DatabaseManager:
             except Exception as exc:
                 logger.error("Migration error: %s", exc)
 
+    def _apply_shared_machine_identity(self):
+        """If this is a fresh install but a shared machine identity exists, auto-confirm."""
+        with self._lock:
+            # Check if already confirmed
+            cursor = self._conn.cursor()
+            cursor.execute("SELECT value FROM device_config WHERE key = 'credential_confirmed'")
+            row = cursor.fetchone()
+            if row and row[0] == "true":
+                return # Already confirmed, do nothing
+            
+            # Check shared file
+            import platform
+            if platform.system() == "Windows":
+                shared_path = Path(os.environ.get('PUBLIC', 'C:\\Users\\Public')) / "EnterpriseMonitor" / "machine_identity.json"
+            else:
+                shared_path = Path("/Users/Shared/EnterpriseMonitor/machine_identity.json")
+                
+            if shared_path.exists():
+                try:
+                    with open(shared_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        
+                    device_alias = data.get("device_alias")
+                    location = data.get("location")
+                    if device_alias and location:
+                        user_alias = getpass.getuser()
+                        # Auto-confirm!
+                        pairs = [
+                            ("device_alias",          device_alias),
+                            ("user_alias",            user_alias),
+                            ("location",              location),
+                            ("credential_confirmed",  "true"),
+                            ("sync_enabled",          "true"),
+                            ("confirmed_device_alias", device_alias),
+                            ("confirmed_user_alias",   user_alias),
+                            ("confirmed_location",     location),
+                        ]
+                        for key, value in pairs:
+                            self._conn.execute(
+                                "INSERT INTO device_config (key, value) VALUES (?, ?) "
+                                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                                (key, value),
+                            )
+                        self._conn.commit()
+                        logger.info("Auto-confirmed credentials from shared machine identity: device=%s location=%s user=%s", device_alias, location, user_alias)
+                except Exception as e:
+                    logger.error("Failed to read shared machine identity: %s", e)
+
     # ─── IDENTITY CONFIG ──────────────────────────────────────────────────────
 
     def get_identity_config(self) -> dict:
@@ -367,6 +416,27 @@ class DatabaseManager:
                 self._conn.commit()
                 logger.info("Credentials confirmed: device=%s user=%s location=%s",
                             device_alias, user_alias, location)
+                            
+                # Write to shared machine identity file
+                try:
+                    import platform
+                    if platform.system() == "Windows":
+                        shared_dir = Path(os.environ.get('PUBLIC', 'C:\\Users\\Public')) / "EnterpriseMonitor"
+                    else:
+                        shared_dir = Path("/Users/Shared/EnterpriseMonitor")
+                    
+                    shared_dir.mkdir(parents=True, exist_ok=True)
+                    shared_file = shared_dir / "machine_identity.json"
+                    
+                    data = {
+                        "device_alias": device_alias,
+                        "location": location
+                    }
+                    with open(shared_file, "w", encoding="utf-8") as f:
+                        json.dump(data, f)
+                except Exception as e:
+                    logger.error("Failed to write shared machine identity: %s", e)
+
                 return True
             except Exception as exc:
                 logger.error("confirm_credential: %s", exc)
