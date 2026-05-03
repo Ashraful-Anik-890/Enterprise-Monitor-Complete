@@ -46,6 +46,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pauseMonitoring: () => ipcRenderer.invoke('api:pauseMonitoring'),
   resumeMonitoring: () => ipcRenderer.invoke('api:resumeMonitoring'),
   getMonitoringStatus: () => ipcRenderer.invoke('api:getMonitoringStatus'),
+  getBackendUrl: () => ipcRenderer.invoke('api:getBackendUrl'),
 
   // ── Identity ──────────────────────────────────────────────────────────────
   getIdentity: () =>

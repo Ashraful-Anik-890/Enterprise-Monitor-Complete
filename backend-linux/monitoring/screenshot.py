@@ -19,11 +19,13 @@ v5.2.6 — COMPRESSION REFACTOR
   Width 800px keeps text legible in the dashboard screenshot grid.
 """
 
+import sys
 import io
 import threading
 import time
 import logging
 import getpass
+import os
 from pathlib import Path
 from datetime import datetime
 
@@ -52,9 +54,13 @@ class ScreenshotMonitor:
         self.thread           = None
         self.start_time       = None
 
-        self.screenshot_dir = (
-            Path.home() / "AppData" / "Local" / "EnterpriseMonitor" / "screenshots"
+        _local_appdata = os.environ.get("LOCALAPPDATA") or os.path.join(
+            os.path.expanduser("~"), "AppData", "Local"
         )
+        if os.name != "nt":
+            _local_appdata = os.path.join(os.path.expanduser("~"), ".local", "share")
+
+        self.screenshot_dir = Path(_local_appdata) / "EnterpriseMonitor" / "screenshots"
         self.screenshot_dir.mkdir(parents=True, exist_ok=True)
         self._os_user: str = getpass.getuser()
 
@@ -94,21 +100,55 @@ class ScreenshotMonitor:
     # ── Window info ───────────────────────────────────────────────────────────
 
     def _get_active_window_info(self):
-        try:
-            import win32gui
-            import win32process
-
-            hwnd         = win32gui.GetForegroundWindow()
-            window_title = win32gui.GetWindowText(hwnd)
-            _, pid       = win32process.GetWindowThreadProcessId(hwnd)
+        """Get active window title and app name (cross-platform)."""
+        if sys.platform == "win32":
             try:
-                app_name = psutil.Process(pid).name()
-            except Exception:
+                import win32gui
+                import win32process
+                hwnd = win32gui.GetForegroundWindow()
+                window_title = win32gui.GetWindowText(hwnd)
+                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                try:
+                    app_name = psutil.Process(pid).name()
+                except Exception:
+                    app_name = "Unknown"
+                return window_title, app_name
+            except Exception as e:
+                logger.error("Failed to get active window info (Windows): %s", e)
+                return "Unknown", "Unknown"
+        else:
+            # Linux implementation using xprop
+            try:
+                import subprocess
+                out = subprocess.check_output(["xprop", "-root", "_NET_ACTIVE_WINDOW"], stderr=subprocess.DEVNULL).decode()
+                window_id = out.split("#")[-1].strip()
+                if not window_id or window_id == "0x0":
+                    return "Unknown", "Unknown"
+
+                window_title = "Unknown"
+                try:
+                    name_out = subprocess.check_output(["xprop", "-id", window_id, "WM_NAME"], stderr=subprocess.DEVNULL).decode()
+                    if ' = "' in name_out:
+                        window_title = name_out.split(' = "')[1].rstrip('"\n')
+                except:
+                    pass
+
                 app_name = "Unknown"
-            return window_title, app_name
-        except Exception as e:
-            logger.error("Failed to get active window info: %s", e)
-            return "Unknown", "Unknown"
+                try:
+                    pid_out = subprocess.check_output(["xprop", "-id", window_id, "_NET_WM_PID"], stderr=subprocess.DEVNULL).decode()
+                    if " = " in pid_out:
+                        pid = int(pid_out.split(" = ")[1].strip())
+                        app_name = psutil.Process(pid).name()
+                except:
+                    try:
+                        class_out = subprocess.check_output(["xprop", "-id", window_id, "WM_CLASS"], stderr=subprocess.DEVNULL).decode()
+                        if ' = "' in class_out:
+                            app_name = class_out.split(' = "')[1].split('"')[0]
+                    except:
+                        pass
+                return window_title, app_name
+            except:
+                return "Unknown", "Unknown"
 
     # ── Capture + compress ────────────────────────────────────────────────────
 
@@ -169,11 +209,18 @@ class ScreenshotMonitor:
             logger.debug("Session inactive — skipping screenshot")
             return
 
+        if os.environ.get("XDG_SESSION_TYPE") == "wayland":
+            logger.warning("Wayland detected — screenshots may be black. Switch to Xorg for full support.")
+
         try:
             window_title, app_name = self._get_active_window_info()
 
             with mss.mss() as sct:
-                sct.with_cursor = False
+                # with_cursor is read-only on some platforms/versions of mss
+                try:
+                    sct.with_cursor = False
+                except (AttributeError, TypeError):
+                    pass
                 monitor    = sct.monitors[1]
                 screenshot = sct.grab(monitor)
                 img        = Image.frombytes("RGB", screenshot.size, screenshot.rgb)

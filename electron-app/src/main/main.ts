@@ -25,17 +25,18 @@ import { spawn, ChildProcess } from 'child_process';
 import { TrayManager } from './tray';
 import { ApiClient } from './api-client';
 import Store from 'electron-store';
+import { ElectronScreenshotCapturer } from './screenshot-capturer';
 
 const store = new Store();
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 const IS_MAC = process.platform !== 'win32';
 
-const EM_DIR = IS_MAC
-  ? path.join(os.homedir(), 'Library', 'Application Support', 'EnterpriseMonitor')
-  : path.join(
-    process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
-    'EnterpriseMonitor',
+const EM_DIR = process.platform === 'win32'
+  ? path.join(process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'), 'EnterpriseMonitor')
+  : (process.platform === 'darwin'
+    ? path.join(os.homedir(), 'Library', 'Application Support', 'EnterpriseMonitor')
+    : path.join(os.homedir(), '.local', 'share', 'EnterpriseMonitor')
   );
 
 const PORT_INFO = path.join(EM_DIR, 'port.info');
@@ -92,6 +93,7 @@ let backendExitCode: number | null = null;
 let isSystemUpdate = false;
 let updateDownloaded = false;
 let updatePendingVersion: string | null = null;
+let screenshotCapturer: ElectronScreenshotCapturer | null = null;
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── 401 helpers ───────────────────────────────────────────────────────────────
@@ -119,7 +121,8 @@ function getBackendLaunchCmd(): [string, string[], boolean] {
     return [packaged, [], false];
   }
 
-  const devBinDir = IS_MAC ? 'backend-macos' : 'backend-windows';
+  const platformName = process.platform === 'win32' ? 'windows' : (process.platform === 'darwin' ? 'macos' : 'linux');
+  const devBinDir = `backend-${platformName}`;
   const devExe = path.resolve(
     __dirname,
     `../../../${devBinDir}/dist/enterprise_monitor_backend/${BACKEND_BIN}`,
@@ -131,11 +134,24 @@ function getBackendLaunchCmd(): [string, string[], boolean] {
     return [devExe, [], false];
   }
 
-  const devScriptDir = IS_MAC ? 'backend-macos' : 'backend-windows';
+  const devScriptDir = `backend-${platformName}`;
   const devScript = path.resolve(__dirname, `../../../${devScriptDir}/main.py`);
   if (fs.existsSync(devScript)) {
     console.log('[main] No binary found — launching via python directly (dev mode)');
-    const python = IS_MAC ? 'python3' : 'python';
+    let python = IS_MAC ? 'python3' : 'python';
+    
+    // Auto-detect venv if present (cross-platform)
+    const venvPath = path.resolve(__dirname, `../../../${devScriptDir}/venv/bin/python3`);
+    const venvWinPath = path.resolve(__dirname, `../../../${devScriptDir}/venv/Scripts/python.exe`);
+    
+    if (fs.existsSync(venvPath)) {
+      python = venvPath;
+      console.log(`[main] Using detected venv python: ${python}`);
+    } else if (fs.existsSync(venvWinPath)) {
+      python = venvWinPath;
+      console.log(`[main] Using detected venv python: ${python}`);
+    }
+    
     return [python, [devScript], true];
   }
 
@@ -452,6 +468,10 @@ if (!gotTheLock) {
     }
   });
 
+  // ─── Wayland/PipeWire flags (must be before ready) ──────────────────────────
+  app.commandLine.appendSwitch('enable-features', 'WebRTCPipeWireCapturer');
+  app.commandLine.appendSwitch('disable-http-cache');
+
   app.whenReady().then(async () => {
     app.setLoginItemSettings({
       openAtLogin: true,
@@ -547,9 +567,10 @@ if (!gotTheLock) {
         try {
           const { execSync } = require('child_process');
           if (IS_MAC) {
-            execSync('pkill -f enterprise_monitor_backend || true', { stdio: 'ignore' });
+            // Kill both packaged binary and dev-mode python process
+            execSync('pkill -f enterprise_monitor_backend || pkill -f "python3 .*/backend-(linux|macos)/main.py" || true', { stdio: 'ignore' });
           } else {
-            execSync('taskkill /F /IM "enterprise_monitor_backend.exe"', { stdio: 'ignore', windowsHide: true });
+            execSync('taskkill /F /IM "enterprise_monitor_backend.exe" /T /F || true', { stdio: 'ignore', windowsHide: true });
           }
           console.log('[main] Killed orphan backend. Retrying spawn...');
         } catch { /* already dead */ }
@@ -585,6 +606,18 @@ if (!gotTheLock) {
     const isHiddenStartup = process.argv.includes('--hidden') || (IS_MAC && app.getLoginItemSettings().wasOpenedAsHidden);
     createWindow(!isHiddenStartup);
     startBackendHealthCheck();
+
+    // ─── Wayland/Linux Screenshot Support ───────────────────────────────────
+    if (process.platform === 'linux') {
+      console.log('[main] Linux detected — initializing Electron-side screenshot capture (Wayland-safe)');
+      screenshotCapturer = new ElectronScreenshotCapturer(
+        EM_DIR,
+        apiClient,
+        () => (store.get('authToken') as string) || '',
+        60 // Default 60 seconds, can be synced from backend later
+      );
+      screenshotCapturer.start();
+    }
 
     // ─── PATCH E (Part 2) — Send post-update notification to renderer ─────
     if (justUpdated) {
@@ -982,6 +1015,10 @@ function setupIpcHandlers(): void {
       throw new Error(error.message);
     }
   });
+  
+  ipcMain.handle('api:getBackendUrl', () => {
+    return apiClient.getBaseUrl();
+  });
 
   ipcMain.handle('api:confirmCredential', async (_event, payload: { device_alias: string; user_alias: string; location: string }) => {
     try {
@@ -1050,7 +1087,7 @@ function setupIpcHandlers(): void {
   // ── File / folder ─────────────────────────────────────────────────────────
   ipcMain.handle('app:openFolder', async (_event, filepath: string) => {
     try {
-      const normalised = path.normalize(filepath);
+      const normalised = path.isAbsolute(filepath) ? path.normalize(filepath) : path.join(EM_DIR, filepath);
       if (fs.existsSync(normalised)) {
         shell.showItemInFolder(normalised);
       } else {

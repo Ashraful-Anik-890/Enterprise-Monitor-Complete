@@ -7,6 +7,7 @@ CHANGES:
 - IDENTITY: Passes username to insert_app_activity() on every record.
 """
 
+import sys
 import threading
 import time
 import logging
@@ -64,25 +65,68 @@ class AppTracker:
         logger.info("App tracker resumed")
 
     def _get_active_app_info(self):
-        """Get active application and window title via Win32."""
-        try:
-            import win32gui
-            import win32process
-
-            hwnd         = win32gui.GetForegroundWindow()
-            window_title = win32gui.GetWindowText(hwnd)
-
-            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        """Get active application and window title (cross-platform)."""
+        if sys.platform == "win32":
             try:
-                process  = psutil.Process(pid)
-                app_name = process.name()
-            except Exception:
-                app_name = "Unknown"
+                import win32gui
+                import win32process
+                hwnd = win32gui.GetForegroundWindow()
+                window_title = win32gui.GetWindowText(hwnd)
+                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                try:
+                    process = psutil.Process(pid)
+                    app_name = process.name()
+                except Exception:
+                    app_name = "Unknown"
+                return app_name, window_title
+            except Exception as e:
+                logger.error(f"Failed to get active app info (Windows): {e}")
+                return None, None
+        else:
+            # Linux implementation using xprop
+            if os.environ.get("XDG_SESSION_TYPE") == "wayland":
+                # Only log once every few minutes to avoid spamming
+                if not hasattr(self, "_last_wayland_warn") or time.time() - self._last_wayland_warn > 300:
+                    logger.warning("Wayland detected — app tracking/screenshots may be limited. Switch to Xorg for full support.")
+                    self._last_wayland_warn = time.time()
 
-            return app_name, window_title
-        except Exception as e:
-            logger.error(f"Failed to get active app info: {e}")
-            return None, None
+            try:
+                import subprocess
+                # 1. Get active window ID
+                out = subprocess.check_output(["xprop", "-root", "_NET_ACTIVE_WINDOW"], stderr=subprocess.DEVNULL).decode()
+                window_id = out.split("#")[-1].strip()
+                if not window_id or window_id == "0x0":
+                    return None, None
+
+                # 2. Get Window Name
+                window_title = "Unknown"
+                try:
+                    name_out = subprocess.check_output(["xprop", "-id", window_id, "WM_NAME"], stderr=subprocess.DEVNULL).decode()
+                    if ' = "' in name_out:
+                        window_title = name_out.split(' = "')[1].rstrip('"\n')
+                except:
+                    pass
+
+                # 3. Get PID to get App Name
+                app_name = "Unknown"
+                try:
+                    pid_out = subprocess.check_output(["xprop", "-id", window_id, "_NET_WM_PID"], stderr=subprocess.DEVNULL).decode()
+                    if " = " in pid_out:
+                        pid = int(pid_out.split(" = ")[1].strip())
+                        app_name = psutil.Process(pid).name()
+                except:
+                    # Fallback to WM_CLASS if PID fails
+                    try:
+                        class_out = subprocess.check_output(["xprop", "-id", window_id, "WM_CLASS"], stderr=subprocess.DEVNULL).decode()
+                        if ' = "' in class_out:
+                            app_name = class_out.split(' = "')[1].split('"')[0]
+                    except:
+                        pass
+
+                return app_name, window_title
+            except Exception as e:
+                # Silently fail if xprop is missing or fails, to avoid log spam
+                return None, None
 
     def _track_app_usage(self):
         """Flush previous app session and start tracking the current one."""

@@ -28,7 +28,15 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 5
 
 class AuthManager:
     def __init__(self):
-        self.users_file = Path.home() / "AppData" / "Local" / "EnterpriseMonitor" / "users.json"
+        import os
+        import sys
+        _local_appdata = os.environ.get("LOCALAPPDATA") or os.path.join(
+            os.path.expanduser("~"), "AppData", "Local"
+        )
+        if sys.platform != "win32":
+            _local_appdata = os.path.join(os.path.expanduser("~"), ".local", "share")
+
+        self.users_file = Path(_local_appdata) / "EnterpriseMonitor" / "users.json"
         self.security_qa_file = self.users_file.parent / "security_qa.json"
         self.users_file.parent.mkdir(parents=True, exist_ok=True)
         self._initialize_users()

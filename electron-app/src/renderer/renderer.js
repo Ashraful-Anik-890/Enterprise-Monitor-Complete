@@ -1075,7 +1075,11 @@ async function loadScreenshots() {
   const container = document.getElementById('screenshots-container');
   container.innerHTML = '<div class="loading">Loading screenshots…</div>';
   try {
-    const screenshots = await window.electronAPI.getScreenshots({ limit: 50 });
+    const [screenshots, backendUrl] = await Promise.all([
+      window.electronAPI.getScreenshots({ limit: 50 }),
+      window.electronAPI.getBackendUrl()
+    ]);
+
     if (!screenshots?.length) {
       container.innerHTML = '<div class="empty-state"><div class="empty-icon">📸</div><p>No screenshots yet.</p></div>';
       return;
@@ -1084,10 +1088,14 @@ async function loadScreenshots() {
       const syncedBadge = s.synced
         ? '<span class="ss-sync-badge synced" title="Synced to server">✓</span>'
         : '<span class="ss-sync-badge pending" title="Pending sync">⏳</span>';
+      
+      // construct the HTTP URL via the mounted /data endpoint
+      const imgUrl = `${backendUrl}/data/${s.file_path}`;
+
       return `
         <div class="screenshot-item">
           <div class="screenshot-img-wrap">
-            <img src="file://${s.file_path}" alt="Screenshot" onerror="this.style.display='none'">
+            <img src="${imgUrl}" alt="Screenshot" onerror="this.src='https://via.placeholder.com/300x169?text=Image+Load+Error'">
             ${syncedBadge}
           </div>
           <div class="info">

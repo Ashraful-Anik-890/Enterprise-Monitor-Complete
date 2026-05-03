@@ -3,7 +3,8 @@
   "version": "5.3.0",
   "description": "Enterprise Employee Monitoring System",
   "main": "dist/main/main.js",
-  "author": "Ashraful Anik",
+  "author": "Ashraful Anik <ashraful.anik@example.com>",
+  "homepage": "https://github.com/Ashraful-Anik-890/Enterprise-Monitor-Complete",
   "license": "PROPRIETARY",
   "scripts": {
     "start": "npm run build && electron . --no-sandbox",
@@ -21,7 +22,9 @@
     "dist:publish": "npm run build && electron-builder --win --x64 --publish always",
     "dist:dir": "npm run build && electron-builder --win --x64 --dir",
     "dist:mac": "npm run build:mac && electron-builder --mac --arm64",
-    "dist:mac:dir": "npm run build:mac && electron-builder --mac --arm64 --dir"
+    "dist:mac:dir": "npm run build:mac && electron-builder --mac --arm64 --dir",
+    "dist:linux": "npm run build:linux && electron-builder --linux",
+    "dist:linux:dir": "npm run build:linux && electron-builder --linux --dir"
   },
   "dependencies": {
     "axios": "^1.6.2",
@@ -136,6 +139,28 @@
       "shortcutName": "Enterprise Monitor",
       "include": "build/installer.nsh",
       "warningsAsErrors": false
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "icon-source.png",
+      "category": "Office",
+      "extraResources": [
+        {
+          "from": "../backend-linux/dist/enterprise_monitor_backend",
+          "to": "backend"
+        },
+        {
+          "from": "resources/",
+          "to": "resources/",
+          "filter": [
+            "**/*",
+            "!*.md"
+          ]
+        }
+      ]
     }
   }
 }

@@ -22,6 +22,7 @@ from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Any
+from fastapi.staticfiles import StaticFiles
 import logging
 from datetime import datetime
 import threading
@@ -75,6 +76,20 @@ cleanup_service    = CleanupService(db_manager)
 config_manager     = ConfigManager()
 sync_service       = SyncService(db_manager, config_manager)
 screen_recorder    = ScreenRecorder(db_manager, config_manager)
+
+# ─── STATIC FILES ────────────────────────────────────────────────────────────
+# We serve the EnterpriseMonitor directory so screenshots/videos can be accessed via HTTP
+_local_appdata = os.environ.get("LOCALAPPDATA") or os.path.join(
+    os.path.expanduser("~"), "AppData", "Local"
+)
+if sys.platform != "win32":
+    _local_appdata = os.path.join(os.path.expanduser("~"), ".local", "share")
+    
+_em_dir = os.path.join(_local_appdata, "EnterpriseMonitor")
+if not os.path.exists(_em_dir):
+    os.makedirs(_em_dir, exist_ok=True)
+
+app.mount("/data", StaticFiles(directory=_em_dir), name="data")
 
 monitoring_active = True
 
@@ -555,20 +570,61 @@ async def get_timeline_data(date: str, user=Depends(verify_token)):
 async def get_screenshots(limit: int = 20, offset: int = 0, user=Depends(verify_token)):
     try:
         screenshots = db_manager.get_screenshots(limit=limit, offset=offset)
-        return [
-            ScreenshotInfo(
-                id=s["id"],
-                timestamp=s["timestamp"],
-                file_path=s["file_path"],
-                active_window=s.get("active_window") or "",
-                active_app=s.get("active_app") or "",
-                synced=bool(s.get("synced", False)),
+        
+        # Ensure file_paths are relative to _em_dir for static serving
+        base_path = Path(_em_dir)
+        results = []
+        for s in screenshots:
+            try:
+                fpath = Path(s["file_path"])
+                # If absolute, make it relative to EnterpriseMonitor root
+                if fpath.is_absolute():
+                    s["file_path"] = str(fpath.relative_to(base_path))
+            except (ValueError, Exception):
+                # Fallback: if it's not relative to EM_DIR, just use the basename
+                s["file_path"] = fpath.name if "screenshots" not in str(fpath) else f"screenshots/{fpath.name}"
+
+            results.append(
+                ScreenshotInfo(
+                    id=s["id"],
+                    timestamp=s["timestamp"],
+                    file_path=s["file_path"].replace("\\", "/"),
+                    active_window=s.get("active_window") or "",
+                    active_app=s.get("active_app") or "",
+                    synced=bool(s.get("synced", False)),
+                )
             )
-            for s in screenshots
-        ]
+        return results
     except Exception as e:
         logger.error(f"Error getting screenshots: {e}")
         raise HTTPException(status_code=500, detail="Failed to get screenshots")
+
+class ScreenshotRecordRequest(BaseModel):
+    file_path: str
+    active_window: str = ""
+    active_app: str = ""
+
+@app.post("/api/screenshots/record")
+async def record_screenshot(payload: ScreenshotRecordRequest, user=Depends(verify_token)):
+    """
+    Called by the Electron ElectronScreenshotCapturer when running on Wayland.
+    Electron captures the screenshot (via desktopCapturer) and saves the JPEG file,
+    then calls this endpoint to register it in the database.
+    """
+    try:
+        if not payload.file_path:
+            raise HTTPException(status_code=400, detail="file_path is required")
+        db_manager.insert_screenshot(
+            payload.file_path,
+            payload.active_window,
+            payload.active_app,
+            "",  # username — will be filled by db_manager
+        )
+        logger.debug("Electron screenshot recorded: %s", payload.file_path)
+        return {"success": True}
+    except Exception as e:
+        logger.error("Failed to record Electron screenshot: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to record screenshot")
 
 
 # ─── DATA ENDPOINTS ──────────────────────────────────────────────────────────
@@ -936,6 +992,15 @@ async def get_video_status(user=Depends(verify_token)):
 async def get_videos(limit: int = 50, user=Depends(verify_token)):
     try:
         recordings = db_manager.get_video_recordings(limit=limit)
+        base_path = Path(_em_dir)
+        for v in recordings:
+            try:
+                fpath = Path(v["file_path"])
+                if fpath.is_absolute():
+                    v["file_path"] = str(fpath.relative_to(base_path))
+            except:
+                v["file_path"] = fpath.name if "videos" not in str(fpath) else f"videos/{fpath.name}"
+            v["file_path"] = v["file_path"].replace("\\", "/")
         return recordings
     except Exception as e:
         logger.error("Failed to get video recordings: %s", e)

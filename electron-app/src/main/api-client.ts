@@ -50,4 +50,8 @@ export class ApiClient {
 
     return this.client.delete(endpoint, { headers });
   }
+
+  getBaseUrl(): string {
+    return this.baseUrl;
+  }
 }
