@@ -701,18 +701,23 @@ async function handleConfirmCredential() {
   const userAlias   = (document.getElementById('user-alias-input')?.value   || '').trim();
   const location    = (document.getElementById('location-input')?.value     || '').trim();
 
-  if (!deviceAlias || !userAlias || !location) {
-    showIdentityFeedback('Enter Device Name, User Alias, and Location before confirming.', 'error');
+  // Only location is strictly required if the others are left blank (they will use raw fallbacks)
+  if (!location) {
+    showIdentityFeedback('Please enter an Office Location before confirming.', 'error');
     return;
   }
+
+  // Fallbacks for optional fields
+  const finalDeviceAlias = deviceAlias || document.getElementById('identity-machine-id').textContent.replace('Raw: ', '').trim();
+  const finalUserAlias   = userAlias   || document.getElementById('identity-os-user').textContent.replace('Raw: ', '').trim();
 
   btn.disabled = true;
   btn.textContent = 'Confirming…';
 
   try {
     const result = await window.electronAPI.confirmCredential({
-      device_alias: deviceAlias,
-      user_alias:   userAlias,
+      device_alias: finalDeviceAlias,
+      user_alias:   finalUserAlias,
       location:     location,
     });
     if (result.success) {

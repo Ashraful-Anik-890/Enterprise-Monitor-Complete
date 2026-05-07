@@ -43,7 +43,14 @@ def _setup_logging(level=logging.INFO):
         datefmt='%Y-%m-%d %H:%M:%S',
     )
 
-    file_handler = logging.FileHandler(str(log_file), encoding='utf-8')
+    import logging.handlers
+    # CHANGED: RotatingFileHandler instead of FileHandler — 50MB cap, 2 backups
+    file_handler = logging.handlers.RotatingFileHandler(
+        str(log_file),
+        maxBytes=50 * 1024 * 1024,
+        backupCount=2,
+        encoding='utf-8',
+    )
     file_handler.setFormatter(formatter)
     file_handler.setLevel(level)
 

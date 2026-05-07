@@ -4,6 +4,31 @@ All notable changes to Enterprise Monitor are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).  
 Versioning follows [Semantic Versioning](https://semver.org/).
 
+## [5.4.0] — 2026-05-07
+
+### Added
+- **Machine-Scoped Identity** — Implemented cross-platform persistent UUIDs stored in native OS locations (Windows Registry / macOS Defaults). This ensures device tracking remains consistent even if hardware IDs or OS users change.
+- **Remote Device Log Retrieval** — Implemented a "Server-Initiated Flag → Client Push" architecture for automated diagnostic log uploads.
+- **Bulk Command Infrastructure** — Added a unified pending-command client to support remote control features (Pause, Resume, Wipe) via a single network request.
+- **Status & Heartbeat Telemetry** — Introduced real-time state reporting (`ACTIVE`, `AUTO_PAUSED`, `SHUTDOWN`) synced via the heartbeat mechanism for better admin visibility.
+- **Local Diagnostic Log API** — Added `GET /api/logs/tail` for real-time local troubleshooting.
+- **Log rotation for Electron** — Automated log rotation for `electron.log` with a 50MB cap.
+
+### Improved
+- **Sync Resilience (Circuit Breaker)** — Implemented a "3-strike" failure policy with dead-lettering. Records that fail synchronization 3 times (404s) are permanently retired to save bandwidth and prevent infinite loops.
+- **Sync Throughput** — Optimized the sync engine for large backlogs. Increased `BATCH_FILES` to 30 and stabilized the sync interval at 60 seconds.
+- **Screenshot Timing** — Adjusted the screenshot capture interval from 3s to 5s to optimize local disk I/O and server storage while maintaining visibility.
+- **Non-Fatal Status Syncs** — Refactored auxiliary status updates to be non-blocking, ensuring core telemetry continues even if status endpoints are temporarily unreachable.
+
+### Fixed
+- **Privacy: Log PII Leakage** — Downgraded browser URL logging from `INFO` to `DEBUG` level to prevent sensitive user data from appearing in standard diagnostic logs.
+- **SEO & UI Integrity** — Fixed multiple `<h1>` tag violations in the dashboard to ensure compliance with web accessibility and SEO standards.
+- **Database Migration v6** — Hardened the schema upgrade path to include `failure_count` tracking for all monitoring tables.
+- **Uninstallation Residue** — Ensured the NSIS uninstaller fully purges the updater cache and local store directories.
+- **Database Sync Staleness** — Fixed issues where corrupted sync markers could cause data to stop flowing.
+- **Static URL Configuration** — Implemented a centralized `url.py` module and `config.json` persistence for API endpoints. In **Static Mode** (default for enterprise deployments), the admin can pre-configure all API URLs in `url.py`, locking them at compile time and overwriting `config.json` on every startup. In **Dynamic Mode**, the user can configure URLs via a first-run GUI modal.
+- **App Tracking** - Fixed issue of duration of a app uses to track time duration more accurately.
+
 ---
 
 ## [5.3.0] — 2026-04-30

@@ -39,14 +39,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Dict, List, Any
 
-from url import PATH_VIDEO_SETTINGS, PATH_SCREENSHOT_SETTINGS, PATH_MONITORING_SETTINGS, PATH_DEVICE_STATUS
+from url import PATH_VIDEO_SETTINGS, PATH_SCREENSHOT_SETTINGS, PATH_MONITORING_SETTINGS, PATH_DEVICE_STATUS, PATH_DEVICE_LOGS
 import requests
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SYNC_INTERVAL = 300
-BATCH_JSON            = 50
-BATCH_FILES           = 50
+DEFAULT_SYNC_INTERVAL = 60
+BATCH_JSON            = 100
+BATCH_FILES           = 20
 BATCH_VIDEOS          = 3
 REQUEST_TIMEOUT_JSON  = 10
 REQUEST_TIMEOUT_FILE  = 60
@@ -57,6 +57,9 @@ CYCLE_CAP = 200   # max total records synced per full cycle across all data type
 # These HTTP status codes indicate a fundamental server/auth problem.
 # Abort the entire cycle immediately — do not try remaining data types.
 HARD_ABORT_STATUSES = {401, 403, 500, 502, 503}
+
+import random
+SYNC_JITTER_MAX_SECS  = 60      # randomize start to prevent thundering herd
 
 # These are soft failures — break the current batch but continue other types.
 # (Any status not in HARD_ABORT_STATUSES and not 2xx is implicitly soft.)
@@ -85,19 +88,23 @@ class SyncService:
     def _get_identity(self) -> dict:
         try:
             config = self.db_manager.get_identity_config()
+            device_uuid = self._get_device_uuid()
             return {
                 "pcName":     config.get("device_alias") or self._fallback_hostname,
-                "macAddress": config.get("mac_address", ""),
+                "macAddress": device_uuid or config.get("mac_address", ""),
                 "userName":   config.get("user_alias") or config.get("os_user", ""),
                 "location":   config.get("location", ""),
+                "deviceId":   device_uuid,
             }
         except Exception as e:
             logger.warning("Could not read identity config: %s — using fallback", e)
+            device_uuid = self._get_device_uuid()
             return {
                 "pcName":     self._fallback_hostname,
-                "macAddress": "",
+                "macAddress": device_uuid,
                 "userName":   "",
                 "location":   "",
+                "deviceId":   device_uuid,
             }
 
     def set_device_status(self, status: str) -> None:
@@ -112,6 +119,14 @@ class SyncService:
     def get_device_status(self) -> str:
         """Returns the current device status string."""
         return self._device_status
+
+    def _get_device_uuid(self) -> str:
+        """Returns the machine-scoped UUID or empty string."""
+        try:
+            from utils.device_id import get_device_uuid
+            return get_device_uuid() or ""
+        except Exception:
+            return ""
 
     # ─── LIFECYCLE ───────────────────────────────────────────────────────────
 
@@ -174,7 +189,11 @@ class SyncService:
     # ─── MAIN LOOP ───────────────────────────────────────────────────────────
 
     def _sync_loop(self) -> None:
-        time.sleep(30)
+        # Stagger startup across PCs — each PC sleeps a random offset so
+        # 200 machines don't all hammer the server at the same second.
+        startup_jitter = random.randint(0, SYNC_JITTER_MAX_SECS)
+        logger.info("SyncService: startup jitter %ds", startup_jitter)
+        time.sleep(startup_jitter)
         while self.is_running:
             cycle_reached_server = False
             total_synced_this_cycle = 0
@@ -194,14 +213,17 @@ class SyncService:
                 self._abort_cycle = False
                 identity = self._get_identity()
 
-                # Status syncs
+                # Command fetch (R9) — first step before anything else
+                self._fetch_pending_commands(identity)
+
+                # Status syncs (R2: non-fatal — never set _abort_cycle)
                 if self._sync_device_status(identity):
                     cycle_reached_server = True
-                if not self._abort_cycle and self._sync_video_status(identity):
+                if self._sync_video_status(identity):
                     cycle_reached_server = True
-                if not self._abort_cycle and self._sync_screenshot_status(identity):
+                if self._sync_screenshot_status(identity):
                     cycle_reached_server = True
-                if not self._abort_cycle and self._sync_overall_status(identity):
+                if self._sync_overall_status(identity):
                     cycle_reached_server = True
 
                 # Data syncs — respect cap and abort flag
@@ -353,6 +375,8 @@ class SyncService:
                 )
                 self._abort_cycle = True
                 return False
+            if resp.status_code == 404:
+                return "NOT_FOUND"
             if 400 <= resp.status_code < 500:
                 logger.warning("File POST permanent client error %d: %s. Dropping record.", resp.status_code, resp.text[:200])
                 return True # Pretend success to drop from backlog
@@ -559,7 +583,15 @@ class SyncService:
                 synced_ids.append(rec["id"])
                 logger.warning("Screenshot file gone, marking synced: %s", file_path)
                 continue
-            if self._post_file(url, fields, file_path, "image/jpeg"):
+            result = self._post_file(url, fields, file_path, "image/jpeg")
+            if result == "NOT_FOUND":
+                current_failures = rec.get("failure_count") or 0
+                self.db_manager.increment_failure_count("screenshots", rec["id"])
+                if current_failures + 1 >= 3:
+                    self.db_manager.mark_dead_letter("screenshots", rec["id"])
+                    logger.warning("Screenshot id=%d dead-lettered after 3×404", rec["id"])
+                continue
+            elif result is True:
                 synced_ids.append(rec["id"])
             elif self._abort_cycle:
                 break
@@ -596,7 +628,15 @@ class SyncService:
                 synced_ids.append(rec["id"])
                 logger.warning("Video file gone, marking synced: %s", file_path)
                 continue
-            if self._post_file(url, fields, file_path, "video/mp4"):
+            result = self._post_file(url, fields, file_path, "video/mp4")
+            if result == "NOT_FOUND":
+                current_failures = rec.get("failure_count") or 0
+                self.db_manager.increment_failure_count("video_recordings", rec["id"])
+                if current_failures + 1 >= 3:
+                    self.db_manager.mark_dead_letter("video_recordings", rec["id"])
+                    logger.warning("Video id=%d dead-lettered after 3×404", rec["id"])
+                continue
+            elif result is True:
                 synced_ids.append(rec["id"])
             elif self._abort_cycle:
                 break
@@ -633,10 +673,10 @@ class SyncService:
                 logger.debug("Device status '%s' synced to server", self._device_status)
                 return True
             if resp.status_code in HARD_ABORT_STATUSES:
-                self._abort_cycle = True
+                logger.warning("Device status POST → HTTP %d (non-fatal, cycle continues)", resp.status_code)
             return False
         except requests.exceptions.ConnectionError:
-            self._abort_cycle = True
+            logger.warning("Device status POST connection error (non-fatal, cycle continues)")
             return False
         except Exception as e:
             logger.debug("Device status sync failed: %s", e)
@@ -681,7 +721,7 @@ class SyncService:
             else:
                 logger.debug("Failed to sync video status from remote: %s", e)
             if isinstance(e, requests.exceptions.ConnectionError):
-                self._abort_cycle = True
+                logger.warning("Video status sync connection error (non-fatal, cycle continues)")
             return False
 
     def _sync_screenshot_status(self, identity: dict) -> bool:
@@ -723,7 +763,7 @@ class SyncService:
             else:
                 logger.debug("Failed to sync screenshot status from remote: %s", e)
             if isinstance(e, requests.exceptions.ConnectionError):
-                self._abort_cycle = True
+                logger.warning("Screenshot status sync connection error (non-fatal, cycle continues)")
             return False
 
     def _sync_overall_status(self, identity: dict) -> bool:
@@ -745,6 +785,16 @@ class SyncService:
                     self._abort_cycle = True
                 return resp.status_code not in HARD_ABORT_STATUSES
             data = resp.json()
+
+            # v5.3.1: Check if the server is requesting device logs
+            request_logs = data.get("requestLogs", False)
+            if request_logs:
+                logger.warning(
+                    "Server is using deprecated 'requestLogs' flag. "
+                    "Migrate to bulk command system when server endpoint is ready."
+                )
+                self._upload_device_logs(identity)
+
             remote_active = data.get("monitoringActive")
             if remote_active is None:
                 return True
@@ -784,5 +834,163 @@ class SyncService:
             else:
                 logger.debug("Failed to sync overall monitoring status from remote: %s", e)
             if isinstance(e, requests.exceptions.ConnectionError):
-                self._abort_cycle = True
+                logger.warning("Overall status sync connection error (non-fatal, cycle continues)")
             return False
+
+    # ─── DEVICE LOG UPLOAD ───────────────────────────────────────────────
+
+    def _upload_device_logs(self, identity: dict) -> None:
+        """
+        v5.3.1: Read the last 300 lines of backend.log and POST them to the
+        ERP server's /api/pctracking/device-logs endpoint.
+
+        Triggered when the server sets requestLogs=true in the monitoring-
+        settings response. This is a fire-and-forget push — the server is
+        responsible for resetting the flag after receiving the payload.
+        """
+        url = self.config_manager.get("url_device_logs", "").strip()
+        if not url:
+            base_url = self.config_manager.get("base_url", "").strip()
+            if not base_url:
+                logger.warning("Cannot upload device logs — no base_url configured")
+                return
+            url = f"{base_url.rstrip('/')}{PATH_DEVICE_LOGS}"
+
+        # Resolve log path (platform-aware)
+        import platform as _platform
+        if _platform.system() == "Darwin":
+            log_path = (
+                Path.home() / "Library" / "Application Support" /
+                "EnterpriseMonitor" / "logs" / "backend.log"
+            )
+        else:
+            _local = os.environ.get("LOCALAPPDATA") or str(
+                Path.home() / "AppData" / "Local"
+            )
+            log_path = Path(_local) / "EnterpriseMonitor" / "logs" / "backend.log"
+
+        log_lines = []
+        if log_path.exists():
+            try:
+                with open(log_path, "rb") as f:
+                    f.seek(0, 2)
+                    file_size = f.tell()
+                    read_start = max(0, file_size - 200 * 1024)  # last 200KB
+                    f.seek(read_start)
+                    chunk = f.read().decode("utf-8", errors="replace")
+                all_lines = chunk.splitlines()
+                log_lines = all_lines[-300:]  # last 300 lines
+            except Exception as e:
+                logger.error("Failed to read backend.log for upload: %s", e)
+                log_lines = [f"[ERROR reading log: {e}]"]
+        else:
+            log_lines = ["[backend.log not found]"]
+
+        payload = {
+            "pcName":     identity["pcName"],
+            "macAddress": identity["macAddress"],
+            "userName":   identity["userName"],
+            "logType":    "backend",
+            "logLines":   log_lines,
+            "lineCount":  len(log_lines),
+            "timestamp":  datetime.now(timezone.utc).isoformat(),
+        }
+
+        try:
+            resp = requests.post(
+                url,
+                json=payload,
+                headers={**self._auth_headers(), "Content-Type": "application/json"},
+                timeout=REQUEST_TIMEOUT_JSON,
+            )
+            if resp.ok:
+                logger.info("Device logs uploaded successfully (%d lines)", len(log_lines))
+            else:
+                logger.warning("Device log upload returned HTTP %d: %s", resp.status_code, resp.text[:200])
+        except Exception as e:
+            logger.error("Device log upload failed: %s", e)
+
+    # ─── R9: BULK COMMAND CLIENT ─────────────────────────────────────────────
+
+    def _fetch_pending_commands(self, identity: dict) -> None:
+        """
+        v5.4.0 (R9): Fetch pending commands from the server.
+        Gracefully skips if the server endpoint isn't deployed yet (404).
+        """
+        device_id = identity.get("deviceId", "")
+        if not device_id:
+            return
+        base_url = self.config_manager.get("base_url", "").strip()
+        if not base_url:
+            return
+
+        url = f"{base_url.rstrip('/')}/api/devices/{device_id}/pending-commands"
+        try:
+            resp = requests.get(url, headers=self._auth_headers(), timeout=REQUEST_TIMEOUT_JSON)
+            if resp.status_code == 404:
+                logger.debug("pending-commands endpoint not yet available (404)")
+                return
+            if not resp.ok:
+                logger.warning("pending-commands returned HTTP %d", resp.status_code)
+                return
+            data = resp.json()
+            commands = data.get("commands", [])
+            for cmd in commands:
+                cmd_id   = cmd.get("id", "")
+                cmd_type = cmd.get("type", "")
+                status   = "executed"
+
+                if cmd_type == "request_logs":
+                    self._upload_device_logs(identity)
+                elif cmd_type in ("pause", "resume"):
+                    try:
+                        import api_server
+                        if cmd_type == "pause":
+                            api_server.monitoring_active = False
+                            api_server.screenshot_monitor.pause()
+                            api_server.clipboard_monitor.pause()
+                            api_server.app_tracker.pause()
+                            api_server.browser_tracker.pause()
+                            api_server.keylogger.pause()
+                            api_server.screen_recorder.pause()
+                            self.set_device_status("PAUSED")
+                        else:
+                            api_server.monitoring_active = True
+                            api_server.clipboard_monitor.resume()
+                            api_server.app_tracker.resume()
+                            api_server.browser_tracker.resume()
+                            api_server.keylogger.resume()
+                            if self.config_manager.get("screenshot_enabled", True):
+                                api_server.screenshot_monitor.resume()
+                            if self.config_manager.get("recording_enabled", False):
+                                api_server.screen_recorder.resume()
+                            self.set_device_status("ACTIVE")
+                        logger.info("Executed bulk command: %s", cmd_type)
+                    except Exception as exc:
+                        logger.error("Failed to execute bulk command %s: %s", cmd_type, exc)
+                        status = "failed"
+                else:
+                    logger.warning("Unknown command type: %s", cmd_type)
+                    status = "unsupported"
+
+                # Acknowledge the command
+                if cmd_id:
+                    self._ack_command(base_url, cmd_id, device_id, status)
+
+        except requests.exceptions.ConnectionError:
+            logger.debug("pending-commands connection error — skipping")
+        except Exception as e:
+            logger.debug("pending-commands fetch error: %s", e)
+
+    def _ack_command(self, base_url: str, cmd_id: str, device_id: str, status: str) -> None:
+        """POST acknowledgement for a processed command."""
+        url = f"{base_url.rstrip('/')}/api/commands/{cmd_id}/ack"
+        try:
+            requests.post(
+                url,
+                json={"deviceId": device_id, "status": status},
+                headers={**self._auth_headers(), "Content-Type": "application/json"},
+                timeout=5,
+            )
+        except Exception:
+            pass  # Best-effort ack

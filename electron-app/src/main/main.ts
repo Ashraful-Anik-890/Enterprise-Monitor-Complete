@@ -1,14 +1,18 @@
 /**
  * electron-app/src/main/main.ts
  *
- * Auto-Update Phase 1 + Electron Frontend Logging + 3-Layer Rollback
+ * Auto-Update Phase 1 + Stealth Background Update + 3-Layer Rollback
  * ──────────────────────────────────────────────────────────────────
  * PATCH A — Import: Added `autoUpdater` from 'electron-updater'
  * PATCH B — Flags: isSystemUpdate, updateDownloaded, updatePendingVersion
- * PATCH C — before-quit: isSystemUpdate as first check
+ * PATCH C — before-quit: isSystemUpdate as first check; OS shutdown no longer triggers installer
  * PATCH D — setupAutoUpdater(): Event wiring + 4h schedule
  * PATCH E — app.whenReady(): Post-update detection + rollback + setupAutoUpdater()
+ *            + stealthUpdateRestart flag forces hidden relaunch after silent update
  * PATCH F — setupIpcHandlers(): Modified app:quit, new update IPC handlers
+ * PATCH G — update-downloaded: STEALTH PATH — if window is hidden (tracking mode),
+ *            immediately snapshot DB → kill backend → quitAndInstall silently.
+ *            VISIBLE PATH — notify admin UI, let them click Install Now.
  * NEW    — Electron frontend logging to %LOCALAPPDATA%/EnterpriseMonitor/logs/electron.log
  * NEW    — 3-Layer rollback (binary integrity check + DB snapshot)
  */
@@ -50,7 +54,24 @@ const BACKEND_BIN = IS_MAC
 const LOG_DIR = path.join(EM_DIR, 'logs');
 fs.mkdirSync(LOG_DIR, { recursive: true });
 
-const logStream = fs.createWriteStream(path.join(LOG_DIR, 'electron.log'), { flags: 'a' });
+// REPLACE:
+// const logStream = fs.createWriteStream(path.join(LOG_DIR, 'electron.log'), { flags: 'a' });
+
+// WITH:
+function getLogStream() {
+  const logPath = path.join(LOG_DIR, 'electron.log');
+  try {
+    const stats = fs.existsSync(logPath) ? fs.statSync(logPath) : null;
+    if (stats && stats.size > 50 * 1024 * 1024) {
+      // Rotate: electron.log.1 → delete old, electron.log → electron.log.1
+      const rotated = logPath + '.1';
+      if (fs.existsSync(rotated)) fs.unlinkSync(rotated);
+      fs.renameSync(logPath, rotated);
+    }
+  } catch { /* best effort */ }
+  return fs.createWriteStream(logPath, { flags: 'a' });
+}
+const logStream = getLogStream();
 const originalLog = console.log;
 const originalError = console.error;
 const originalWarn = console.warn;
@@ -451,10 +472,31 @@ function setupAutoUpdater(): void {
     });
   });
 
-  autoUpdater.on('update-downloaded', (info: any) => {
+  autoUpdater.on('update-downloaded', async (info: any) => {
     console.log(`[updater] Update downloaded and verified: v${info.version}`);
     updateDownloaded = true;
     updatePendingVersion = info.version;
+
+    // ── STEALTH PATH: window is hidden (employee tracking mode) ──────────────
+    // Do NOT show the UI. Install immediately and silently in the background.
+    const windowIsHidden = !mainWindow || !mainWindow.isVisible();
+    if (windowIsHidden) {
+      console.log(`[updater] Dashboard is hidden — triggering immediate stealth install of v${info.version}`);
+      isQuitting = true;
+      allowAuthenticatedQuit = true;
+      store.set('pendingUpdateVersion', info.version);
+      store.set('currentVersionBeforeUpdate', app.getVersion());
+      store.set('stealthUpdateRestart', true); // Flag: relaunch hidden after update
+      isSystemUpdate = true;
+      // Snapshot DB then kill backend before installer runs
+      createDatabaseSnapshot();
+      await killBackend();
+      // Small delay so backend has time to flush writes before NSIS launches
+      setTimeout(() => autoUpdater.quitAndInstall(true, true), 600);
+      return;
+    }
+
+    // ── VISIBLE PATH: admin has the dashboard open — let them click Install Now
     showMainWindow();
     mainWindow?.webContents.send('update-downloaded', { version: info.version });
   });
@@ -633,7 +675,11 @@ if (!gotTheLock) {
       getMainWindow,
     );
 
-    const isHiddenStartup = process.argv.includes('--hidden') || (IS_MAC && app.getLoginItemSettings().wasOpenedAsHidden);
+    // After a stealth background update, always restart hidden so the employee
+    // never sees the dashboard pop up. Clear the flag after reading it.
+    const wasStealthUpdate = store.get('stealthUpdateRestart') as boolean | undefined;
+    if (wasStealthUpdate) store.delete('stealthUpdateRestart');
+    const isHiddenStartup = !!wasStealthUpdate || process.argv.includes('--hidden') || (IS_MAC && app.getLoginItemSettings().wasOpenedAsHidden);
     createWindow(!isHiddenStartup);
     startBackendHealthCheck();
     startIdleTracker(); // Silent auto-pause when user is idle for IDLE_PAUSE_THRESHOLD_SECS
@@ -718,10 +764,13 @@ app.on('before-quit', (event) => {
   }
 
   if (isSystemShutdown) {
-    console.log('[main] System shutdown/restart detected — allowing quit without authentication.');
+    // Windows terminates processes too fast during shutdown for an NSIS installer
+    // to complete. Attempting quitAndInstall here will abort partway through and
+    // leave the app on the old version. The stealth path in update-downloaded
+    // already handles installation proactively, so we just clean up and exit.
+    console.log('[main] System shutdown/restart detected — allowing clean quit (no installer on shutdown).');
     isQuitting = true;
     killBackend().catch(() => { });
-    installPendingUpdateOnQuit();
     return;
   }
 
@@ -798,7 +847,19 @@ function setupIpcHandlers(): void {
       }
       return { success: false, error: response.data.error || 'Invalid credentials' };
     } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
       return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('api:getDeviceLogs', async (_event, params: { lines?: number } = {}) => {
+    try {
+      const token = store.get('authToken') as string;
+      const response = await apiClient.get('/api/logs/tail', token, params);
+      return response.data;
+    } catch (error: any) {
+      if (is401(error)) return handleAuthExpired();
+      return { lines: [], error: error.message };
     }
   });
 

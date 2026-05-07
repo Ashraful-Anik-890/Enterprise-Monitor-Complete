@@ -140,7 +140,7 @@ class AppTracker:
         self.thread: Optional[threading.Thread] = None
         self.current_app: Optional[str] = None
         self.current_window: Optional[str] = None
-        self.app_start_time: Optional[datetime] = None
+        self.current_duration: int = 0
         self._os_user: str = getpass.getuser()
         self._accessibility_warned = False
         logger.info("AppTracker: tracking user '%s'", self._os_user)
@@ -162,15 +162,13 @@ class AppTracker:
     def stop(self) -> None:
         self.is_running = False
         # Flush the last open session before stopping
-        if self.current_app and self.app_start_time:
-            duration = int((datetime.utcnow() - self.app_start_time).total_seconds())
-            if duration > 1:
-                self.db_manager.insert_app_activity(
-                    self.current_app,
-                    self.current_window or "",
-                    duration,
-                    self._os_user,
-                )
+        if self.current_app and self.current_duration > 0:
+            self.db_manager.insert_app_activity(
+                self.current_app,
+                self.current_window or "",
+                self.current_duration,
+                self._os_user,
+            )
         if self.thread:
             self.thread.join(timeout=5)
         logger.info("AppTracker stopped")
@@ -290,26 +288,23 @@ class AppTracker:
             if not app_name:
                 return
 
-            if app_name != self.current_app or window_title != self.current_window:
-                if self.current_app and self.app_start_time:
-                    duration = int(
-                        (datetime.utcnow() - self.app_start_time).total_seconds()
+            if app_name == self.current_app and window_title == self.current_window:
+                self.current_duration += self.check_interval
+            else:
+                if self.current_app and self.current_duration > 0:
+                    self.db_manager.insert_app_activity(
+                        self.current_app,
+                        self.current_window or "",
+                        self.current_duration,
+                        self._os_user,
                     )
-                    # >1s threshold — avoids noise from transient focus events
-                    if duration > 1:
-                        self.db_manager.insert_app_activity(
-                            self.current_app,
-                            self.current_window or "",
-                            duration,
-                            self._os_user,
-                        )
-                        logger.debug(
-                            "AppTracker: saved '%s' (%ds)", self.current_app, duration
-                        )
+                    logger.debug(
+                        "AppTracker: saved '%s' (%ds)", self.current_app, self.current_duration
+                    )
 
                 self.current_app = app_name
                 self.current_window = window_title
-                self.app_start_time = datetime.utcnow()
+                self.current_duration = self.check_interval
                 logger.debug("AppTracker: switch → '%s'", app_name)
 
         except Exception as e:

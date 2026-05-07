@@ -88,6 +88,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
 
   // ── App control ───────────────────────────────────────────────────────────
+  getDeviceLogs: (params: { lines?: number }) =>
+    ipcRenderer.invoke('api:getDeviceLogs', params),
   openFolder: (filepath: string) => ipcRenderer.invoke('app:openFolder', filepath),
   quitApp: () => ipcRenderer.invoke('app:quit'),
   firstRunComplete: () => ipcRenderer.invoke('app:firstRunComplete'),

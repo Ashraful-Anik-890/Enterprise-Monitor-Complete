@@ -172,7 +172,7 @@ taskkill /F /IM enterprise_monitor_backend.exe >nul 2>&1
 
 echo.
 echo ========================================================
-echo   DONE — Backend built successfully!
+echo   DONE Backend built successfully!
 echo ========================================================
 echo   Output : %DIST_DIR%
 echo.

@@ -205,46 +205,189 @@ class DatabaseManager:
                 )
             ''')
 
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS schema_version (
+                    version    INTEGER PRIMARY KEY,
+                    applied_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
             conn.commit()
 
         self._run_migrations()
         logger.info("Database initialised (WAL mode, shared connection, thread-safe lock).")
 
-    def _run_migrations(self):
+    LATEST_SCHEMA_VERSION = 6
+
+    def _get_schema_version(self) -> int:
+        """
+        Returns the highest applied migration version, or 0 if none have run.
+        Called without holding self._lock — callers acquire it.
+        """
+        try:
+            row = self._conn.execute(
+                "SELECT MAX(version) FROM schema_version"
+            ).fetchone()
+            return row[0] if row and row[0] is not None else 0
+        except Exception:
+            # schema_version table not yet created (very first boot before _initialize_database ran)
+            return 0
+
+    def _run_migrations(self) -> None:
+        """
+        Versioned migration runner.
+
+        Applies all migrations with version > current schema version, in order.
+        Each migration is atomic: if it fails, the version is NOT recorded and the
+        next boot retries from that version.
+        """
         with self._lock:
-            conn   = self._conn
-            cursor = conn.cursor()
-            try:
-                # ── synced column (legacy) ────────────────────────────────────
-                cursor.execute("PRAGMA table_info(screenshots)")
-                if "synced" not in [r[1] for r in cursor.fetchall()]:
-                    cursor.execute("ALTER TABLE screenshots ADD COLUMN synced INTEGER DEFAULT 0")
-                    cursor.execute("ALTER TABLE app_activity ADD COLUMN synced INTEGER DEFAULT 0")
-                    conn.commit()
-                    logger.info("Migration: added synced columns to screenshots/app_activity")
+            current = self._get_schema_version()
 
-                # ── username column on all tracking tables ────────────────────
-                for table in ("screenshots", "app_activity", "clipboard_events",
-                               "browser_activity", "text_logs", "video_recordings"):
-                    cursor.execute(f"PRAGMA table_info({table})")
-                    if "username" not in [r[1] for r in cursor.fetchall()]:
-                        cursor.execute(
-                            f"ALTER TABLE {table} ADD COLUMN username TEXT DEFAULT ''"
-                        )
-                        logger.info("Migration: added username to %s", table)
+            if current >= self.LATEST_SCHEMA_VERSION:
+                return  # Nothing to do
 
-                # ── synced column on browser_activity + text_logs ─────────────
-                for tbl in ("browser_activity", "text_logs"):
-                    cursor.execute(f"PRAGMA table_info({tbl})")
-                    if "synced" not in [r[1] for r in cursor.fetchall()]:
-                        cursor.execute(
-                            f"ALTER TABLE {tbl} ADD COLUMN synced INTEGER DEFAULT 0"
-                        )
-                        logger.info("Migration: added synced to %s", tbl)
+            logger.info("Schema migration: current=%d, target=%d", current, self.LATEST_SCHEMA_VERSION)
 
-                conn.commit()
-            except Exception as exc:
-                logger.error("Migration error: %s", exc)
+            for target in range(current + 1, self.LATEST_SCHEMA_VERSION + 1):
+                try:
+                    if target == 1:
+                        # v1: Add synced columns to screenshots and app_activity
+                        self._migrate_v1_synced_columns()
+
+                    elif target == 2:
+                        # v2: Add username column to all tracking tables
+                        self._migrate_v2_username_columns()
+
+                    elif target == 3:
+                        # v3: Add synced column to browser_activity and text_logs
+                        self._migrate_v3_browser_textlog_synced()
+
+                    elif target == 4:
+                        # v4: Add daily_summary and daily_app_summary tables
+                        self._migrate_v4_daily_summary_tables()
+
+                    elif target == 5:
+                        # v5: Add schema_version table itself + seed current version
+                        self._migrate_v5_schema_version_table()
+
+                    elif target == 6:
+                        # v6: Add failure_count to screenshots and video_recordings
+                        self._migrate_v6_failure_count()
+
+                    # Record successful migration
+                    self._conn.execute(
+                        "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
+                        (target,),
+                    )
+                    self._conn.commit()
+                    logger.info("Migration v%d applied successfully", target)
+
+                except Exception as exc:
+                    self._conn.rollback()
+                    logger.error(
+                        "Migration v%d FAILED — will retry on next boot: %s", target, exc
+                    )
+                    break
+
+    # ─── INDIVIDUAL MIGRATION HELPERS ────────────────────────────────────────────
+
+    def _col_exists(self, table: str, column: str) -> bool:
+        """Returns True if `column` exists in `table`. Safe to call inside _lock."""
+        rows = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+        return any(r[1] == column for r in rows)
+
+    def _migrate_v1_synced_columns(self) -> None:
+        """Add synced INTEGER DEFAULT 0 to screenshots and app_activity."""
+        for tbl in ("screenshots", "app_activity"):
+            if not self._col_exists(tbl, "synced"):
+                self._conn.execute(
+                    f"ALTER TABLE {tbl} ADD COLUMN synced INTEGER DEFAULT 0"
+                )
+                logger.info("v1: added synced to %s", tbl)
+
+    def _migrate_v2_username_columns(self) -> None:
+        """Add username TEXT DEFAULT '' to all tracking tables."""
+        tables = ("screenshots", "app_activity", "clipboard_events",
+                  "browser_activity", "text_logs", "video_recordings")
+        for tbl in tables:
+            if not self._col_exists(tbl, "username"):
+                self._conn.execute(
+                    f"ALTER TABLE {tbl} ADD COLUMN username TEXT DEFAULT ''"
+                )
+                logger.info("v2: added username to %s", tbl)
+
+    def _migrate_v3_browser_textlog_synced(self) -> None:
+        """Add synced column to browser_activity and text_logs."""
+        for tbl in ("browser_activity", "text_logs"):
+            if not self._col_exists(tbl, "synced"):
+                self._conn.execute(
+                    f"ALTER TABLE {tbl} ADD COLUMN synced INTEGER DEFAULT 0"
+                )
+                logger.info("v3: added synced to %s", tbl)
+
+    def _migrate_v4_daily_summary_tables(self) -> None:
+        """Create daily_summary and daily_app_summary if they don't exist."""
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS daily_summary (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                date             TEXT    NOT NULL UNIQUE,
+                screenshots      INTEGER DEFAULT 0,
+                app_sessions     INTEGER DEFAULT 0,
+                active_time      INTEGER DEFAULT 0,
+                clipboard_events INTEGER DEFAULT 0,
+                browser_visits   INTEGER DEFAULT 0,
+                keystrokes       INTEGER DEFAULT 0,
+                created_at       TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS daily_app_summary (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                date          TEXT NOT NULL,
+                app_name      TEXT NOT NULL,
+                total_seconds INTEGER DEFAULT 0,
+                UNIQUE(date, app_name)
+            )
+        """)
+        logger.info("v4: daily_summary / daily_app_summary ensured")
+
+    def _migrate_v5_schema_version_table(self) -> None:
+        """
+        Ensure schema_version table exists and back-fill v1–v4 for installs that
+        already have those columns (deployed via the old flat migration system).
+        """
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS schema_version (
+                version    INTEGER PRIMARY KEY,
+                applied_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        already_v1 = self._col_exists("screenshots", "synced")
+        already_v2 = self._col_exists("screenshots", "username")
+        already_v3 = self._col_exists("browser_activity", "synced")
+        already_v4 = self._conn.execute(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='daily_summary'"
+        ).fetchone()[0] > 0
+
+        for ver, present in [(1, already_v1), (2, already_v2), (3, already_v3), (4, already_v4)]:
+            if present:
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO schema_version (version) VALUES (?)", (ver,)
+                )
+                logger.info("v5: back-filled migration v%d (columns already present)", ver)
+
+        logger.info("v5: schema_version table ready")
+
+    def _migrate_v6_failure_count(self) -> None:
+        """Add failure_count column to screenshots and video_recordings for circuit breaker."""
+        for tbl in ("screenshots", "video_recordings"):
+            if not self._col_exists(tbl, "failure_count"):
+                self._conn.execute(
+                    f"ALTER TABLE {tbl} ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0"
+                )
+                logger.info("v6: added failure_count to %s", tbl)
 
     def _apply_shared_machine_identity(self):
         """If this is a fresh install but a shared machine identity exists, auto-confirm."""
@@ -858,7 +1001,9 @@ class DatabaseManager:
         with self._lock:
             try:
                 cursor = self._conn.execute(
-                    "SELECT * FROM screenshots WHERE synced = 0 ORDER BY timestamp ASC LIMIT ?",
+                    "SELECT * FROM screenshots WHERE synced = 0 "
+                    "AND (failure_count IS NULL OR failure_count < 3) "
+                    "ORDER BY timestamp ASC LIMIT ?",
                     (limit,),
                 )
                 return [dict(r) for r in cursor.fetchall()]
@@ -919,6 +1064,7 @@ class DatabaseManager:
             try:
                 cursor = self._conn.execute(
                     "SELECT * FROM video_recordings WHERE is_synced = 0 "
+                    "AND (failure_count IS NULL OR failure_count < 3) "
                     "ORDER BY timestamp ASC LIMIT ?",
                     (limit,),
                 )
@@ -963,6 +1109,38 @@ class DatabaseManager:
                 logger.error("mark_videos_synced: %s", exc)
                 self._conn.rollback()
 
+    def increment_failure_count(self, table: str, record_id: int) -> None:
+        """Increment the failure_count for a record. Table must be allowlisted."""
+        if table not in ("screenshots", "video_recordings"):
+            raise ValueError(f"increment_failure_count: invalid table '{table}'")
+        with self._lock:
+            try:
+                self._conn.execute(
+                    f"UPDATE {table} SET failure_count = failure_count + 1 WHERE id = ?",
+                    (record_id,),
+                )
+                self._conn.commit()
+            except Exception as exc:
+                logger.error("increment_failure_count(%s, %d): %s", table, record_id, exc)
+                self._conn.rollback()
+
+    def mark_dead_letter(self, table: str, record_id: int) -> None:
+        """Mark a record as dead-lettered (synced = -1 / is_synced = -1)."""
+        sync_col = {"screenshots": "synced", "video_recordings": "is_synced"}
+        col = sync_col.get(table)
+        if not col:
+            raise ValueError(f"mark_dead_letter: invalid table '{table}'")
+        with self._lock:
+            try:
+                self._conn.execute(
+                    f"UPDATE {table} SET {col} = -1 WHERE id = ?",
+                    (record_id,),
+                )
+                self._conn.commit()
+            except Exception as exc:
+                logger.error("mark_dead_letter(%s, %d): %s", table, record_id, exc)
+                self._conn.rollback()
+
     # ─── MAINTENANCE ──────────────────────────────────────────────────────────
 
     def cleanup_old_data(self, synced_hours: int = 2, unsynced_days: int = 7) -> None:
@@ -987,8 +1165,9 @@ class DatabaseManager:
                 for row in self._conn.execute(
                     "SELECT id, file_path FROM screenshots WHERE "
                     "  (synced = 1 AND timestamp < ?) OR "
-                    "  (synced = 0 AND timestamp < ?)",
-                    (synced_cutoff, unsynced_cutoff),
+                    "  (synced = 0 AND timestamp < ?) OR "
+                    "  (synced = -1 AND timestamp < ?)",
+                    (synced_cutoff, unsynced_cutoff, unsynced_cutoff),
                 ).fetchall():
                     row_id = row[0]
                     fp = row[1]
@@ -1009,8 +1188,9 @@ class DatabaseManager:
                 for row in self._conn.execute(
                     "SELECT id, file_path FROM video_recordings WHERE "
                     "  (is_synced = 1 AND timestamp < ?) OR "
-                    "  (is_synced = 0 AND timestamp < ?)",
-                    (synced_cutoff, unsynced_cutoff),
+                    "  (is_synced = 0 AND timestamp < ?) OR "
+                    "  (is_synced = -1 AND timestamp < ?)",
+                    (synced_cutoff, unsynced_cutoff, unsynced_cutoff),
                 ).fetchall():
                     row_id = row[0]
                     fp = row[1]
@@ -1030,28 +1210,30 @@ class DatabaseManager:
                 ss_query = (
                     "DELETE FROM screenshots WHERE "
                     "  ((synced = 1 AND timestamp < ?) OR "
-                    "  (synced = 0 AND timestamp < ?))"
+                    "  (synced = 0 AND timestamp < ?) OR "
+                    "  (synced = -1 AND timestamp < ?))"
                 )
+                ss_params: list = [synced_cutoff, unsynced_cutoff, unsynced_cutoff]
                 if failed_ss_ids:
                     placeholders = ",".join(["?"] * len(failed_ss_ids))
                     ss_query += f" AND id NOT IN ({placeholders})"
-                    ss_cur = self._conn.execute(ss_query, (synced_cutoff, unsynced_cutoff, *failed_ss_ids))
-                else:
-                    ss_cur = self._conn.execute(ss_query, (synced_cutoff, unsynced_cutoff))
+                    ss_params.extend(failed_ss_ids)
+                ss_cur = self._conn.execute(ss_query, ss_params)
                 ss_deleted = ss_cur.rowcount
 
                 # ── 4. Purge video_recordings DB rows ─────────────────────────
                 vid_query = (
                     "DELETE FROM video_recordings WHERE "
                     "  ((is_synced = 1 AND timestamp < ?) OR "
-                    "  (is_synced = 0 AND timestamp < ?))"
+                    "  (is_synced = 0 AND timestamp < ?) OR "
+                    "  (is_synced = -1 AND timestamp < ?))"
                 )
+                vid_params: list = [synced_cutoff, unsynced_cutoff, unsynced_cutoff]
                 if failed_video_ids:
                     placeholders = ",".join(["?"] * len(failed_video_ids))
                     vid_query += f" AND id NOT IN ({placeholders})"
-                    vid_cur = self._conn.execute(vid_query, (synced_cutoff, unsynced_cutoff, *failed_video_ids))
-                else:
-                    vid_cur = self._conn.execute(vid_query, (synced_cutoff, unsynced_cutoff))
+                    vid_params.extend(failed_video_ids)
+                vid_cur = self._conn.execute(vid_query, vid_params)
                 vid_deleted = vid_cur.rowcount
 
                 # ── 5. Purge text-only tables (no physical files) ─────────────

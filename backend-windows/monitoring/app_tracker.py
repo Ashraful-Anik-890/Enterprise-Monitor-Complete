@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class AppTracker:
-    def __init__(self, db_manager, check_interval: int = 5):
+    def __init__(self, db_manager, check_interval: int = 2):
         self.db_manager     = db_manager
         self.check_interval = check_interval
         self.is_running     = False
@@ -27,7 +27,7 @@ class AppTracker:
         self.thread         = None
         self.current_app    = None
         self.current_window = None
-        self.app_start_time = None
+        self.current_duration = 0
 
         # Capture once at startup — the OS user won't change mid-session.
         # getpass.getuser() is cross-platform (Windows + macOS + Linux).
@@ -49,6 +49,13 @@ class AppTracker:
     def stop(self):
         """Stop app tracking"""
         self.is_running = False
+        if self.current_app and self.current_duration > 0:
+            self.db_manager.insert_app_activity(
+                self.current_app,
+                self.current_window or "",
+                self.current_duration,
+                self._os_user,
+            )
         if self.thread:
             self.thread.join(timeout=5)
         logger.info("App tracker stopped")
@@ -92,23 +99,20 @@ class AppTracker:
             if not app_name:
                 return
 
-            # App or window changed — flush previous session
-            if app_name != self.current_app or window_title != self.current_window:
-                if self.current_app and self.app_start_time:
-                    duration = int(
-                        (datetime.utcnow() - self.app_start_time).total_seconds()
+            if app_name == self.current_app and window_title == self.current_window:
+                self.current_duration += self.check_interval
+            else:
+                if self.current_app and self.current_duration > 0:
+                    self.db_manager.insert_app_activity(
+                        self.current_app,
+                        self.current_window or "",
+                        self.current_duration,
+                        self._os_user,          # ← identity tracking
                     )
-                    if duration > 0:
-                        self.db_manager.insert_app_activity(
-                            self.current_app,
-                            self.current_window or "",
-                            duration,
-                            self._os_user,          # ← identity tracking
-                        )
 
                 self.current_app    = app_name
                 self.current_window = window_title
-                self.app_start_time = datetime.utcnow()
+                self.current_duration = self.check_interval
                 logger.debug(f"App switched to: {app_name}")
         except Exception as e:
             logger.error(f"Failed to track app usage: {e}")

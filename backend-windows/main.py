@@ -42,15 +42,23 @@ from pathlib import Path
 _log_dir = Path(_em_dir) / "logs"
 _log_dir.mkdir(parents=True, exist_ok=True)
 
+import logging.handlers
+
+_log_file = _log_dir / "backend.log"
+
+_rotating_handler = logging.handlers.RotatingFileHandler(
+    _log_file,
+    maxBytes=50 * 1024 * 1024,   # 50MB cap
+    backupCount=2,                # keep backend.log + backend.log.1 + .2
+    encoding="utf-8",
+)
+_rotating_handler.setFormatter(
+    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+)
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(_log_dir / "backend.log", encoding="utf-8"),
-        # StreamHandler is intentionally omitted for console=False builds.
-        # Adding it here would write to the devnull fd we opened above — harmless
-        # but pointless. All diagnostics go to backend.log.
-    ],
+    handlers=[_rotating_handler],
 )
 
 logger = logging.getLogger(__name__)

@@ -74,7 +74,7 @@ monitoring_active = True
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── STARTUP ──────────────────────────────────────────────────────────
-    screenshot_interval = int(config_manager.get("screenshot_interval", 10)) # Using 10 seconds per user instruction
+    screenshot_interval = int(config_manager.get("screenshot_interval", 5)) # Using 5 seconds per user instruction
     screenshot_monitor.__init__(db_manager, interval_seconds=screenshot_interval)
 
     clipboard_monitor.start()
@@ -838,7 +838,7 @@ async def get_config(user=Depends(verify_token)):
         # ── User-saved settings ───────────────────────────────────────────────
         "api_key":               config_manager.get("api_key", ""),
         "sync_interval_seconds": config_manager.get("sync_interval_seconds", 300),
-        "screenshot_interval":   config_manager.get("screenshot_interval", 10),
+        "screenshot_interval":   config_manager.get("screenshot_interval", 5),
         "base_url":              config_manager.get("base_url", ""),
         "url_app_activity":      config_manager.get("url_app_activity", ""),
         "url_browser":           config_manager.get("url_browser", ""),
@@ -1079,3 +1079,56 @@ async def get_videos(limit: int = 50, user=Depends(verify_token)):
     except Exception as e:
         logger.error("Failed to get video recordings: %s", e)
         raise HTTPException(status_code=500, detail="Failed to retrieve recordings")
+
+
+@app.get("/api/logs/tail")
+async def get_log_tail(
+    lines: int = 200,
+    log_type: str = "backend",
+    user=Depends(verify_token)
+):
+    """
+    Returns the last N lines of the backend log.
+    Allows remote monitoring of device state without SSH access.
+    Max 500 lines to cap response size.
+    """
+    lines = min(lines, 500)
+
+    # Resolve log path based on platform
+    import platform
+    if platform.system() == "Darwin":
+        log_path = (
+            Path.home() / "Library" / "Application Support" /
+            "EnterpriseMonitor" / "logs" / "backend.log"
+        )
+    else:
+        import os as _os
+        _local = _os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        log_path = Path(_local) / "EnterpriseMonitor" / "logs" / "backend.log"
+
+    if not log_path.exists():
+        return {"lines": [], "path": str(log_path), "exists": False}
+
+    try:
+        # Efficient tail: read last chunk only
+        with open(log_path, "rb") as f:
+            # Read last 200KB max regardless of lines requested
+            f.seek(0, 2)
+            file_size = f.tell()
+            read_start = max(0, file_size - 200 * 1024)
+            f.seek(read_start)
+            chunk = f.read().decode("utf-8", errors="replace")
+
+        all_lines = chunk.splitlines()
+        tail = all_lines[-lines:] if len(all_lines) > lines else all_lines
+
+        return {
+            "lines": tail,
+            "total_returned": len(tail),
+            "log_size_bytes": file_size,
+            "path": str(log_path),
+            "exists": True,
+        }
+    except Exception as e:
+        logger.error("get_log_tail error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
